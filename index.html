@@ -38,7 +38,7 @@ canvas.tr { width:100%; height:260px; background:#fff; border:1px solid var(--li
 </head>
 <body>
 <div class="win" id="win">
-  <div class="title"><div class="dots"><i></i><i></i><i></i></div><span id="wt">Reef — txbt4, BLAKE2b testnet4 · a node in this tab</span><span class="badge" id="badge" title="the node is real: the snapshot is fetched, hashed and indexed in this tab and every BLAKE2b block since the fork is validated here; the wallet and its coins are a simulation until Send and Receive are wired to the sidestr wallet">wallet simulated</span></div>
+  <div class="title"><div class="dots"><i></i><i></i><i></i></div><span id="wt">Reef — txbt4, BLAKE2b testnet4 · a node in this tab</span><span class="badge" id="badge" title="the node and the wallet are real: the snapshot is verified and every BLAKE2b block validated in this tab; the wallet is one key kept in this browser; testnet4 coins have no value">testnet4 · test coins</span></div>
   <div class="menu" id="menu">
     <div data-m="file">File<div class="dd"><div>Create Wallet…</div><div>Open Wallet…</div><div>Close Wallet</div><hr><div>Sign message…</div><div>Verify message…</div><hr><div>Load PSBT from file…</div><hr><div id="m-wipe">Wipe the snapshot from this tab…</div><hr><div>Exit<span class="k">Ctrl+Q</span></div></div></div>
     <div data-m="settings">Settings<div class="dd"><div>Encrypt Wallet…</div><div>Change Passphrase…</div><hr><div>Mask values<span class="k">Ctrl+Shift+M</span></div><hr><div id="m-options">Options…</div></div></div>
@@ -55,32 +55,27 @@ canvas.tr { width:100%; height:260px; background:#fff; border:1px solid var(--li
   <div class="page on" id="p-overview">
     <div class="two">
       <fieldset><legend>Balances</legend><div class="kv">
-        <span class="l">Available:</span><span class="v big" id="avail">0.31200000 tBTC</span>
-        <span class="l">Pending:</span><span class="v dim">0.00050000 tBTC</span>
-        <span class="l">Immature:</span><span class="v dim">50.00000000 tBTC</span>
+        <span class="l">Available:</span><span class="v big" id="avail">…</span>
+        <span class="l">Pending:</span><span class="v dim" id="pending">0.00000000 tBTC</span>
+        <span class="l">Immature:</span><span class="v dim" id="immature">0.00000000 tBTC</span>
         <span class="sep"></span>
-        <span class="l" style="font-weight:600">Total:</span><span class="v big">50.31250000 tBTC</span>
-      </div><div style="margin-top:14px;font-size:11.5px;color:var(--mut)">The displayed information may be out of date. Your wallet automatically synchronizes with the network after a connection is established, but this process has not completed yet. <span style="color:var(--green)">Synced from the verified UTXO snapshot at block 150,307 and every BLAKE2b block since.</span></div></fieldset>
+        <span class="l" style="font-weight:600">Total:</span><span class="v big" id="total">…</span>
+      </div><div style="margin-top:14px;font-size:11.5px;color:var(--mut)" id="ovnote">The wallet is one key held in this tab; its balance is read from the tab's own validated UTXO set, coins created since the snapshot at block 150,307.</div></fieldset>
       <fieldset><legend>Recent transactions</legend><div class="txl" id="recent"></div></fieldset>
     </div>
   </div>
   <div class="page" id="p-send">
     <fieldset><legend>Send Coins</legend><div class="form">
-      <label>Pay To:</label><div class="row"><input placeholder="Enter a Bitcoin address (e.g. tb1q…)" class="mono"><button class="q" title="Choose previously used address">📋</button><button class="q" title="Paste address from clipboard">⌘V</button><button class="q" title="Remove this entry">✕</button></div>
+      <label>Pay To:</label><div class="row"><input id="sendto" placeholder="Enter a txbt4 address (tb1p…)" class="mono"><button class="q" title="Choose previously used address">📋</button><button class="q" title="Paste address from clipboard">⌘V</button><button class="q" title="Remove this entry">✕</button></div>
       <label>Label:</label><input placeholder="Enter a label for this address to add it to the list of used addresses">
-      <label>Amount:</label><div class="row"><input value="0.00000000" style="max-width:220px;font-family:var(--mono)"><select style="width:auto"><option>tBTC</option><option>mtBTC</option><option>µtBTC</option><option>satoshi</option></select><label style="display:flex;gap:6px;align-items:center;margin-left:8px"><input type="checkbox" style="width:auto"> Subtract fee from amount</label><button class="q">Use available balance</button></div>
+      <label>Amount:</label><div class="row"><input id="sendamt" value="0.00000000" style="max-width:220px;font-family:var(--mono)"><select id="sendunit" style="width:auto"><option value="1e8">tBTC</option><option value="1e5">mtBTC</option><option value="100">µtBTC</option><option value="1">satoshi</option></select><label style="display:flex;gap:6px;align-items:center;margin-left:8px"><input type="checkbox" style="width:auto"> Subtract fee from amount</label><button class="q" id="sendall">Use available balance</button></div>
     </div></fieldset>
     <fieldset><legend>Transaction Fee</legend><div class="form"><label>Fee:</label><div class="row"><span class="mono">0.00001000 tBTC/kvB</span><button class="q">Choose…</button><span style="color:var(--mut)">Recommended — Confirmation time target: 20 minutes (1 block)</span></div><label></label><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" checked style="width:auto"> Enable Replace-By-Fee</label></div></fieldset>
-    <div class="row"><button class="q p">Send</button><button class="q">Clear All</button><button class="q">Add Recipient</button><span class="fill" style="flex:1"></span><span>Balance: <span class="mono" style="font-weight:600">0.31200000 tBTC</span></span></div>
+    <div class="row"><button class="q p" id="sendgo">Send</button><button class="q" id="sendclear">Clear All</button><button class="q" disabled title="one recipient in this version">Add Recipient</button><span class="fill" style="flex:1"></span><span>Balance: <span class="mono" style="font-weight:600" id="sendbal">…</span></span></div><div class="tiny" id="sendout" style="margin-top:.6rem;min-height:1.2em"></div><div class="tiny" style="margin-top:.4rem;color:var(--mut)">The transaction is built and signed in this tab, checked, and published as a kind 23503 event; a sidestr producer with a txbt4 node broadcasts it if its node's policy accepts it. It shows here once it is in a block the tab has validated.</div>
   </div>
   <div class="page" id="p-receive">
-    <fieldset><legend>Receive</legend><div class="form">
-      <label>Label:</label><input placeholder="An optional label to associate with the new receiving address.">
-      <label>Amount:</label><div class="row"><input value="0.00000000" style="max-width:220px;font-family:var(--mono)"><select style="width:auto"><option>tBTC</option></select></div>
-      <label>Message:</label><input placeholder="An optional message to attach to the payment request, which will be displayed when the request is opened.">
-      <label></label><div class="row"><button class="q p">Create new receiving address</button><button class="q">Clear</button></div>
-    </div></fieldset>
-    <fieldset><legend>Requested payments history</legend><table><thead><tr><th>Date</th><th>Label</th><th>Message</th><th>Amount (tBTC)</th></tr></thead><tbody><tr><td>2026-09-27 21:14</td><td>predict faucet</td><td>test coins for the markets page</td><td class="amt">0.00100000</td></tr><tr><td>2026-09-24 13:06</td><td>tally</td><td></td><td class="amt">(no amount requested)</td></tr></tbody></table></fieldset>
+    <fieldset><legend>Receive</legend><div class="two"><div><div class="form"><label>Address:</label><div class="row"><input id="rcvaddr" class="mono" readonly value="…"><button class="q" id="rcvcopy" title="Copy address">Copy</button></div><label>Label:</label><input value="reef" readonly><label></label><div class="tiny">This tab holds one key, made here and kept in this browser's storage; the address is its Taproot key-path address on txbt4. Test coins only. A faucet for txbt4: ask on the datstr miner page, or send from a node's wallet.</div></div></div><div style="text-align:center"><div id="rcvqr" style="display:inline-block;padding:10px;background:#fff;border:1px solid var(--line);border-radius:4px"></div><div class="tiny" style="margin-top:.4rem">scan to pay this tab</div></div></div></fieldset>
+    <fieldset><legend>Received coins</legend><table><thead><tr><th>Block</th><th>Outpoint</th><th>Confirmations</th><th>Amount (tBTC)</th></tr></thead><tbody id="rcvrows"><tr><td colspan="4" class="mut">nothing received since the snapshot</td></tr></tbody></table></fieldset>
   </div>
   <div class="page" id="p-tx">
     <div class="row" style="margin-bottom:8px"><select style="width:auto"><option>All</option><option>Today</option><option>This week</option><option>This month</option><option>Last month</option><option>This year</option><option>Range…</option></select><select style="width:auto"><option>All</option><option>Received with</option><option>Sent to</option><option>To yourself</option><option>Mined</option><option>Other</option></select><input placeholder="Enter address, transaction id, or label to search"><input placeholder="Min amount" style="max-width:120px"></div>
@@ -111,6 +106,7 @@ The node answers from this tab's own validated state; wallet commands are simula
     <div class="tp" id="t-peers"><div class="peers"><div><table><thead><tr><th>Peer</th><th>Age</th><th>Direction</th><th>Type</th><th>Network</th><th>Ping</th><th>Sent</th><th>Received</th><th>Address</th></tr></thead><tbody id="peerrows"></tbody></table></div><div class="pd" id="pd">Select a peer to view detailed information.</div></div></div>
   </div>
 </div>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 <script type="module" src="reef.js"></script>
 </body>
 </html>
