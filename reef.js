@@ -40,8 +40,10 @@ function onMessage(e) { const m = e.data;
   else if (m.type === 'coin') { cprint(JSON.stringify(m, null, 2)); }
   else if (m.type === 'coins') { if (W && m.script === W.script) { const before = new Map(W.coins.map((c) => [c.key, c])); const first = !W.seenCoins; W.coins = m.coins; W.height = m.height;
       // a coin whose transaction spent coins of ours, with no send recorded here (the record was lost with the tab's storage, or the send was made elsewhere with the same key): it is our change, recovered from the chain
+      saveSent(); for (const [k, v] of loadSeen()) if (!seen.has(k)) seen.set(k, v);
       for (const c of W.coins) if (!c.coinbase && !sent.some((s) => c.key.startsWith(s.txid)) && c.inputs?.some((k) => seen.has(k))) { const known = c.inputs.filter((k) => seen.has(k)); const inSum = known.reduce((a, k) => a + seen.get(k), 0); const partial = known.length < c.inputs.length;
-        sent.push({ txid: c.key.slice(0, 64), to: '(recovered from the chain)', sats: inSum - c.value, fee: 0, partial, at: Date.now(), pending: false, height: c.height, inputs: c.inputs, tip: c.height, recovered: true }); }
+        sent.push({ txid: c.key.slice(0, 64), to: '(recovered from the chain)', sats: inSum - c.value, fee: 0, partial, at: Date.now(), pending: false, height: c.height, inputs: c.inputs, tip: c.height, recovered: true });
+        if (!first) notify('Sent transaction', `${partial ? 'at least ' : ''}${money(inSum - c.value)} tBTC spent, confirmed in block ${n(c.height)} (recovered from the chain)`); }
       for (const c of W.coins) if (!seen.has(c.key)) seen.set(c.key, c.value); saveSeen(); saveSent();
       if (!first) for (const c of W.coins) if (!before.has(c.key) && !sent.some((s) => c.key.startsWith(s.txid))) notify('Incoming transaction', `${money(c.value)} tBTC received in block ${n(c.height)}`);
       for (const s of sent) if (s.pending) { const change = W.coins.find((c) => c.key.startsWith(s.txid)); const inputsGone = s.inputs.every((k) => !W.coins.some((c) => c.key === k)); if (change || (inputsGone && W.height > s.tip)) { s.pending = false; s.height = change?.height ?? W.height; saveSent(); if (!first) notify('Sent transaction', `${money(s.sats)} tBTC to ${s.to.slice(0, 14)}… confirmed in block ${n(s.height)}`); } }
@@ -83,7 +85,9 @@ document.querySelectorAll('#nwtabs div').forEach((d) => { d.onclick = () => { do
   nw.querySelector('.rs.se').onpointerdown = (e) => { const x0 = e.clientX, y0 = e.clientY, w0 = nw.offsetWidth, h0 = nw.offsetHeight; const move = (ev) => { nw.style.width = Math.max(560, w0 + ev.clientX - x0) + 'px'; nw.style.height = Math.max(320, h0 + ev.clientY - y0) + 'px'; }; const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); save(); }; addEventListener('pointermove', move); addEventListener('pointerup', up); e.preventDefault(); e.stopPropagation(); }; })();
 // ---- the wallet: one key kept in this tab; coins from the tab's own UTXO set (created since the snapshot); sends built,
 // signed and checked here, then published as a kind 23503 event for a sidestr producer's node to broadcast
-let W = null; const sent = (() => { try { return JSON.parse(LS.get('reef:sent') ?? '[]'); } catch { return []; } })(); const saveSent = () => LS.set('reef:sent', JSON.stringify(sent.slice(-50))); // sent: { txid, to, sats, fee, at, event, relays, pending, inputs, tip }, kept across reloads so a pending send can be confirmed later
+let W = null; const loadSent = () => { try { return JSON.parse(LS.get('reef:sent') ?? '[]'); } catch { return []; } }; const sent = loadSent();
+// two tabs of the same origin share the storage but not their memory: merge with what is stored before writing, so neither tab drops the other's send
+const saveSent = () => { for (const o of loadSent()) { const m = sent.find((x) => x.txid === o.txid); if (!m) sent.push(o); else if (m.pending && !o.pending) Object.assign(m, o); } sent.sort((a, b) => (a.at ?? 0) - (b.at ?? 0)); LS.set('reef:sent', JSON.stringify(sent.slice(-50))); }; // sent: { txid, to, sats, fee, at, event, relays, pending, inputs, tip }, kept across reloads so a pending send can be confirmed later
 const money = (sats) => (sats < 0 ? '-' : '') + (Math.abs(sats) / 1e8).toFixed(8);
 async function walletInit() {
   const [{ makeSigner }, txsign, addr, relay, secp, hash, { createKernel }, { knotsBlake2b }] = await Promise.all([import(`${LIB}/schnorr.mjs`), import(`${LIB}/txsign.mjs`), import(`${LIB}/address.mjs`), import(`${LIB}/relay.mjs`), import(`${CDN}/codec/secp256k1.js`), import(`${CDN}/codec/hash.js`), import(`${CDN}/codec/kernel.js`), import(`${CDN}/codec/overlays/knots-blake2b.js`)]);
@@ -92,7 +96,7 @@ async function walletInit() {
   const signer = makeSigner({ hash, secp }); let key = LS.get('reef:key'); if (!/^[0-9a-f]{64}$/.test(key ?? '')) { key = signer.randomKey(); LS.set('reef:key', key); }
   const pub = signer.pubkeyOf(key), script = '5120' + pub, address = addr.scriptToAddress(script, 'tb');
   W = { k, hash, secp, signer, txsign, addr, relay, events: relay.makeEvents({ signer, hash }), key, pub, script, address, coins: [], height: null };
-  try { seen = new Map(JSON.parse(LS.get('reef:seen:' + script.slice(4, 20)) ?? '[]')); } catch { seen = new Map(); }
+  seen = loadSeen();
   $('rcvaddr').value = address; try { const qr = qrcode(0, 'M'); qr.addData('bitcoin:' + address); qr.make(); $('rcvqr').innerHTML = qr.createSvgTag({ cellSize: 4, margin: 0 }); } catch {}
   $('rcvcopy').onclick = async () => { try { await navigator.clipboard.writeText(address); $('rcvcopy').textContent = 'Copied'; setTimeout(() => { $('rcvcopy').textContent = 'Copy'; }, 1500); } catch {} };
   $('sendall').onclick = () => { const b = balances(); $('sendamt').value = (Math.max(0, b.available - 500) / Number($('sendunit').value)).toString(); };
@@ -101,7 +105,8 @@ async function walletInit() {
   renderWallet(); if (node.synced) askCoins();
 }
 function askCoins() { if (W && worker) post({ type: 'coins', script: W.script }); }
-let seen = new Map(); const saveSeen = () => LS.set('reef:seen:' + W.script.slice(4, 20), JSON.stringify([...seen].slice(-500))); // every coin of ours this tab has seen, key → value, so change can be told from a receipt after a reload
+let seen = new Map(); const seenKey = () => 'reef:seen:' + W.script.slice(4, 20); const loadSeen = () => { try { return new Map(JSON.parse(LS.get(seenKey()) ?? '[]')); } catch { return new Map(); } };
+const saveSeen = () => { for (const [k, v] of loadSeen()) if (!seen.has(k)) seen.set(k, v); LS.set(seenKey(), JSON.stringify([...seen].slice(-500))); }; // every coin of ours this tab has seen, key → value, so change can be told from a receipt after a reload
 const reserved = () => new Set(sent.filter((s) => s.pending).flatMap((s) => s.inputs ?? []));
 const mature = (c) => !c.coinbase || (W.height != null && W.height + 1 - c.height >= 100);
 function balances() { let available = 0, immature = 0; const held = reserved(); for (const c of W.coins) { if (held.has(c.key)) continue; (mature(c) ? (available += c.value) : (immature += c.value)); } const pending = sent.filter((s) => s.pending).reduce((a, s) => a - s.sats - s.fee, 0); return { available, immature, pending, total: available + immature + pending }; }
