@@ -1,7 +1,7 @@
 // Reef: the Qt face over blaketestnode's browser node. The worker is the node's own (pinned by commit), loaded through a
 // blob so this stays one page; the page drives its phases (fetch, hash, verify, sync) and shows them the way a node does.
 const $ = (id) => document.getElementById(id);
-const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@4d4b66cd397c5bb4445c7c0bf9094616961fde48';
+const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@977f6b43b1e40e8eb17726e9834aacc4f7700554';
 const q = new URLSearchParams(location.search); const LS = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
 const SNAP_URL = q.get('snapshot') ?? LS.get('reef:snapshot') ?? 'https://melvin.me/public/txbt4/utxo-knots-150307.dat';
 const BLOCKS_URL = q.get('blocks') ?? LS.get('reef:blocks') ?? 'https://melvin.me/public/txbt4/txbt4-blocks';
@@ -35,7 +35,8 @@ function onMessage(e) { const m = e.data;
   else if (m.type === 'nostr') { node.nostr = m; renderInfo(); }
   else if (m.type === 'error') { node.error = m.text; setSync('Error: ' + m.text.slice(0, 140), null); cprint('node error: ' + m.text, 'err'); }
   else if (m.type === 'log') { cprint('· ' + m.text, 'log'); }
-  else if (m.type === 'coin') { cprint(JSON.stringify(m, null, 2)); } }
+  else if (m.type === 'coin') { cprint(JSON.stringify(m, null, 2)); }
+  else if (m.type === 'block') { const b = { hash: m.hash, confirmations: m.confirmations, height: m.height, version: m.header.version, merkleroot: m.header.merkleRoot ?? m.header.merkleroot, time: m.header.time, nonce: m.header.nonce, bits: typeof m.header.bits === 'number' ? m.header.bits.toString(16) : m.header.bits, nTx: m.nTx, previousblockhash: m.previousblockhash, nextblockhash: m.nextblockhash, size: m.size, pow: 'BLAKE2b', validated_by: 'this tab', tx: m.txids }; cprint(m.req === 'hash' ? m.hash : JSON.stringify(b, null, 2)); } }
 function startSync() { node.phase = 'sync'; node.syncT0 = performance.now(); setSync('Synchronizing with network… fetching the blocks since the fork', 0); post({ type: 'sync', blocksUrl: BLOCKS_URL, noScripts: false }); }
 // ---- menus, pages, node window
 document.querySelectorAll('#menu > div').forEach((m) => { m.onclick = (e) => { const open = m.classList.contains('open'); document.querySelectorAll('#menu > div').forEach((x) => x.classList.remove('open')); if (!open) m.classList.add('open'); e.stopPropagation(); }; });
@@ -70,11 +71,12 @@ const ANS = {
   getpeerinfo: () => [{ id: 0, addr: BLOCKS_URL, kind: 'mirror', bytesrecv: node.recv }, ...['wss://nos.lol', 'wss://relay.damus.io', 'wss://relay.nostr.band'].map((r, i) => ({ id: i + 1, addr: r, kind: 'relay' }))],
   getnostrtip: () => node.nostr ? { height: node.nostr.height, hash: node.nostr.hash, relay: node.nostr.relay, created_at: node.nostr.created_at, agree: node.nostr.agree, live: !!node.nostr.live } : err(-1, 'no tip announcement seen yet'),
   gettxout: (a) => { if (!/^[0-9a-f]{64}$/i.test(a[0] ?? '') || !/^\d+$/.test(a[1] ?? '')) return err(-8, 'gettxout "txid" n'); post({ type: 'coin', key: `${a[0].toLowerCase()}:${a[1]}` }); return '(asked the node; the answer prints when it arrives)'; },
-  getblockhash: (a) => Number(a[0]) === node.height ? node.hash : Number(a[0]) === 150307 ? node.st?.expect.baseHash : err(-8, 'only the tip and the snapshot base are answerable from the page; block lookups need the block file API (next)'),
-  getblock: () => err(-1, 'not offered by the tab yet: block lookups over the mirrored block file are next'),
+  getblockhash: (a) => { const h = Number(a[0]); if (!/^\d+$/.test(a[0] ?? '')) return err(-8, 'getblockhash height'); if (h === 150307) return node.st?.expect.baseHash; if (!node.synced) return err(-28, 'still syncing'); if (h < 150308 || h > node.height) return err(-8, `Block height out of range: this tab holds ${n(150308)} to ${n(node.height)} (the BLAKE2b blocks; the snapshot base is 150307)`); post({ type: 'block', height: h, req: 'hash' }); return '(reading the block file…)'; },
+  getblock: (a) => { if (!node.synced) return err(-28, 'still syncing'); if (/^[0-9a-f]{64}$/i.test(a[0] ?? '')) post({ type: 'block', hash: a[0].toLowerCase(), req: 'block' }); else if (/^\d+$/.test(a[0] ?? '')) post({ type: 'block', height: Number(a[0]), req: 'block' }); else return err(-8, 'getblock "blockhash" (or a height)'); return '(reading the block file…)'; },
+  getblockheader: (a) => ANS.getblock(a),
   uptime: () => Math.floor((Date.now() - T0) / 1000),
   getbalance: () => 0.312, getwalletinfo: () => ({ walletname: 'reef (simulated)', balance: 0.312, unconfirmed_balance: 0.0005, immature_balance: 50, txcount: TX.length, note: 'the wallet is a simulation until Send and Receive are wired to the sidestr wallet' }),
-  help: () => `== Blockchain ==\ngetbestblockhash\ngetblock (not yet)\ngetblockchaininfo\ngetblockcount\ngetblockhash height\ngetsnapshotinfo\ngettxout "txid" n\ngettxoutsetinfo\n\n== Control ==\nhelp\nuptime\n\n== Network ==\ngetnetworkinfo\ngetnostrtip\ngetpeerinfo\n\n== Wallet (simulated) ==\ngetbalance\ngetwalletinfo`,
+  help: () => `== Blockchain ==\ngetbestblockhash\ngetblock "blockhash" | height\ngetblockchaininfo\ngetblockcount\ngetblockhash height\ngetsnapshotinfo\ngettxout "txid" n\ngettxoutsetinfo\n\n== Control ==\nhelp\nuptime\n\n== Network ==\ngetnetworkinfo\ngetnostrtip\ngetpeerinfo\n\n== Wallet (simulated) ==\ngetbalance\ngetwalletinfo`,
 };
 cin.onkeydown = (e) => { if (e.key === 'ArrowUp') { hi = Math.max(0, hi - 1); cin.value = chist[hi] ?? ''; } else if (e.key === 'ArrowDown') { hi = Math.min(chist.length, hi + 1); cin.value = chist[hi] ?? ''; } else if (e.ctrlKey && e.key.toLowerCase() === 'l') { e.preventDefault(); cout.textContent = ''; } else if (e.key === 'Enter') { const line = cin.value.trim(); cin.value = ''; if (!line) return; chist.push(line); hi = chist.length; cprint('> ' + line, 'cmd'); const [cmd, ...args] = line.split(/\s+/); const f = ANS[cmd]; if (!f) return cprint('Method not found (code -32601)', 'err'); let a; try { a = f(args); } catch (x) { return cprint(x.message, 'err'); } if (a && a.__err) return cprint(`${a.__err.message} (code ${a.__err.code})`, 'err'); cprint(typeof a === 'string' ? a : JSON.stringify(a, null, 2)); } };
 function drawTraffic() { const c = $('trc'), dpr = devicePixelRatio; c.width = c.clientWidth * dpr; c.height = 260 * dpr; const x = c.getContext('2d'); x.clearRect(0, 0, c.width, c.height); x.strokeStyle = '#ddd'; for (let i = 1; i < 5; i++) { x.beginPath(); x.moveTo(0, c.height * i / 5); x.lineTo(c.width, c.height * i / 5); x.stroke(); } x.fillStyle = '#555'; x.font = `${11 * dpr}px DejaVu Sans, sans-serif`; x.fillText(`received ${(node.recv / 1e6).toFixed(2)} MB in this session: the snapshot${node.hist.length ? ' and the block file' : ''}; a per-second graph is next`, 8 * dpr, 14 * dpr); }
