@@ -9,7 +9,7 @@ export const meta = {
 export function render(container, ctx = {}) {
   container.innerHTML = '';
   const f = document.createElement('iframe');
-  f.src = 'https://bitcoin-blake.github.io/reef/' + (ctx.params ? '?' + new URLSearchParams(ctx.params) : '');
+  f.src = 'https://bitcoin-blake.github.io/reef/?embedded=1' + (ctx.params ? '&' + new URLSearchParams(ctx.params) : '');
   f.title = 'Reef'; f.allow = 'clipboard-write'; f.style.cssText = 'width:100%;height:100%;min-height:640px;border:0;background:#d9dde3';
   container.appendChild(f);
   return () => { f.remove(); };
