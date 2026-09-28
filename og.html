@@ -1,0 +1,43 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+html,body{margin:0;width:1200px;height:630px;overflow:hidden}body{background:linear-gradient(135deg,#1b2a3a,#0e1620);font-family:"DejaVu Sans",Arial,sans-serif;color:#e8ebf2;position:relative}
+.kicker{position:absolute;left:64px;top:56px;font-size:13px;font-weight:700;letter-spacing:2.5px;color:#0ecb81;text-transform:uppercase}
+h1{position:absolute;left:64px;top:84px;margin:0;font-size:54px;letter-spacing:-1.5px;line-height:1.05}h1 small{display:block;font-size:22px;font-weight:400;color:#a8b3c2;letter-spacing:0;margin-top:10px}
+.sub{position:absolute;left:64px;top:230px;width:480px;font-size:19px;line-height:1.45;color:#c3cbd8}
+.foot{position:absolute;left:64px;bottom:44px;font-family:"DejaVu Sans Mono",monospace;font-size:16px;color:#0ecb81}.foot span{color:#8a94a6;font-family:"DejaVu Sans",Arial,sans-serif;font-size:12px;letter-spacing:2px;font-weight:700;margin-left:16px}
+.win{position:absolute;right:48px;top:70px;width:600px;height:470px;background:#efefef;border:1px solid #8f8f8f;border-radius:8px;box-shadow:0 30px 60px rgba(0,0,0,.5);color:#232323;font-size:12px;overflow:hidden}
+.tb{height:28px;background:linear-gradient(#f6f6f6,#e6e6e6);border-bottom:1px solid #c9c9c9;display:flex;align-items:center;justify-content:center;font-size:12px;position:relative}.tb i{position:absolute;left:10px;top:8px;width:11px;height:11px;border-radius:50%;background:#c8c8c8;border:1px solid #a9a9a9;box-shadow:16px 0 0 #c8c8c8,32px 0 0 #c8c8c8}
+.badge{position:absolute;right:8px;top:6px;font-size:9px;letter-spacing:1.5px;color:#8a5a00;background:#fff3d6;border:1px solid #e3c47a;border-radius:3px;padding:1px 5px}
+.menu{height:22px;display:flex;gap:14px;padding:0 10px;align-items:center;border-bottom:1px solid #d6d6d6;font-size:12px}
+.tool{height:52px;display:flex;gap:4px;padding:4px 6px;border-bottom:1px solid #d6d6d6}.tool div{width:96px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:11.5px;border:1px solid transparent;border-radius:4px}.tool div.on{background:#e2e2e2;border-color:#b6b6b6}.tool svg{width:18px;height:18px}
+.body{padding:10px;display:grid;grid-template-columns:1fr 1fr;gap:10px}fieldset{border:1px solid #b9b9b9;border-radius:4px;padding:8px 10px;margin:0}legend{font-weight:600;padding:0 3px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:5px 14px}.kv .v{font-family:"DejaVu Sans Mono",monospace;text-align:right}.kv .big{font-weight:700;font-size:14px}.kv .dim{color:#6d6d6d}.kv .sep{grid-column:1/3;border-top:1px solid #d6d6d6;margin:4px 0}
+.r{display:grid;grid-template-columns:14px 78px 1fr auto;gap:8px;font-size:11px;padding:4px 6px;border-bottom:1px solid #eee;background:#fff}.r .a{font-family:"DejaVu Sans Mono",monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.in{color:#2a8c3a;font-family:"DejaVu Sans Mono",monospace}
+.status{position:absolute;bottom:0;left:0;right:0;height:24px;border-top:1px solid #d6d6d6;background:#efefef;display:flex;align-items:center;gap:10px;padding:0 8px;font-size:11px}.tn{margin-left:auto;background:#1f9a5a;color:#fff;border-radius:3px;padding:0 6px;font-size:10px;font-weight:700;letter-spacing:.5px}
+.node{position:absolute;left:150px;top:170px;width:400px;height:250px;background:#efefef;border:1px solid #8f8f8f;border-radius:6px;box-shadow:0 14px 40px rgba(0,0,0,.35);font-size:11px;overflow:hidden}.node .tb{height:24px}
+.tabs{display:flex;padding:6px 6px 0;border-bottom:1px solid #b9b9b9}.tabs div{padding:3px 10px;border:1px solid #b9b9b9;border-bottom:0;border-radius:4px 4px 0 0;background:#e3e3e3;margin-right:-1px}.tabs div.on{background:#efefef;position:relative;top:1px}
+pre{margin:8px;background:#fff;border:1px solid #b9b9b9;border-radius:3px;padding:6px 8px;font:10.5px/1.45 "DejaVu Sans Mono",monospace;height:168px;overflow:hidden}.c{color:#1a5fb4}
+</style></head><body>
+<div class="kicker">a Knots-style node in a browser tab</div>
+<h1>Reef<small>the BLAKE2b testnet4, synced from a verified snapshot and validated in the page</small></h1>
+<div class="sub">The familiar window, a real node behind it: the UTXO snapshot fetched, hashed and indexed in the tab, every block since the fork checked, a console that answers from the tab's own state, and a key of your own to receive and send.</div>
+<div class="foot">bitcoin-blake.github.io/reef/ <span>~90 S TO A VALIDATED TIP</span></div>
+<div class="win"><div class="tb"><i></i>Reef — txbt4, BLAKE2b testnet4 · a node in this tab<span class="badge">TESTNET4 · TEST COINS</span></div><div class="menu"><span>File</span><span>Settings</span><span>Window</span><span>Help</span></div>
+<div class="tool"><div class="on"><svg viewBox="0 0 24 24" fill="none" stroke="#2f2f2f" stroke-width="2"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Overview</div><div><svg viewBox="0 0 24 24" fill="none" stroke="#2f2f2f" stroke-width="2"><path d="M4 12h13M12 5l7 7-7 7"/></svg>Send</div><div><svg viewBox="0 0 24 24" fill="none" stroke="#2f2f2f" stroke-width="2"><path d="M20 12H7M12 5l-7 7 7 7"/></svg>Receive</div><div><svg viewBox="0 0 24 24" fill="none" stroke="#2f2f2f" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Transactions</div></div>
+<div class="body"><fieldset><legend>Balances</legend><div class="kv"><span>Available:</span><span class="v big">0.01000000 tBTC</span><span>Pending:</span><span class="v dim">0.00000000 tBTC</span><span>Immature:</span><span class="v dim">0.00000000 tBTC</span><span class="sep"></span><span style="font-weight:600">Total:</span><span class="v big">0.01000000 tBTC</span></div></fieldset><fieldset><legend>Recent transactions</legend><div class="r"><span>⬇</span><span>block 151,930</span><span class="a">Received with · tb1p7h23u0t9nadscuda50…</span><span class="in">0.01000000</span></div></fieldset></div>
+<div class="node"><div class="tb"><i></i>Node window</div><div class="tabs"><div>Information</div><div class="on">Console</div><div>Network Traffic</div><div>Peers</div></div><pre><span class="c">&gt; getblockchaininfo</span>
+{
+  "chain": "testnet4",
+  "blocks": 151930,
+  "bestblockhash": "0000000067d8…",
+  "verificationprogress": 1,
+  "warnings": ["synced from the verified UTXO
+   snapshot at 150307; BLAKE2b blocks since
+   the fork validated in this tab"]
+}
+<span class="c">&gt; getsnapshotinfo</span>
+{ "hash_serialized_3": "372bfcaeef1e…", "verified": true,
+  "sync_history": { "check the sha256": 9.0,
+  "parse, hash and index the snapshot": 14.2,
+  "validate 1,621 blocks to the tip": 28.5 } }</pre></div>
+<div class="status">Up to date · 151,930<span class="tn">TESTNET4 · BLAKE2b</span></div></div>
+</body></html>
