@@ -4,13 +4,11 @@
 
 Live: https://bitcoin-blake.github.io/reef/
 
-## Status: mockup
+## Status: the node is real, the wallet is not yet
 
-This is the mockup, made 28 September 2026. It opens on the Overview of the BLAKE2b testnet4 (`txbt4`) at block 151,927, and the chain figures are real: the tip, the snapshot's hashes, the mempool, the peers as the mirror's node saw them. The wallet, its coins and the console's answers are frozen samples, and the window says so in the corner.
+Since 28 September 2026 (evening) the page is wired to [blaketestnode](https://github.com/bitcoin-blake/blaketestnode)'s browser node: its worker, pinned by commit and loaded from the CDN, fetches the fork-point UTXO snapshot (870 MB, 14.2 million coins) into the tab's private file system, checks its sha256, recomputes `hash_serialized_3`, builds a txid index, then syncs the BLAKE2b blocks since the fork from a mirror and validates every one, and keeps following the tip. The status bar shows each phase with a progress bar and an estimate, the way a node does; the Node window's Information tab shows the live figures and a sync history with the seconds each phase took; the Console answers `getblockchaininfo`, `getblockcount`, `getbestblockhash`, `getblockhash`, `getsnapshotinfo`, `gettxoutsetinfo`, `gettxout`, `getnetworkinfo`, `getpeerinfo`, `getnostrtip` and `uptime` from the tab's own state, in the shapes Knots uses, and says "Method not found (code -32601)" to the rest. Measured on the machine that runs the estate, snapshot from a local server: fetch 0.5 s, sha256 9 s, parse and index 14 s, 1,621 blocks validated in 28.5 s.
 
-The real node it will front is [blaketestnode](https://github.com/bitcoin-blake/blaketestnode)'s `browser/` page: the fork-point UTXO snapshot (870 MB, 14.2 million coins) is fetched into the tab's private file system, its sha256 and `hash_serialized_3` recomputed against the pinned values, a txid index built, and every BLAKE2b block since the fork validated in a worker. Measured on the machine that runs the estate: about 63 seconds from a snapshot on disk to a validated tip in a tab (datstr `bench/`).
-
-Wiring the mockup to that node means replacing the frozen samples with the worker's messages and the tab's indexes: the console's `getblockchaininfo`, `getblock`, `gettxoutsetinfo` and `getsnapshotinfo` are answerable from the tab as it stands; `getpeerinfo` and the traffic graph become the mirror and the relays it reads from. Send and Receive come from the sidestr wallet.
+The wallet, its coins and `getbalance` are still a simulation, and the badge in the corner says so, until Send and Receive are wired to the sidestr wallet. `getblock` over the mirrored block file is next. The tab needs about 1.1 GB of storage; a first visit downloads the snapshot (`?snapshot=` and `?blocks=` override the sources; Settings → Options edits them; File → Wipe removes the files from the tab).
 
 ## Name
 
