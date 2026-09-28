@@ -38,6 +38,7 @@ button.q { font:inherit; padding:4px 14px; border:1px solid #a7a7a7; border-radi
 .con { display:flex; flex-direction:column; height:100%; gap:8px } .con pre { flex:1; margin:0; background:#fff; border:1px solid var(--line); border-radius:3px; padding:8px 10px; font:12px/1.45 var(--mono); overflow:auto; white-space:pre-wrap } .con .cmd { color:#1a5fb4 } .con .err { color:var(--red) } .con .log { color:#7a7a7a } .con .in { display:flex; gap:6px } .con .in input { font-family:var(--mono) }
 .peers { display:grid; grid-template-columns:1fr 280px; gap:12px; height:100% } .peers table { font-size:12px } .pd { border:1px solid var(--line); background:#fff; border-radius:3px; padding:8px 10px; font-size:12px } .pd .kv .v { text-align:left; font-size:11.5px }
 canvas.tr { width:100%; height:260px; background:#fff; border:1px solid var(--line); border-radius:3px }
+#toasts { position:fixed; right:18px; bottom:18px; display:flex; flex-direction:column; gap:8px; z-index:60 } .toast { background:#fffbe6; border:1px solid #d9c56a; border-left:4px solid #2a8c3a; border-radius:6px; padding:8px 12px; font-size:12px; box-shadow:0 8px 24px rgba(0,0,0,.25); max-width:360px; transition:opacity .4s } .toast.out { opacity:0 }
 </style>
 </head>
 <body>
@@ -89,6 +90,7 @@ canvas.tr { width:100%; height:260px; background:#fff; border:1px solid var(--li
   </div>
   <div class="status"><span class="bar"><span id="syncmsg">Starting the node…</span><span class="pb" id="pb" hidden><i id="pbi" style="width:0%"></i></span><span id="synceta" class="mono"></span></span><span class="fill"></span><span class="tnbadge" title="BLAKE2b testnet4, alias txbt4">TESTNET4 · BLAKE2b</span>
     <span class="ico"><svg viewBox="0 0 16 16" title="HD key generation is enabled"><path d="M3 12V6l3-3 3 3v6" fill="none" stroke="#2f2f2f" stroke-width="1.6"/><path d="M11 12V4" stroke="#2f2f2f" stroke-width="1.6"/></svg><svg viewBox="0 0 16 16" title="Wallet is not encrypted"><rect x="3" y="7" width="10" height="7" rx="1.5" fill="none" stroke="#2f2f2f" stroke-width="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0" fill="none" stroke="#2f2f2f" stroke-width="1.5"/></svg><svg viewBox="0 0 16 16" id="conn" title="9 active connections to the Bitcoin network"><rect x="1" y="11" width="2.5" height="4" fill="#2f2f2f"/><rect x="5" y="8" width="2.5" height="7" fill="#2f2f2f"/><rect x="9" y="5" width="2.5" height="10" fill="#2f2f2f"/><rect x="13" y="2" width="2.5" height="13" fill="#2f2f2f"/></svg><svg viewBox="0 0 16 16" title="Up to date: the tab has validated every block to 151,927"><path d="M2 8l4 4 8-8" fill="none" stroke="#2a8c3a" stroke-width="2"/></svg></span></div>
+  <div id="toasts"></div>
   <!-- the node window -->
   <div class="nw" id="nw"><div class="rs se" data-rs="se"></div><div class="title" id="nwt"><div class="dots"><i></i><i></i><i></i></div><span>Node window</span><span class="badge" style="top:6px" id="nwclose" title="close">close</span></div>
     <div class="tabs" id="nwtabs"><div class="on" data-t="info">Information</div><div data-t="console">Console</div><div data-t="traffic">Network Traffic</div><div data-t="peers">Peers</div></div>
