@@ -74,7 +74,10 @@ if (!embedded) {
 document.querySelectorAll('#menu > div').forEach((m) => { m.onclick = (e) => { const open = m.classList.contains('open'); document.querySelectorAll('#menu > div').forEach((x) => x.classList.remove('open')); if (!open) m.classList.add('open'); e.stopPropagation(); }; });
 document.addEventListener('click', () => document.querySelectorAll('#menu > div').forEach((x) => x.classList.remove('open')));
 $('m-node').onclick = () => $('nw').classList.add('open'); $('nwclose').onclick = () => $('nw').classList.remove('open');
-$('m-about').onclick = () => alert(`Reef 0.1 — a Knots-style node in a browser tab.\nThe node is real: the fork-point UTXO snapshot is fetched into this tab, its sha256 and hash_serialized_3 recomputed, and every BLAKE2b block since the fork validated here (blaketestnode). The wallet is a simulation until Send and Receive are wired.\nHeight ${node.height ?? '…'}${node.hash ? ' · ' + node.hash.slice(0, 16) + '…' : ''}`);
+const REPO = 'https://github.com/bitcoin-blake/reef';
+$('m-readme').onclick = () => window.open(REPO + '#readme', '_blank', 'noopener'); $('m-source').onclick = () => window.open(REPO, '_blank', 'noopener'); $('m-issue').onclick = () => window.open(REPO + '/issues/new', '_blank', 'noopener');
+$('about-src').href = REPO; $('about-issues').href = REPO + '/issues'; $('about-ok').onclick = () => $('about').close();
+$('m-about').onclick = () => { $('about-pins').textContent = `node blaketestnode@${NODE.slice(-40, -33)} · lib sidestr/spec@${LIB.match(/@([0-9a-f]{7})/)[1]}` + (node.height != null ? ` · height ${n(node.height)}` : ''); $('about').showModal(); };
 $('m-wipe').onclick = () => { if (confirm('Remove the snapshot and its index from this tab\'s storage? The next visit fetches it again.')) post({ type: 'wipe' }); };
 $('m-options').onclick = () => { const s = prompt('Snapshot URL (a plain file with Range and CORS)', SNAP_URL); if (s === null) return; const b = prompt('Blocks URL (the mirror\'s file, without .dat)', BLOCKS_URL); if (b === null) return; LS.set('reef:snapshot', s.trim()); LS.set('reef:blocks', b.trim()); location.search = ''; };
 document.addEventListener('keydown', (e) => { if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'd') { e.preventDefault(); $('nw').classList.toggle('open'); } });

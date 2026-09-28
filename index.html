@@ -38,6 +38,7 @@ button.q { font:inherit; padding:4px 14px; border:1px solid #a7a7a7; border-radi
 .con { display:flex; flex-direction:column; height:100%; gap:8px } .con pre { flex:1; margin:0; background:#fff; border:1px solid var(--line); border-radius:3px; padding:8px 10px; font:12px/1.45 var(--mono); overflow:auto; white-space:pre-wrap } .con .cmd { color:#1a5fb4 } .con .err { color:var(--red) } .con .log { color:#7a7a7a } .con .in { display:flex; gap:6px } .con .in input { font-family:var(--mono) }
 .peers { display:grid; grid-template-columns:1fr 280px; gap:12px; height:100% } .peers table { font-size:12px } .pd { border:1px solid var(--line); background:#fff; border-radius:3px; padding:8px 10px; font-size:12px } .pd .kv .v { text-align:left; font-size:11.5px }
 canvas.tr { width:100%; height:260px; background:#fff; border:1px solid var(--line); border-radius:3px }
+#about { border:1px solid #9a9a9a; border-radius:6px; padding:0; background:var(--bg); color:var(--text); max-width:560px; box-shadow:0 12px 36px rgba(0,0,0,.28); font:inherit } #about::backdrop { background:rgba(0,0,0,.18) } #about .t { padding:6px 12px; background:#e9e9e9; border-bottom:1px solid var(--line2); font-weight:600; text-align:center } #about .b { padding:14px 18px; display:grid; grid-template-columns:64px 1fr; gap:14px; line-height:1.45 } #about .b p { margin:0 0 8px } #about .b a { color:#1a5fb4 } #about .f { padding:8px 12px; border-top:1px solid var(--line2); text-align:right } #about button { font:inherit; padding:3px 18px; border:1px solid #9a9a9a; border-radius:3px; background:#f4f4f4 } #about .mono { font-family:ui-monospace, monospace; font-size:12px }
 #toasts { position:fixed; right:18px; bottom:18px; display:flex; flex-direction:column; gap:8px; z-index:60 } .toast { background:#fffbe6; border:1px solid #d9c56a; border-left:4px solid #2a8c3a; border-radius:6px; padding:8px 12px; font-size:12px; box-shadow:0 8px 24px rgba(0,0,0,.25); max-width:360px; transition:opacity .4s } .toast.out { opacity:0 }
 </style>
 </head>
@@ -49,7 +50,7 @@ canvas.tr { width:100%; height:260px; background:#fff; border:1px solid var(--li
     <div data-m="file">File<div class="dd"><div>Create Wallet…</div><div>Open Wallet…</div><div>Close Wallet</div><hr><div>Sign message…</div><div>Verify message…</div><hr><div>Load PSBT from file…</div><hr><div id="m-wipe">Wipe the snapshot from this tab…</div><hr><div>Exit<span class="k">Ctrl+Q</span></div></div></div>
     <div data-m="settings">Settings<div class="dd"><div>Encrypt Wallet…</div><div>Change Passphrase…</div><hr><div>Mask values<span class="k">Ctrl+Shift+M</span></div><hr><div id="m-options">Options…</div></div></div>
     <div data-m="window">Window<div class="dd"><div>Minimize</div><div>Zoom</div><hr><div>Main Window<span class="k">Ctrl+M</span></div><div id="m-node">Node window<span class="k">Ctrl+Shift+D</span></div><hr><div>Sending addresses</div><div>Receiving addresses</div></div></div>
-    <div data-m="help">Help<div class="dd"><div>Command-line options</div><hr><div id="m-about">About Reef</div><div>About Qt</div></div></div>
+    <div data-m="help">Help<div class="dd"><div id="m-readme">README</div><div id="m-source">Source on GitHub</div><div id="m-issue">Report an issue…</div><hr><div id="m-about">About Reef</div></div></div>
   </div>
   <div class="tool">
     <button class="on" data-p="overview"><svg viewBox="0 0 24 24" fill="none" stroke="#2f2f2f" stroke-width="2"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Overview</button>
@@ -115,5 +116,12 @@ The node answers from this tab's own validated state; wallet commands answer for
 </div>
 <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 <script type="module" src="reef.js"></script>
+<dialog id="about"><div class="t">About Reef</div><div class="b"><div><img src="og.png" alt="" style="width:64px;height:64px;object-fit:cover;border-radius:12px;border:1px solid var(--line2)"></div><div>
+<p><b>Reef 0.1</b> · a Bitcoin node in a browser tab, for txbt4, the BLAKE2b testnet4.</p>
+<p>It looks like Knots and runs a chain Knots defined, but it is not Knots. The tab fetches the fork-point UTXO snapshot, recomputes its hashes, validates every block since the fork and follows the chain tip. The wallet is one key kept in this tab.</p>
+<p class="mono" id="about-pins"></p>
+<p><a id="about-src" target="_blank" rel="noopener">Source</a> · <a id="about-issues" target="_blank" rel="noopener">Issues</a> · <a href="https://github.com/bitcoin-blake/blaketestnode" target="_blank" rel="noopener">blaketestnode</a> · <a href="https://github.com/sidestr/spec" target="_blank" rel="noopener">sidestr</a></p>
+<p>Copyright © 2026 the Reef contributors. Licensed under the GNU Affero General Public License, version 3 or later.</p>
+</div></div><div class="f"><button id="about-ok">OK</button></div></dialog>
 </body>
 </html>
