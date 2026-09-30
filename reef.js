@@ -136,7 +136,7 @@ async function walletInit() {
   $('feechoose').onclick = () => openOptions('wallet'); $('sendunit').value = String(unit().div); $('sendamt').value = unit().dp ? (0).toFixed(unit().dp) : '0'; applyDisplay();
   renderWallet(); if (node.synced) askCoins();
 }
-function askCoins() { if (W && worker) post({ type: 'coins', script: W.script }); }
+function askCoins() { if (W) post({ type: 'coins', script: W.script }); }
 let seen = new Map(); const seenKey = () => 'reef:seen:' + W.script.slice(4, 20); const loadSeen = () => { try { return new Map(JSON.parse(LS.get(seenKey()) ?? '[]')); } catch { return new Map(); } };
 const saveSeen = () => { for (const [k, v] of loadSeen()) if (!seen.has(k)) seen.set(k, v); LS.set(seenKey(), JSON.stringify([...seen].slice(-500))); }; // every coin of ours this tab has seen, key → value, so change can be told from a receipt after a reload
 const reserved = () => new Set(sent.filter((s) => s.pending).flatMap((s) => s.inputs ?? []));
