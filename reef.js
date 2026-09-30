@@ -1,7 +1,7 @@
 // Reef: the Qt face over blaketestnode's browser node. The worker is the node's own (pinned by commit), loaded through a
 // blob so this stays one page; the page drives its phases (fetch, hash, verify, sync) and shows them the way a node does.
 const $ = (id) => document.getElementById(id);
-const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@de33b347ccde458f5b82c33b3bab16abd328a7ec';
+const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@c6cbed10adac743a9e6721dbf0c193d17ae68731';
 const LIB = 'https://cdn.jsdelivr.net/gh/sidestr/spec@fe689e9c723f9bf43393d2dd5b6f924a701c8a18/siding/lib', CDN = 'https://cdn.jsdelivr.net/gh/bitcoin-desktop/schema@v0.0.27';
 const DEFAULT_RELAYS = ['wss://nos.lol', 'wss://relay.primal.net', 'wss://nostr.mom', 'wss://nostr.oxtr.dev'];
 const OPT_DEFAULTS = { unit: 'tbtc', feeRate: 1, notify: true, mask: false, relays: DEFAULT_RELAYS, torrent: false, seed: false };
