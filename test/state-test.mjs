@@ -33,9 +33,9 @@ t('a spend answer for a payment already settled changes nothing', S.onSpendAnswe
   t('the replacement is mined: it is confirmed, the original did not happen', !sent[1].pending && sent[1].height === 152106 && sent[0].replaced === tx('2') && !sent[0].pending); }
 { const sent = [pay({ replacedBy: tx('2') }), pay({ txid: tx('2'), kind: 'cancel', self: true, sats: 0, fee: 400, change: 9600, replaces: tx('1') })];
   const fx = S.onCoins({ sent, coins: [{ key: tx('1') + ':1', value: 6845, height: 152106 }] });
-  t('the original wins over a cancel: the payment is confirmed, the cancel is marked not taken', !sent[0].pending && sent[0].height === 152106 && sent[1].replaced === tx('1') && S.stateOf(sent[1], { inMempool: () => false, height: 152106, now: 0 }) === 'cancel not taken' && fx[0].notice === 'Payment confirmed'); }
+  t('the original wins over a cancel: the payment is confirmed, the cancel is marked not taken', !sent[0].pending && sent[0].height === 152106 && sent[1].replaced === tx('1') && /too late/.test(S.stateOf(sent[1], { inMempool: () => false, height: 152106, now: 0 })) && fx[0].notice === 'Payment confirmed'); }
 { const sent = [pay({ replacedBy: tx('2') }), pay({ txid: tx('2'), fee: 400, change: 6600, replaces: tx('1') })];
-  const fx = S.onRefused(sent, tx('2'), 'a replacement must pay at least 266 sat');
+  const fx = S.onRefused(sent, tx('2'), 'a replacement must pay at least 266 sat', '00');
   t('a refused replacement stops being published and the original stands again', sent[1].refused && !sent[0].replacedBy && fx[0].bad && S.republishDue(sent, 1e12).map((s) => s.txid).join() === tx('1')); }
 
 // ---- republishing and forgetting
@@ -45,9 +45,37 @@ t('a spend answer for a payment already settled changes nothing', S.onSpendAnswe
   t('a payment in the tab\'s mempool is never offered to forget', !S.forgettable(sent, sent[0], 152120, inMp));
   t('one waiting 6 blocks and not in the mempool may be forgotten; 5 blocks not yet', S.forgettable(sent, sent[0], 152106, () => false) && !S.forgettable(sent, sent[0], 152105, () => false)); }
 { const st = (s, o = {}) => S.stateOf(s, { inMempool: () => false, height: 152101, now: 2000, ...o });
-  t('the states read in words', st(pay()) === 'published' && st(pay({ relays: [] })) === 'not yet handed to a relay: retrying' && st(pay(), { inMempool: () => true }) === 'waiting for a block' && st(pay({ replacedBy: 'x' })) === 'being replaced' && st(pay({ refused: 'x' })) === 'refused by the network' && st(pay({ abandoned: true })) === 'forgotten: its coins are released' && st(pay({ pending: false, height: 1 })) === 'confirmed' && st(pay(), { now: 2000 + 11 * 60e3 }) === 'not seen yet: published again every 10 minutes'); }
+  t('the states read in words, each with what to do next', st(pay()) === 'handed to the relays' && /retrying/.test(st(pay({ relays: [] }))) && st(pay(), { inMempool: () => true }) === 'waiting for a block' && /raise the fee/.test(st(pay({ tip: 152097 }), { inMempool: () => true })) && /higher fee/.test(st(pay({ replacedBy: 'x' }))) && /original stands/.test(st(pay({ refused: 'too cheap' }))) && /cancel it/.test(st(pay({ refusedNote: 'fee' }))) && /next payment/.test(st(pay({ abandoned: true }))) && /made elsewhere/.test(st(pay({ hex: undefined }))) && st(pay({ pending: false, height: 1 })) === 'confirmed' && /every 10 minutes/.test(st(pay(), { now: 2000 + 11 * 60e3 }))); }
 
+// ---- round three: the persist round trip the page performs
+{ const stored = [pay({ replacedBy: tx('2') }), pay({ txid: tx('2'), fee: 400, change: 6600, replaces: tx('1') })]; const mem = clone(stored);
+  S.onRefused(mem, tx('2'), 'too cheap', '00'); const merged = S.mergeSent(mem, clone(stored)); const orig = merged.find((s) => s.txid === tx('1'));
+  t('a refused replacement, merged with the copy stored before the refusal, still leaves the original standing and published again', !orig.replacedBy && S.republishDue(merged, 1e12).map((s) => s.txid).join() === tx('1')); }
+{ const full = pay({ pending: true }); const tomb = { txid: tx('1'), pending: false, tomb: true, at: 1 };
+  const m = S.mergeSent([tomb], [clone(full)]); t('a tombstone never overrules a full record', m[0].hex === '00' && !m[0].tomb); }
+{ let list = []; for (let r = 0; r < 4; r++) list = S.trimSent([...list, ...Array.from({ length: 200 }, (_, i) => pay({ txid: (r * 1000 + i).toString(16).padStart(64, '0'), pending: false, at: r * 1000 + i }))], 100, 250);
+  t('tombstones are capped', list.filter((s) => s.tomb).length === 250 && list.filter((s) => !s.tomb).length === 100); }
+{ const sent = [pay({ change: 0 })]; t('a spend answer that found nothing changes nothing (the page asks again later)', S.onSpendAnswer(sent, tx('1'), { found: false }).length === 0 && sent[0].pending); }
+// ---- refusals are only of the exact bytes we signed; an original is never let go by one
+{ const sent = [pay()]; const fx = S.onRefused(sent, tx('1'), 'input 0: bad signature', 'ff');
+  t('a refusal of a copy with other bytes (a broken signature, same txid) changes nothing', fx.length === 0 && !sent[0].refused && !sent[0].refusedNote);
+  const fx2 = S.onRefused(sent, tx('1'), 'fee too low', '00'); const W2 = await import('../lib/wallet.mjs');
+  t('a refusal of our own original is a note: its coins stay held and it is still published', fx2.length === 1 && sent[0].refusedNote && !sent[0].refused && S.republishDue(sent, 1e12).length === 1 && W2.balances({ coins: [{ key: inA, value: 10000, height: 1 }], sent, height: 10 }).available === 0); }
+// ---- stored records are checked against their own transaction
+{ const check = (hex) => (hex === '00' ? { txid: tx('1'), inputs: [inA] } : { txid: tx('9'), inputs: [] }); const scriptOf = (a) => (a === 'tb1pdest' ? '5120' + 'dd'.repeat(32) : null);
+  t('a record whose hex is its own transaction is kept', S.validRecord(pay(), { check, scriptOf }));
+  t('a record whose hex is another transaction, or whose destination does not match its address, is dropped', !S.validRecord(pay({ hex: 'deadbeef' }), { check, scriptOf }) && !S.validRecord(pay({ toScript: '5120' + 'ee'.repeat(32) }), { check, scriptOf }) && !S.validRecord({ txid: 'x' }, { check, scriptOf })); }
+// ---- a reorganisation: the verdict learnt last wins the merge
+{ const P = pay({ replacedBy: tx('2') }), R = pay({ txid: tx('2'), fee: 400, change: 6600, replaces: tx('1') }); const a = [P, R]; S.confirm(a, R, 152106); const stored = clone(a);
+  await new Promise((r) => setTimeout(r, 5)); S.confirm(a, P, 152107); const m = S.mergeSent(a, stored);
+  t('after a reorganisation mines the original instead, the merge keeps the newer verdict', !m.find((x) => x.txid === tx('1')).replaced && m.find((x) => x.txid === tx('1')).height === 152107 && m.find((x) => x.txid === tx('2')).replaced === tx('1')); }
+// ---- forgetting is measured from the newest version of a payment
+{ const sent = [pay({ tip: 152100, replacedBy: tx('2') }), pay({ txid: tx('2'), tip: 152105, replaces: tx('1') })];
+  t('a payment raised at 152,105 is not forgettable at 152,107 though the original is old', !S.forgettable(sent, sent[0], 152107, () => false) && S.forgettable(sent, sent[0], 152111, () => false)); }
 // ---- the page's version and version.json agree (a release that forgets one shows a false update banner)
 { const { readFileSync } = await import('node:fs'); const src = readFileSync(new URL('../reef.js', import.meta.url), 'utf8'); const v = src.match(/export const VERSION = '([^']+)'/)?.[1]; const j = JSON.parse(readFileSync(new URL('../version.json', import.meta.url), 'utf8'));
-  t('reef.js VERSION matches version.json', v && v === j.version, `${v} vs ${j.version}`); }
+  t('reef.js VERSION matches version.json', v && v === j.version, `${v} vs ${j.version}`);
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8'); t('index.html loads reef.js?v= the same version', html.includes(`reef.js?v=${v}"`));
+  const node = src.match(/blaketestnode@([0-9a-f]{40})/)?.[1], lib = src.match(/sidestr\/spec@([0-9a-f]{40})/)?.[1], eng = src.match(/schema@([0-9a-f]{40})/)?.[1]; const csp = html.match(/Content-Security-Policy" content="([^"]+)"/)?.[1] ?? '';
+  t('the security policy names the exact pinned node, library and engine', !!node && !!lib && !!eng && csp.includes(`blaketestnode@${node}/`) && csp.includes(`spec@${lib}/`) && csp.includes(`schema@${eng}/`) && !/cdn\.jsdelivr\.net[ ;]/.test(csp)); }
 console.log(`\n${ok} passed, ${bad} failed`); process.exit(bad ? 1 : 0);

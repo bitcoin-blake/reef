@@ -88,4 +88,9 @@ t('send-all with a balance under the fee is refused', throws(() => W.plan({ coin
   W.recordReceipts(ledger, [], () => false); const h = W.history({ coins: [], sent: [], height, address: 'x', ledger });
   t('once spent, the receipt is still in the history', h.length === 1 && h[0].sats === 10000 && h[0].kind === 'in');
   t('change of my own payment is never a receipt', W.recordReceipts(new Map(), [a], () => true).length === 0); }
+// ---- freeing coins never allows paying twice: a forgotten payment's coins go into the next payment first
+{ const small = coin(41, 3000), big = coin(42, 90000); const sent = [{ txid: 'fe'.repeat(32), sats: 2000, fee: 155, change: 845, pending: true, abandoned: true, inputs: [small.key] }];
+  const first = W.reuseFirst(sent); const p = W.plan({ coins: W.spendable([small, big], height, W.balances({ coins: [small, big], sent, height }).held, first), amount: 5000, rate: 1, destSpk: spkB, changeSpk: spkA });
+  t('the next payment spends a coin of the forgotten one first, though a larger coin alone would do', p.picked[0].key === small.key && p.picked.length === 2);
+  t('a refused payment\'s coins go first too', W.reuseFirst([{ ...sent[0], abandoned: false, refused: 'x' }]).has(small.key) && !W.reuseFirst([{ ...sent[0], abandoned: false }]).size); }
 console.log(`\n${ok} passed, ${bad} failed`); process.exit(bad ? 1 : 0);
