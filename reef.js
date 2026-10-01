@@ -4,7 +4,7 @@
 // tested against the kernel; this file is the host: storage, the node, the relays, the window. Every string that comes
 // from outside (relays, the mempool, the chain, links, options) reaches the page as text, never as markup.
 const $ = (id) => document.getElementById(id);
-export const VERSION = '2026-10-01.38';
+export const VERSION = '2026-10-01.39';
 const SCHEMA = 2; // the storage layout this version writes
 const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@670ad2bd5ae67d9f99c6c24c8fc5f3eb2b3e2b5b';
 const LIB = 'https://cdn.jsdelivr.net/gh/sidestr/spec@fe689e9c723f9bf43393d2dd5b6f924a701c8a18/siding/lib',
@@ -145,6 +145,14 @@ const txLink = (txid, text = txid) =>
 
 // ---- banners: one line each at the top of the window, for what the person must know now
 const dismissed = new Set();
+// IDLE is declared further down; a notice raised before then (a page error at load) reads it as not idle
+const idleNow = () => {
+  try {
+    return IDLE;
+  } catch {
+    return false;
+  }
+};
 const STICKY = new Set(['fatal', 'nodeerr', 'walleterr', 'schema', 'savefail', 'keygone', 'lockfail', 'badkey', 'nokey', 'trustbad']);
 // spoken from where the reader is: inside an open dialog or the (modal) node window, everything else is inert and silent
 function sayOnce(text, urgent = false) {
@@ -258,7 +266,17 @@ function banner(id, cls, text, actions = []) {
     el.appendChild(x);
   }
   const all = [...$('banners').children];
-  const rank = (b) => (b.classList.contains('bad') ? 0 : b.classList.contains('warn') ? 1 : 2);
+  // the notices that say what state this tab is in, and hold its one way on (Start, Run it here, Check again, Reload), come
+  // first whatever their level: a phone shows only the first; in an idle tab the set-aside notice, with nothing to act on, last
+  const rank = (b) => {
+    // the view module loads after the first notices can be raised (a page error at load): by level until it is in
+    let view = null;
+    try {
+      view = V;
+    } catch {}
+    const cls = b.dataset.cls;
+    return view ? view.noticeRank(b.dataset.b, cls, idleNow()) : cls === 'bad' ? 0 : cls === 'warn' ? 1 : 2;
+  };
   const sorted = [...all].sort((a, b) => rank(a) - rank(b));
   // moved only when the order changes (a moved element loses the focus it holds)
   if (sorted.some((b, i) => b !== all[i])) {
@@ -593,12 +611,12 @@ function renderStatus() {
   else unbanner('unresponsive');
   // once the fatal notice is up it says it all: the node's own error notice is not shown beside it
   // a busy file passes by itself: a warning, and no offer to wipe 1.1 GB over it
-  if (node.error && !passing && !fatalShown) {
-    const kind = faultOf();
+  if ((filesGone() || (node.error && !passing)) && !fatalShown) {
+    const kind = filesGone() ? 'gone' : faultOf();
     banner(
       'nodeerr',
       kind === 'busy' ? 'warn' : 'bad',
-      plainError(node.error, node.errorName),
+      kind === 'gone' ? plainError('', 'NotFoundError') : plainError(node.error, node.errorName),
       kind === 'busy'
         ? [['Retry', () => location.reload()]]
         : [
@@ -636,11 +654,14 @@ const FAULT_BUSY =
     /NoModificationAllowedError|InvalidStateError|modifications are not allowed|no longer, usable|access handle|another tab/i,
   FAULT_GONE = /NotFoundError|NotReadableError|could not be found|could not be read/i;
 function faultOf(text = node.error, name = node.errorName) {
-  const s = `${name ?? ''} ${text ?? ''}`;
+  // by its name when it has one (a mirror's "could not be found" is not the node's files); by its words only without
+  const s = name ? String(name) : String(text ?? '');
   return FAULT_BUSY.test(s) ? 'busy' : FAULT_GONE.test(s) ? 'gone' : null;
 }
-// files gone while the node still says it is up to date: its coins are frozen, so nothing is sent until a sync succeeds again
-const filesGone = () => !!node.error && faultOf() === 'gone';
+// files gone while the node still says it is up to date: its coins are frozen, so nothing is sent until a sync succeeds again.
+// Sticky: set when such an error arrives, cleared only by a sync that succeeds (a later error of another kind does not lift it)
+let goneSince = null;
+const filesGone = () => goneSince != null;
 // node errors in words a person can act on
 function plainError(e, name = null) {
   const s = String(e);
@@ -674,6 +695,7 @@ function onMessage(m) {
   if (m.type === 'error' && typeof m.req === 'string' && m.req.startsWith('sent:')) asked.delete(m.req.slice(5));
   // an error the loader took as the node's (a fault in its files, whoever asked): its notice now, and Send says what it means
   if (m.type === 'error') {
+    if (node.error && faultOf() === 'gone') goneSince ??= Date.now(); // the loader took it as the node's: its files
     renderStatus();
     renderWallet();
     updatePreview();
@@ -682,6 +704,10 @@ function onMessage(m) {
   if (m.type === 'status' || m.type === 'verified') renderInfo();
   else if (m.type === 'synced') {
     node.syncedAt ??= Date.now();
+    if (goneSince != null) {
+      goneSince = null; // the node read its files again
+      renderStatus();
+    }
     if (!node.mempoolOn) {
       node.mempoolOn = true;
       tn.followMempool({ relays: allRelays() });
@@ -1930,6 +1956,9 @@ function applyDisplay() {
   renderMpMem();
   // answers printed earlier follow Mask values too
   document.querySelectorAll('#cout span.mk').forEach((el) => (el.textContent = (OPT.mask ? el.dataset.masked : el.dataset.plain) + '\n'));
+  quarantineNotice(); // the one notice that says an amount: its words follow Mask values too
+  // and what was spoken in the last moments (a console answer, a notice) is taken back from the screen reader's regions
+  if (OPT.mask) document.querySelectorAll('[id^="say-"] > p').forEach((p) => p.remove());
 }
 // the wallet's code and the chain's rules: the sidestr library and the engine at their pinned commits, the rule files
 // checked by hash before use
@@ -2144,7 +2173,7 @@ async function walletInit() {
       banner(
         'quarantine',
         'warn',
-        `${worth ? `${amtSay(worth)} held: ` : 'Coins held: '}${held.length === 1 ? 'a stored payment record' : `${held.length} stored payment records`} could not be verified against ${held.length === 1 ? 'its own transaction' : 'their own transactions'}, so Reef set ${held.length === 1 ? 'it' : 'them'} aside (kept in this browser); the coins ${held.length === 1 ? 'it spends are' : 'they spend are'} held so nothing is paid twice.${writable() ? '' : ' Release them in the tab that runs the node.'}`,
+        `${worth && !OPT.mask ? `${amtSay(worth)} held: ` : 'Coins held: '}${held.length === 1 ? 'a stored payment record' : `${held.length} stored payment records`} could not be verified against ${held.length === 1 ? 'its own transaction' : 'their own transactions'}, so Reef set ${held.length === 1 ? 'it' : 'them'} aside (kept in this browser); the coins ${held.length === 1 ? 'it spends are' : 'they spend are'} held so nothing is paid twice.${writable() ? '' : ' Release them in the tab that runs the node.'}`,
         writable()
           ? [
               [
@@ -2165,9 +2194,12 @@ async function walletInit() {
                   ) {
                     // only the tab that runs the wallet writes; the release is kept in memory too, and said only once stored
                     if (!writable()) return notify('Not here', 'release them in the tab that runs the node', false);
-                    const q = loadJSON(qk, []).map((x) => ({ ...x, released: true }));
+                    // only the records this notice counted: one set aside since (another tab's copy merged in) waits for its own
+                    const ids = new Set(held.map((x) => x.txid));
+                    const rel = (x) => (ids.has(x.txid) ? { ...x, released: true } : x);
+                    const q = loadJSON(qk, []).map(rel);
                     if (!store(qk, JSON.stringify(q))) return;
-                    quarantineRecs = quarantineRecs.map((x) => ({ ...x, released: true }));
+                    quarantineRecs = quarantineRecs.map(rel);
                     held.length = 0; // released: not raised again
                     unbanner('quarantine');
                     renderWallet(); // released: not raised again
@@ -2533,7 +2565,7 @@ function renderWalletInner() {
           return `<div class="r" role="listitem"><span aria-hidden="true">${v.icon}</span><span title="${v.block ? 'block ' + esc(n(v.block)) : ''}">${esc(say(v.short))}</span><span class="addr" title="${esc(r.addr)}">${txLink(r.txid, V.recentLabel(r))}</span><span class="amt ${r.pending ? 'pend' : r.kind === 'in' ? 'in' : 'out'}">${amtHtml(v.sats)}${V.feeOnly(r, v) ? '<span class="mut"> (fee)</span>' : ''}</span></div>`;
         })
         .join('')
-    : `<div class="r" role="listitem"><span></span><span class="mut" style="grid-column:2/5">${esc(V.recentEmpty({ known, idle: IDLE, any: rows.length > 0 }))}${known && !IDLE && !rows.length ? ': <a href="#" data-go2="receive">your address is on the Receive page</a>' : ''}</span></div>`;
+    : `<div class="r" role="listitem"><span></span><span class="mut" style="grid-column:2/5">${esc(V.recentEmpty({ known, idle: IDLE, any: rows.length > 0, notStarted: !!node.notStarted }))}${known && !IDLE && !rows.length ? ': <a href="#" data-go2="receive">your address is on the Receive page</a>' : ''}</span></div>`;
   $('recent')
     .querySelectorAll('[data-go2]')
     .forEach((a) => {
@@ -2596,7 +2628,7 @@ function renderWalletInner() {
           )}</span><span class="sr">${esc(say(v.state))}</span></td><td>${v.block ? esc(n(v.block)) : '—'}</td><td>${esc(r.label)}</td><td class="addr" title="${esc(r.addr)}">${esc(V.isOwnAddressRow(r) ? 'your address' : V.shortAddr(r.addr))}</td><td class="amt ${r.kind === 'in' ? 'in' : 'out'}${v.struck ? ' struck' : ''}">${moneyHtml(v.sats)}<span class="cardunit"> ${esc(unit().label)}</span>${V.feeOnly(r, v) ? '<span class="mut"> (fee)</span>' : ''}<span class="sr">${v.tag ? esc(` (${v.tag})`) : ''}</span></td><td class="acts">${acts}</td></tr>`;
         })
         .join('')
-    : `<tr><td colspan="7" class="mut">${IDLE ? 'shown in the tab that runs the node' : known ? (rows.length ? 'nothing matches' : 'no transactions since the snapshot') : 'waiting for the node'}</td></tr>`;
+    : `<tr><td colspan="7" class="mut">${IDLE ? 'shown in the tab that runs the node' : known ? (rows.length ? 'nothing matches' : 'no transactions since the snapshot') : node.notStarted ? 'the node is not started' : 'waiting for the node'}</td></tr>`;
   $('txrows')
     .querySelectorAll('button.rowmore')
     .forEach((b) => {
@@ -2676,7 +2708,7 @@ function renderWalletInner() {
             `<tr><td>${esc(n(c.height))}</td><td class="mono">${txLink(c.key.slice(0, 64), c.key.slice(0, 20) + '…:' + c.key.slice(65))}</td><td>${W.height != null ? esc(n(W.height - c.height + 1)) : '…'}${esc(V.coinNote(c, { height: W.height, sent, hitch: hh, quarantine: qh, held: bb.held, above: bb.above, first: rf, mature: (c2, h) => WL.isMature(c2, WL.maturityHeight(h, vouched())) }))}</td><td class="amt">${moneyHtml(c.value)}</td></tr>`,
         )
         .join('')
-    : `<tr><td colspan="4" class="mut">${known ? 'nothing received since the snapshot' : IDLE ? 'shown in the tab that runs the node' : 'waiting for the node'}</td></tr>`;
+    : `<tr><td colspan="4" class="mut">${known ? 'nothing received since the snapshot' : IDLE ? 'shown in the tab that runs the node' : node.notStarted ? 'the node is not started' : 'waiting for the node'}</td></tr>`;
 }
 // what the search and the filter leave in the list is said, once typing pauses (the list itself changes silently)
 let listSayTimer = 0;
@@ -3327,6 +3359,10 @@ async function forgetFlow(s0) {
   // the node may have stopped (or the tab gone idle) while the dialog was open: nothing changes then
   if (nodeStopped()) return notify('Not done', 'the node stopped while you were deciding: reload the page first', false);
   if (!canAct()) return;
+  // and it may have reached a node, or been settled, while the dialog was open: then forgetting it would free coins a live
+  // payment still spends
+  if (!S.forgettable(sent, s0, W.height, inMempool))
+    return notify('Not done', 'the payment is waiting in a node now, or has settled: nothing was forgotten', false);
   S.forget(sent, s);
   saveSent();
   renderWallet();
@@ -3624,8 +3660,13 @@ const fileReady = () => !!(node.sha || node.st?.idx > 0);
 function renderPeers() {
   const rows = [
     [BLOCKS_URL.replace(/^https?:\/\//, ''), 'mirror', 'block file, Range', `${(node.recv / 1e6).toFixed(2)} MB`],
-    ...TIP_RELAYS.map((r) => [r.replace('wss://', ''), 'relay', 'signed chain tips (NIP-333)', '—']),
-    ...RELAYS().map((r) => [r.replace('wss://', ''), 'relay', 'payments (kind 23503)', '—']),
+    // one row per relay (the same count as Information and getnetworkinfo), with what this tab uses it for
+    ...allRelays().map((r) => [
+      r.replace('wss://', ''),
+      'relay',
+      [TIP_RELAYS.includes(r) && 'signed chain tips (NIP-333)', RELAYS().includes(r) && 'payments (kind 23503)'].filter(Boolean).join('; '),
+      '—',
+    ]),
     ...(tn.seeding?.t
       ? tn.seeding.t.wires
           .filter((w) => !w.destroyed)
@@ -4259,7 +4300,7 @@ function goIdle() {
   readOnlyPage();
   sendInfo('The node and the wallet run in another tab of this browser: send from there.');
   setSync('idle: the node runs in another tab of this browser', null);
-  document.title = 'Reef · idle (open in another tab)';
+  document.title = 'Reef · view-only (another tab runs the node)';
   renderWallet();
   updatePreview();
   renderStatus();
@@ -4361,6 +4402,12 @@ function announceRunning() {
 }
 async function startNode(force = false) {
   unbanner('welcome');
+  // said at once: the node's code is fetched and checked before start returns (seconds on a slow link), and the line must not
+  // stay on "checking whether another tab…" meanwhile. Spoken once; the node's own "Starting…" is not spoken again after it.
+  // (A tab that loses the lock in between is set to idle by goIdle, which says so.)
+  lastPhase = null;
+  setSync('starting the node: loading its code…', null);
+  lastPhase = 'starting';
   try {
     const started = await tn.start({ force });
     sendSkew();
@@ -4368,8 +4415,6 @@ async function startNode(force = false) {
       if (node.lockError) return lockFailed(node.lockError);
       goIdle();
     } else {
-      // this tab won the node: said at once, not "checking…" until the node's first progress message
-      if (/checking whether another tab/.test($('syncmsg').textContent)) setSync('starting the node…', null);
       // the stored records are sorted by walletInit, which may still be loading: write nothing until it has finished
       await walletReady;
       if (IDLE) return;

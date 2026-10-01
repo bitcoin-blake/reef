@@ -85,7 +85,7 @@ const cspPlaced = (html0) => {
     script = html.search(/<script[\s>]/i);
   return head >= 0 && meta > head && (endHead < 0 || meta < endHead) && (script < 0 || meta < script);
 };
-const { pinsOf, judge, cdnRefs, offCdn, pageVerdict, hasPolicy } = await import('../tools/pins.mjs');
+const { pinsOf, judge, cdnRefs, offCdn, pageVerdict, hasPolicy, strictPolicy } = await import('../tools/pins.mjs');
 // ---- the page's version and version.json agree (a release that forgets one shows a false update banner)
 {
   const src = readFileSync(new URL('../reef.js', import.meta.url), 'utf8');
@@ -198,6 +198,9 @@ const { pinsOf, judge, cdnRefs, offCdn, pageVerdict, hasPolicy } = await import(
       'object-src': ["'none'"],
       'base-uri': ["'none'"],
       'form-action': ["'none'"],
+      // Reef has no frames: no page of this origin (Winch, Hitch, without a policy of their own) can be framed into it
+      'frame-src': ["'none'"],
+      'child-src': ["'none'"],
     };
     t('the security policy is exactly the expected one', cspMatches(csp, want), cspDiff(csp, want));
   }
@@ -222,6 +225,7 @@ const { pinsOf, judge, cdnRefs, offCdn, pageVerdict, hasPolicy } = await import(
     (c) => c.replace('qrcode-generator@1.4.4', 'qrcode-generator@1.4.5'),
     (c) => c.replace('webtorrent@3.0.21', 'webtorrent@3.0.22'),
     (c) => c.replace("base-uri 'none'", "base-uri 'self'"),
+    (c) => c.replace("; frame-src 'none'", ''),
     (c) => "script-src * 'unsafe-inline' 'unsafe-eval'; " + c, // a second script-src in front: the browser enforces the first
     (c) => c.replace('script-src', 'SCRIPT-SRC') + "; script-src 'self'", // the same, in another case
   ];
@@ -338,6 +342,34 @@ const { pinsOf, judge, cdnRefs, offCdn, pageVerdict, hasPolicy } = await import(
         !hasPolicy(`<head><template>${meta}</template></head>`) &&
         !hasPolicy(`<head><noscript>${meta}</noscript></head>`) &&
         !hasPolicy(`<head></head><body>${meta}</body>`),
+    );
+    // two tiers: a host the apps connect to is allowed for connections, never for code (the round-16 list let both through)
+    t(
+      'on a page without a policy, code from a host the apps only connect to is refused (a script src, an import, importScripts)',
+      offCdn('<script src="https://melvin.me/x.js"></script>').length === 1 &&
+        offCdn('import("https://mempool.guide/a.js")').length === 1 &&
+        offCdn("importScripts('./a.js', 'https://mempool.guide/b.js')").length === 1 &&
+        offCdn("new Worker(new URL('wss://nos.lol/w.js'))").length === 1 &&
+        offCdn("new WebSocket('wss://nos.lol'); x = 'https://mempool.guide/testnet4'").length === 0,
+    );
+    // a policy that limits nothing, or a meta that is only text, does not count as one (the page is judged as if it had none)
+    const weak = (c) => `<head><meta http-equiv="Content-Security-Policy" content="${c}"></head>`;
+    t(
+      'a page counts as policed only with a strict script-src (or default-src): empty, unknown, *, https:, unsafe-inline or unsafe-eval do not count, nor a meta inside a script, style, title or textarea',
+      [`script-src 'self'`, `default-src 'self'`, `script-src 'self' blob: 'wasm-unsafe-eval'`].every((c) => strictPolicy(c)) &&
+        [
+          '',
+          'x',
+          'script-src *',
+          "script-src 'self' https:",
+          "script-src 'self' 'unsafe-inline'",
+          "default-src 'self' 'unsafe-eval'",
+          "script-src 'self' https://*.example",
+        ].every((c) => !strictPolicy(c)) &&
+        !hasPolicy(weak('')) &&
+        !hasPolicy(weak('x')) &&
+        !hasPolicy(`<head><script>var m = '${meta}'</script></head>`) &&
+        ['style', 'title', 'textarea'].every((tag) => !hasPolicy(`<head><${tag}>${meta}</${tag}></head>`)),
     );
   }
   t(

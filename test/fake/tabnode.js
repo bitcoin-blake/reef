@@ -3,7 +3,7 @@
 export const mib = (b) => `${(b / 1048576).toFixed(1)} MiB`;
 export const secs = (ms) => `${(ms / 1000).toFixed(1)} s`;
 export const n = (x) => Number(x).toLocaleString('en-US');
-// the real loader's rule (blaketestnode 670ad2b): a fault in the node's files is the node's error, whoever asked
+// the real loader's rule (blaketestnode f1da4a6): a fault in the node's files is the node's error, whoever asked
 export const storageFault = (m) =>
   /^(NotFoundError|NoModificationAllowedError|InvalidStateError|NotReadableError|QuotaExceededError)$/.test(m?.name ?? '');
 export function createTabNode() {
@@ -36,7 +36,14 @@ export function createTabNode() {
       navigator.locks.request('bitcoin-blake:node', { ifAvailable: true }, (l) => (res(!!l), l ? new Promise(() => {}) : null)),
     );
     if (!got) return false;
-    await new Promise((r) => setTimeout(r, Number(window.__START_MS ?? 50)));
+    // what the real loader (f1da4a6) says while it fetches and checks the node's code, before start returns
+    const sync = (msg) => (Object.assign(node, { phase: 'starting' }), emit('sync', { msg, pct: null }));
+    sync('Starting the node: loading its code…');
+    const ms = Number(window.__START_MS ?? 50);
+    await new Promise((r) => setTimeout(r, ms / 2));
+    sync('Starting the node: loading its code (7 of 13)…');
+    await new Promise((r) => setTimeout(r, ms / 2));
+    sync('Starting the node…');
     return true;
   };
   return {

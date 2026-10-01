@@ -1507,6 +1507,165 @@ async function wallet(coins, extra = {}) {
   );
   await p.ctx.close();
 }
+// 20: the last guards. A payment that reaches a node while the forget dialog is open is not forgotten; files gone stay gone
+// whatever error comes next, until a sync succeeds; a files-gone error is told by its name whatever its words; a disagreeing tip
+// while the raise dialog is open replaces nothing; the start says "starting the node" before the node's code is in; on a phone
+// the notice that says the tab's state (and holds its one way on) is the one shown
+{
+  const w = await wallet([{ key: CA, value: 50000, height: 152000 }]);
+  const { a } = w;
+  await w.confirm('0.0001');
+  await a.click('#ask-ok');
+  await a.waitForFunction(() => (window.__relay ?? []).length === 1, null, { timeout: 15000 });
+  await w.feed([{ key: CA, value: 50000, height: 152000 }], 152110);
+  await w.tipAgrees(152110);
+  const txid = (await w.records())[0].txid;
+  await a.evaluate(() => document.querySelector('[data-p=tx]').click());
+  await a.waitForSelector('#txrows button[data-act=forget]', { timeout: 5000 });
+  await a.click('#txrows button[data-act=forget]');
+  await a.waitForSelector('#ask[open]', { timeout: 5000 });
+  if ((await a.textContent('#ask-t')) === 'This payment has not gone through') {
+    await a.click('#ask-cancel');
+    await a.waitForFunction(() => document.getElementById('ask-t').textContent === 'Forget this payment', null, { timeout: 5000 });
+  }
+  // a node takes it meanwhile: the feed lists it
+  await a.evaluate(
+    (txid) =>
+      window.__fake.emit('message', {
+        type: 'mempool',
+        count: 1,
+        stats: { refused: 0, dropped: 0 },
+        bytes: 150,
+        fees: 155,
+        txs: [{ txid, inputs: ['a1'.repeat(32) + ':0'], outputs: [], fed: true, vsize: 150, fee: 155 }],
+      }),
+    txid,
+  );
+  await a.waitForTimeout(300);
+  await a.click('#ask-ok');
+  await a.waitForTimeout(500);
+  t(
+    'a payment that reaches a node while the forget dialog is open is not forgotten (its coins stay held)',
+    !(await w.records())[0].abandoned,
+    JSON.stringify((await w.records()).map((r) => ({ a: !!r.abandoned }))),
+  );
+  await w.p.ctx.close();
+}
+{
+  const w = await wallet([{ key: CA, value: 50000, height: 152000 }]);
+  const { a } = w;
+  const tryConfirm = () =>
+    w
+      .confirm('0.0001')
+      .then(async () => (await a.click('#ask-cancel'), true))
+      .catch(() => false);
+  // files gone, then an error of another kind (the source unreachable): still stopped, and the notice still says gone
+  await a.evaluate(() =>
+    window.__fake.emit('message', {
+      type: 'error',
+      name: 'NotFoundError',
+      text: 'A requested file or directory could not be found at the time an operation was processed.',
+    }),
+  );
+  await a.evaluate(() => window.__fake.emit('message', { type: 'error', name: 'TypeError', text: 'Failed to fetch' }));
+  await a.waitForTimeout(300);
+  const opened = await tryConfirm();
+  const gone = await a.evaluate(() => document.querySelector('#banners [data-b="nodeerr"]')?.textContent ?? '');
+  t(
+    'files gone stay gone when another error follows: nothing can be sent, and the notice still says gone',
+    !opened && /gone or unreadable/.test(gone) && (await w.relays()) === 0,
+    `${opened} / ${gone.slice(0, 80)}`,
+  );
+  await w.feed([{ key: CA, value: 50000, height: 152000 }]);
+  await a.waitForTimeout(300);
+  t('a sync that succeeds lifts it', await tryConfirm());
+  // told by its name whatever its words (a browser in another language)
+  await a.evaluate(() =>
+    window.__fake.emit('message', { type: 'error', name: 'NotFoundError', text: 'Eine angeforderte Datei wurde nicht gefunden.' }),
+  );
+  await a.waitForTimeout(300);
+  t('a files-gone error is told by its name whatever its words: nothing can be sent', !(await tryConfirm()));
+  await w.p.ctx.close();
+}
+{
+  const w = await wallet([{ key: CA, value: 50000, height: 152000 }]);
+  const { a } = w;
+  await w.confirm('0.0001');
+  await a.click('#ask-ok');
+  await a.waitForFunction(() => (window.__relay ?? []).length === 1, null, { timeout: 15000 });
+  await a.evaluate(() => document.querySelector('[data-p=tx]').click());
+  await a.waitForSelector('#txrows button[data-act=bump]', { timeout: 5000 });
+  await a.click('#txrows button[data-act=bump]');
+  await a.waitForSelector('#ask[open]', { timeout: 5000 });
+  await a.evaluate(() =>
+    window.__fake.emit('message', {
+      type: 'nostr',
+      height: 152102,
+      hash: 'ee'.repeat(32),
+      agree: 0,
+      diverged: true,
+      live: true,
+      created_at: Math.floor(Date.now() / 1000),
+    }),
+  );
+  await a.waitForTimeout(200);
+  if (await a.$('#ask[open]')) await a.click('#ask-ok');
+  await a.waitForTimeout(800);
+  const recs = await w.records();
+  t(
+    'a signed tip that disagrees arrives while the raise dialog is open: nothing is replaced and nothing more is published',
+    (await w.relays()) === 1 && recs.length === 1 && !recs[0].replacedBy,
+    JSON.stringify({ relays: await w.relays(), n: recs.length }),
+  );
+  await w.p.ctx.close();
+}
+{
+  // the node's code takes three seconds to load: the line says so at once, not "checking whether another tab…"
+  const p = await profile({ startMs: 3000, seed: { 'reef:started': '1', 'reef:key': KEY } });
+  const a = await p.open();
+  await a.waitForTimeout(1000);
+  const line = await a.textContent('#syncmsg');
+  t(
+    'while the node is still loading its code, the status line already says it is starting',
+    /starting the node/i.test(line) && !/checking whether another tab/.test(line),
+    line,
+  );
+  await p.ctx.close();
+}
+{
+  // on a phone only the first notice shows: the one that says the tab's state, whatever else is up
+  const first = (pg) => pg.evaluate(() => document.querySelector('#banners')?.firstElementChild?.dataset.b ?? '');
+  const p = await profile({ seed: returning() }); // a set-aside record: its notice is up too
+  const a = await p.open();
+  await a.setViewportSize({ width: 390, height: 844 });
+  await a.waitForSelector('#banners [data-b=quarantine]', { timeout: 10000 });
+  const b = await p.open();
+  await b.setViewportSize({ width: 390, height: 844 });
+  await b.waitForSelector('#banners [data-b=twotabs]', { timeout: 10000 });
+  await b.waitForTimeout(500);
+  t(
+    'a phone, idle tab with a set-aside record: the "another tab runs the node" notice is the one shown',
+    (await first(b)) === 'twotabs',
+    await first(b),
+  );
+  await a.close();
+  await b.waitForFunction(() => /Run it here/.test(document.querySelector('#banners [data-b=twotabs]')?.textContent ?? ''), null, {
+    timeout: 15000,
+  });
+  t('a phone, the other tab closed: "Run it here" is the notice shown', (await first(b)) === 'twotabs', await first(b));
+  await p.ctx.close();
+  const q = await profile({ seed: {} }); // a first visit: the welcome
+  const c = await q.open();
+  await c.setViewportSize({ width: 390, height: 844 });
+  await c.waitForSelector('#welcome[open]', { timeout: 10000 });
+  await c.click('#wl-later');
+  await c.waitForSelector('#banners [data-b=welcome]', { timeout: 5000 });
+  await c.waitForTimeout(500);
+  t('a phone, after Not now: the "not started" notice with Start is the one shown', (await first(c)) === 'welcome', await first(c));
+  t('no page errors in the phone notices', !p.errors.length && !q.errors.length, [...p.errors, ...q.errors].join(' | '));
+  await q.ctx.close();
+}
+
 await browser.close();
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

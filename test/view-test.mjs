@@ -47,6 +47,16 @@ const ctx = (sent, o = {}) => ({ sent, inMempool: () => false, height: 152101, n
   );
 }
 t(
+  "the notice that says the tab's state comes first whatever its level (a phone shows only the first); then bad, warn, info; an idle tab's set-aside notice last",
+  ['fatal', 'lockfail', 'twotabs', 'welcome', 'nofeature', 'schema'].every(
+    (id) => V.noticeRank(id, 'info') < V.noticeRank('backup', 'bad') && V.noticeRank(id, 'info', true) < V.noticeRank('x', 'bad', true),
+  ) &&
+    V.noticeRank('x', 'bad') < V.noticeRank('x', 'warn') &&
+    V.noticeRank('x', 'warn') < V.noticeRank('x', 'info') &&
+    V.noticeRank('quarantine', 'warn') === V.noticeRank('x', 'warn') &&
+    V.noticeRank('quarantine', 'warn', true) > V.noticeRank('x', 'info', true),
+);
+t(
   'in an idle tab, or before the wallet can act, no payment offers anything',
   V.viewRow(row(pay()), ctx([pay()], { canAct: false })).actions.length === 0,
 );
@@ -212,6 +222,7 @@ t(
   t(
     'the empty Overview never claims "no coins" before the node answers, nor in an idle tab',
     V.recentEmpty({ known: false }) === 'waiting for the node' &&
+      V.recentEmpty({ known: false, notStarted: true }) === 'the node is not started' &&
       /other|runs/.test(V.recentEmpty({ known: true, idle: true })) &&
       V.recentEmpty({ known: true }) === 'no coins yet',
   );

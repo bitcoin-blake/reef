@@ -97,23 +97,58 @@ export function judge(host, path = '', user = '') {
 export function cdnRefs(body) {
   return [...unescape(body).matchAll(CDN_URL)].map(([url, user, host, path]) => ({ url, ...judge(host, path ?? '', user ?? '') }));
 }
-// the absolute URLs of a page whose host is none of the allowed ones: refused where no policy stops them
+// where a URL is code: an import (with or without from), a src (attribute or property, quoted or not), importScripts (any of
+// its arguments), a worker (with or without new URL), a modulepreload
+const SCRIPT_POS =
+  /(?:\bimport\s*\(?\s*|\bfrom\s*|\bsrc\s*=\s*|\bimportScripts\s*\([^)]*?|\bnew\s+(?:Shared)?Worker\s*\(\s*(?:new\s+URL\s*\(\s*)?|modulepreload[^>]*?\bhref\s*=\s*)['"`]?\s*$/i;
+// the only hosts code may come from on a page with no policy: the pinned CDN and this origin (the hosts the apps connect to
+// by name are for connections, never for code)
+const CODE_HOSTS = new Set(['cdn.jsdelivr.net', 'bitcoin-blake.github.io']);
+// the absolute URLs of a page whose host is not allowed where it stands: refused where no policy stops them. Two tiers: a URL
+// in a code position must be on the CDN or this origin; any other URL may also name a host the apps connect to
 export function offCdn(body, allowed = ALLOWED) {
-  return [...unescape(body).matchAll(ABS_URL)]
-    .map((m) => ({ url: m[0].replace(/^['"`=(]\s*/, ''), host: (m[1] ?? m[2]).toLowerCase() }))
-    .filter((r) => !allowed.has(r.host))
+  const text = unescape(body);
+  return [...text.matchAll(ABS_URL)]
+    .map((m) => {
+      const lead = /^['"`=(]/.test(m[0]) ? m[0].match(/^['"`=(]\s*/)[0] : '';
+      const before = text.slice(Math.max(0, m.index - 80), m.index) + lead;
+      return { url: m[0].slice(lead.length), host: (m[1] ?? m[2]).toLowerCase(), code: SCRIPT_POS.test(before) };
+    })
+    .filter((r) => !(r.code ? CODE_HOSTS : allowed).has(r.host))
     .map((r) => r.url);
 }
-// does a page have a policy in force: a policy meta in its <head>, comments, templates and noscripts set aside
+// a policy that actually limits code: its script-src (else its default-src, the browser's fallback) admits no wildcard, no
+// scheme on its own (https:, http:, data:) and neither inline nor eval; the first copy of a directive is the one in force
+export function strictPolicy(content) {
+  const dirs = {};
+  for (const part of String(content ?? '').split(';')) {
+    const [name, ...vals] = part.trim().split(/\s+/);
+    if (name) dirs[name.toLowerCase()] ??= vals;
+  }
+  const src = dirs['script-src'] ?? dirs['default-src'];
+  if (!src || !src.length) return false;
+  const weak = (v) =>
+    v === '*' ||
+    /^(?:https?:\/\/)?\*/i.test(v) || // a wildcard host
+    (/^[a-z][a-z0-9+.-]*:$/i.test(v) && v.toLowerCase() !== 'blob:') || // a scheme on its own (https:, http:, data:)
+    /^'unsafe-(?:inline|eval)'$/i.test(v);
+  return !src.some(weak);
+}
+// does a page have a policy in force: a strict policy meta in its <head>, with comments, templates, noscripts and the raw text
+// of scripts, styles, titles and textareas set aside (a meta written inside one of those is text, not a policy)
 export function hasPolicy(body) {
   const live = body
     .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<template[\s>][\s\S]*?<\/template>/gi, '')
-    .replace(/<noscript[\s>][\s\S]*?<\/noscript>/gi, '');
+    .replace(/<(template|noscript|script|style|title|textarea)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '');
   // the head as the browser builds it: up to </head> or <body (the <head> tag itself may be left out)
   const end = live.search(/<\/head>|<body[\s>]/i);
   const head = end < 0 ? live : live.slice(0, end);
-  return /<meta\b[^>]*\bhttp-equiv\s*=\s*(["']?)Content-Security-Policy\1/i.test(head);
+  for (const [tag] of head.matchAll(/<meta\b[^>]*>/gi)) {
+    if (!/\bhttp-equiv\s*=\s*(["']?)Content-Security-Policy\1/i.test(tag)) continue;
+    const c = tag.match(/\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+    if (c && strictPolicy(c[1] ?? c[2] ?? c[3])) return true;
+  }
+  return false;
 }
 // the first pin of each repository in a file: { 'owner/repo': commit }
 export function pinsOf(src) {
