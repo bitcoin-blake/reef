@@ -4,7 +4,7 @@
 // tested against the kernel; this file is the host: storage, the node, the relays, the window. Every string that comes
 // from outside (relays, the mempool, the chain, links, options) reaches the page as text, never as markup.
 const $ = (id) => document.getElementById(id);
-export const VERSION = '2026-10-01.12';
+export const VERSION = '2026-10-01.13';
 const SCHEMA = 2; // the storage layout this version writes
 const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@448f74a64f19d5a6edabe6b02815a2c67e79374d';
 const LIB = 'https://cdn.jsdelivr.net/gh/sidestr/spec@fe689e9c723f9bf43393d2dd5b6f924a701c8a18/siding/lib',
@@ -238,6 +238,7 @@ function setSync(msg, pct, eta) {
     const v = Math.max(0, Math.min(100, pct));
     $('pbi').style.width = v.toFixed(1) + '%';
     pb.setAttribute('aria-valuenow', v.toFixed(0));
+    pb.setAttribute('aria-valuetext', `${v.toFixed(0)}%: ${$('syncmsg').textContent}`);
     $('synceta').textContent = `${pct.toFixed(0)}%${eta ? ' · ' + eta : ''}`;
   }
   renderStatus();
@@ -591,13 +592,34 @@ function closeMenus(except) {
       m.setAttribute('aria-expanded', 'false');
     }
 }
-function openMenu(m, focusFirst = false) {
+// a dialog closed gives focus back to what opened it; a menu item is hidden by then, so to its menu's title; a row button
+// re-rendered meanwhile, to the page's toolbar button
+{
+  const show = HTMLDialogElement.prototype.showModal;
+  HTMLDialogElement.prototype.showModal = function () {
+    const a = document.activeElement;
+    this._opener = a?.closest?.('.dd') ? a.closest('.dd').parentElement : a;
+    return show.call(this);
+  };
+  for (const d of document.querySelectorAll('dialog'))
+    d.addEventListener('close', () => {
+      const o = d._opener;
+      d._opener = null;
+      if (document.querySelector('dialog[open]')) return;
+      setTimeout(() => {
+        if (o && o.isConnected && o.offsetParent !== null && o !== document.body) o.focus();
+        else document.querySelector('.tool button.on')?.focus();
+      }, 0);
+    });
+}
+function openMenu(m, focusFirst = false, last = false) {
   closeMenus(m);
   m.classList.add('open');
   m.setAttribute('aria-expanded', 'true');
+  // the first (or last) item, disabled or not: the arrows stop on disabled items too, and they say why
   if (focusFirst)
     menuItems(m)
-      .find((x) => x.getAttribute('aria-disabled') !== 'true')
+      .at(last ? -1 : 0)
       ?.focus();
 }
 for (const it of document.querySelectorAll('.dd [aria-disabled=true]')) {
@@ -621,6 +643,17 @@ for (const m of menus) {
     if (e.target === m && (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown')) {
       e.preventDefault();
       openMenu(m, true);
+    } else if (e.target === m && e.key === 'ArrowUp') {
+      e.preventDefault();
+      openMenu(m, true, true);
+    } else if ((e.key === 'Home' || e.key === 'End') && i >= 0) {
+      e.preventDefault();
+      items.at(e.key === 'Home' ? 0 : -1).focus();
+    } else if (i >= 0 && e.key.length === 1 && /\S/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      // a letter jumps to the next item starting with it
+      const k = e.key.toLowerCase();
+      const order = [...items.slice(i + 1), ...items.slice(0, i + 1)];
+      order.find((x) => x.textContent.trim().toLowerCase().startsWith(k))?.focus();
     } else if (e.key === 'Escape') {
       e.preventDefault();
       closeMenus();
@@ -687,9 +720,10 @@ function tabs(listId, onSelect, panelPrefix) {
     t.onclick = () => select(t);
     t.onkeydown = (e) => {
       const i = all.indexOf(t);
-      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft' || e.key === 'Home' || e.key === 'End') {
         e.preventDefault();
-        const nx = all[(i + (e.key === 'ArrowRight' ? 1 : -1) + all.length) % all.length];
+        const nx =
+          e.key === 'Home' ? all[0] : e.key === 'End' ? all.at(-1) : all[(i + (e.key === 'ArrowRight' ? 1 : -1) + all.length) % all.length];
         nx.focus();
         select(nx, 'key');
       } else if (e.key === 'Enter' || e.key === ' ') {
@@ -882,36 +916,40 @@ function showWindow() {
   $('tray').hidden = true;
   unseen = 0;
   $('tray-badge').hidden = true;
+  document.querySelector('.tool button.on')?.focus();
 }
 function trayRefresh() {
   if ($('tray').hidden) return;
   const sd = tn.seeding?.t ? ` · seeding to ${tn.seeding.t.wires.filter((w) => !w.destroyed && w.type !== 'webSeed').length}` : '';
-  $('tray-l').textContent = node.error
-    ? 'stopped: open for details'
-    : node.synced
-      ? `up to date · ${n(node.height)}${sd}`
-      : node.phase === 'fetch'
-        ? 'fetching the snapshot'
-        : node.phase === 'hash'
-          ? 'checking the snapshot'
-          : node.phase === 'verify'
-            ? 'verifying the snapshot'
-            : node.phase === 'sync'
-              ? `syncing · ${n(node.height ?? 0)}`
-              : 'starting';
-  $('tray-dot').className = node.error ? 'bad' : node.synced ? 'ok' : 'sync';
+  $('tray-l').textContent = IDLE
+    ? 'idle: the node runs in another tab'
+    : node.error
+      ? 'stopped: open for details'
+      : node.synced
+        ? `up to date · ${n(node.height)}${sd}`
+        : node.phase === 'fetch'
+          ? 'fetching the snapshot'
+          : node.phase === 'hash'
+            ? 'checking the snapshot'
+            : node.phase === 'verify'
+              ? 'verifying the snapshot'
+              : node.phase === 'sync'
+                ? `syncing · ${n(node.height ?? 0)}`
+                : 'starting';
+  $('tray-dot').className = IDLE ? 'idle' : node.error ? (srcPassing() ? 'sync' : 'bad') : node.synced ? 'ok' : 'sync';
 }
 $('tray').onclick = () => showWindow();
 setInterval(trayRefresh, 1000);
 document.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
-  if (e.ctrlKey && e.shiftKey && k === 'm') {
+  // Alt+Shift: Ctrl+Shift+D (bookmark all tabs) and Ctrl+Shift+M (the profile menu) belong to the browser
+  if (e.altKey && e.shiftKey && !e.ctrlKey && (e.code === 'KeyM' || k === 'm')) {
     e.preventDefault();
     $('m-mask').onclick();
   } else if (e.ctrlKey && !e.shiftKey && k === 'm') {
     e.preventDefault();
     $('m-main').onclick();
-  } else if (e.ctrlKey && e.shiftKey && k === 'd') {
+  } else if (e.altKey && e.shiftKey && !e.ctrlKey && (e.code === 'KeyN' || k === 'n')) {
     e.preventDefault();
     $('nw').classList.contains('open') ? closeNode() : openNode();
   }
@@ -2608,9 +2646,9 @@ function notify(title, body, bad = /not |did not|failed|stopped/i.test(title)) {
   x.type = 'button';
   x.className = 'tx';
   x.textContent = '×';
-  x.setAttribute('aria-label', 'Dismiss');
+  x.setAttribute('aria-label', 'Dismiss notice: ' + title);
   x.onclick = () => el.remove();
-  el.append(x, b, document.createElement('br'), document.createTextNode(body));
+  el.append(b, document.createElement('br'), document.createTextNode(body), x); // the words first: a live region reads in order
   (bad ? $('toasts-alert') : $('toasts')).appendChild(el);
   let timer;
   const arm = () => {
@@ -2673,25 +2711,46 @@ function renderPeers() {
           ])
       : []),
   ];
+  // a grid: one tab stop, Up and Down move, Enter or Space shows the details; the selection and focus survive the refresh
+  const hadFocus = $('peerrows').contains(document.activeElement);
+  peerSel = Math.min(peerSel, rows.length - 1);
+  $('peerrows').closest('table').setAttribute('role', 'grid');
   $('peerrows').innerHTML = rows
     .map(
       (p, i) =>
-        `<tr data-i="${i}" tabindex="0"><td>${i + 1}</td><td>${Math.round((Date.now() - T0) / 60000)} min</td><td>Outbound</td><td>${esc(p[2])}</td><td>${esc(p[1])}</td><td>—</td><td>${p[1] === 'swarm peer' ? esc(p[3].replace(' sent', '')) : '0 MB'}</td><td>${p[1] === 'swarm peer' ? '—' : esc(p[3])}</td><td class="mono">${esc(p[0])}</td></tr>`,
+        `<tr data-i="${i}" tabindex="${i === Math.max(0, peerSel) ? 0 : -1}" aria-selected="${i === peerSel}" class="${i === peerSel ? 'sel' : ''}"><td>${i + 1}</td><td>${Math.round((Date.now() - T0) / 60000)} min</td><td>Outbound</td><td>${esc(p[2])}</td><td>${esc(p[1])}</td><td>—</td><td>${p[1] === 'swarm peer' ? esc(p[3].replace(' sent', '')) : '0 MB'}</td><td>${p[1] === 'swarm peer' ? '—' : esc(p[3])}</td><td class="mono">${esc(p[0])}</td></tr>`,
     )
     .join('');
-  document.querySelectorAll('#peerrows tr').forEach((tr) => {
-    tr.onclick = tr.onkeydown = (e) => {
-      if (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ') return;
-      document.querySelectorAll('#peerrows tr').forEach((x) => {
-        x.classList.toggle('sel', x === tr);
-        x.setAttribute('aria-selected', String(x === tr));
-      });
-      const p = rows[tr.dataset.i];
-      $('pd').innerHTML =
-        `<div class="kv"><span class="l">Peer</span><span class="v">${esc(p[0])}</span><span class="l">Kind</span><span class="v">${esc(p[1])}: ${esc(p[2])}</span><span class="l">Note</span><span class="v">a tab does not speak the peer-to-peer protocol; it reads a mirror's block file and signed tip announcements, and validates everything itself</span></div>`;
+  const trs = [...document.querySelectorAll('#peerrows tr')];
+  const pick = (i) => {
+    peerSel = i;
+    trs.forEach((x, j) => {
+      x.classList.toggle('sel', j === i);
+      x.setAttribute('aria-selected', String(j === i));
+      x.tabIndex = j === i ? 0 : -1;
+    });
+    const p = rows[i];
+    $('pd').innerHTML =
+      `<div class="kv"><span class="l">Peer</span><span class="v">${esc(p[0])}</span><span class="l">Kind</span><span class="v">${esc(p[1])}: ${esc(p[2])}</span><span class="l">Note</span><span class="v">a tab does not speak the peer-to-peer protocol; it reads a mirror's block file and signed tip announcements, and validates everything itself</span></div>`;
+  };
+  trs.forEach((tr, i) => {
+    tr.onclick = () => pick(i);
+    tr.onkeydown = (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        pick(i);
+      } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const j = Math.max(0, Math.min(trs.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)));
+        trs[i].tabIndex = -1;
+        trs[j].tabIndex = 0;
+        trs[j].focus();
+      }
     };
   });
+  if (hadFocus) trs[Math.max(0, peerSel)]?.focus();
 }
+let peerSel = -1;
 renderPeers();
 // ---- console, answering from the tab's state in the shapes Knots uses
 const cout = $('cout'),
@@ -2896,15 +2955,19 @@ cin.onkeydown = (e) => {
     cprint('> ' + line, 'cmd');
     const [cmd, ...args] = line.split(/\s+/);
     const f = Object.hasOwn(ANS, cmd) ? ANS[cmd] : null;
-    if (!f) return cprint('Method not found (code -32601)', 'err');
+    // the log itself is quiet for screen readers; each answer is said once, in one line
+    const say1 = (t) => ($('announce').textContent = `${cmd}: ${String(t).split('\n')[0].slice(0, 140)}`);
+    if (!f) return cprint('Method not found (code -32601)', 'err'), say1('error: method not found');
     let a;
     try {
       a = f(args.map((x) => x.replace(/^"|"$/g, '')));
     } catch (x) {
-      return cprint(x.message, 'err');
+      return cprint(x.message, 'err'), say1('error: ' + x.message);
     }
-    if (a && a.__err) return cprint(`${a.__err.message} (code ${a.__err.code})`, 'err');
-    cprint(typeof a === 'string' ? a : JSON.stringify(a, null, 2));
+    if (a && a.__err) return cprint(`${a.__err.message} (code ${a.__err.code})`, 'err'), say1('error: ' + a.__err.message);
+    const out = typeof a === 'string' ? a : JSON.stringify(a, null, 2);
+    cprint(out);
+    say1(typeof a === 'object' && a ? `${Object.keys(a).length} fields, shown in the console` : out);
   }
 };
 function drawTraffic() {
@@ -3000,7 +3063,7 @@ async function copyDiagnostics() {
   }
 }
 // ---- a newer Reef: checked every hour, offered, never forced
-// "2026-10-01.12" → comparable: a stale copy at the web host never offers an older version as newer
+// "2026-10-01.13" → comparable: a stale copy at the web host never offers an older version as newer
 const versionKey = (v) => {
   const m = /^(\d{4})-(\d{2})-(\d{2})\.(\d+)$/.exec(String(v ?? ''));
   return m ? [+m[1], +m[2], +m[3], +m[4]] : null;

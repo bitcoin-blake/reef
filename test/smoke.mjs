@@ -187,6 +187,27 @@ for (const [name, opts] of [
     [...document.querySelectorAll('[hidden]')].filter((e) => getComputedStyle(e).display !== 'none').map((e) => e.id || e.className),
   );
   t('every element marked hidden is hidden (no style overrides it)', !shown.length, shown.join(', '));
+  // keyboard: a dialog opened from a menu gives focus back to that menu's title; the tray gives it back to the page
+  await a.focus('[data-m=settings]');
+  await a.keyboard.press('Enter');
+  await a.keyboard.press('End');
+  const item = await a.evaluate(() => document.activeElement?.id);
+  await a.evaluate(() => document.activeElement.click());
+  await a.waitForTimeout(200);
+  const opened = await a.evaluate(() => document.querySelector('dialog[open]')?.id);
+  await a.keyboard.press('Escape');
+  await a.waitForTimeout(200);
+  const back = await a.evaluate(() => document.activeElement?.dataset?.m);
+  t(
+    'a dialog opened from a menu gives focus back to the menu title when closed',
+    !!opened && back === 'settings',
+    JSON.stringify({ item, opened, back }),
+  );
+  await a.evaluate(() => document.getElementById('m-exit').click());
+  await a.waitForTimeout(200);
+  await a.evaluate(() => document.getElementById('tray').click());
+  await a.waitForTimeout(200);
+  t('restoring from the tray puts focus on the page toolbar', await a.evaluate(() => !!document.activeElement?.closest('.tool')));
   t('no page errors', !p.errors.length, p.errors.join(' | '));
   await p.ctx.close();
 }
