@@ -131,6 +131,8 @@ const [{ makeSigner }, hash, secp] = await Promise.all([
 ]);
 const SCRIPT = '5120' + makeSigner({ hash, secp }).pubkeyOf(KEY);
 const TAG = SCRIPT.slice(4, 20);
+// the node's vouched height as the page keeps it between visits (a bare number, as older pages wrote it, is ignored)
+const VOUCHED = JSON.stringify({ height: 152100, at: 1 });
 const BAD = {
   txid: 'ab'.repeat(32),
   to: 'tb1pnope',
@@ -149,7 +151,7 @@ const returning = (extra = {}) => ({
   'reef:key': KEY,
   ['reef:sent:' + TAG]: JSON.stringify([BAD]),
   ['reef:seen:' + TAG]: JSON.stringify([[BAD.inputs[0], 5000]]),
-  'reef:vouched': '152100', // a returning user's last signed tip: with none, coins above the snapshot base wait as pending
+  'reef:vouched': VOUCHED, // a returning user's last signed tip: with none, coins above the snapshot base wait as pending
   ...extra,
 });
 const coins = (page) =>
@@ -279,7 +281,7 @@ for (const [name, opts] of [
 }
 // 6: a payment end to end: typed, confirmed, signed, recorded, published; then its coins spent by another transaction
 {
-  const p = await profile({ seed: { 'reef:started': '1', 'reef:key': KEY, 'reef:vouched': '152100' } });
+  const p = await profile({ seed: { 'reef:started': '1', 'reef:key': KEY, 'reef:vouched': VOUCHED } });
   const a = await p.open();
   await a.waitForFunction(() => /^tb1p/.test(document.getElementById('rcvaddr').value), null, { timeout: 30000 });
   const COIN = 'cd'.repeat(32) + ':0';
@@ -554,7 +556,7 @@ for (const withIdle of [false, true]) {
 // 9: sending, the edges: no coins at all, and a dust leftover while a second coin remains (not "empties the wallet")
 {
   const WL = await import(`${ROOT}lib/wallet.mjs`);
-  const p = await profile({ seed: { 'reef:started': '1', 'reef:key': KEY, 'reef:vouched': '152100' } });
+  const p = await profile({ seed: { 'reef:started': '1', 'reef:key': KEY, 'reef:vouched': VOUCHED } });
   const a = await p.open();
   await a.waitForFunction(() => /^tb1p/.test(document.getElementById('rcvaddr').value), null, { timeout: 30000 });
   await a.evaluate(
@@ -641,7 +643,7 @@ for (const withIdle of [false, true]) {
 }
 // 10: a payment's change in a block above the signed tip; the tip then reaches that block: confirmed, the change spendable
 {
-  const p = await profile({ seed: { 'reef:started': '1', 'reef:key': KEY, 'reef:vouched': '152100' } });
+  const p = await profile({ seed: { 'reef:started': '1', 'reef:key': KEY, 'reef:vouched': VOUCHED } });
   const a = await p.open();
   await a.waitForFunction(() => /^tb1p/.test(document.getElementById('rcvaddr').value), null, { timeout: 30000 });
   const COIN = 'cd'.repeat(32) + ':0';

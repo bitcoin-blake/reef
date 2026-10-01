@@ -4,7 +4,7 @@
 // tested against the kernel; this file is the host: storage, the node, the relays, the window. Every string that comes
 // from outside (relays, the mempool, the chain, links, options) reaches the page as text, never as markup.
 const $ = (id) => document.getElementById(id);
-export const VERSION = '2026-10-01.28';
+export const VERSION = '2026-10-01.29';
 const SCHEMA = 2; // the storage layout this version writes
 const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@c3f6a46a5ae29702df60f0bd87a8d15a8993a84f';
 const LIB = 'https://cdn.jsdelivr.net/gh/sidestr/spec@fe689e9c723f9bf43393d2dd5b6f924a701c8a18/siding/lib',
@@ -173,8 +173,12 @@ function sayOnce(text, urgent = false) {
 }
 function banner(id, cls, text, actions = []) {
   // put away by kind and level, not by words: a notice whose figures change every block stays put away until it gets worse
-  if (dismissed.has(id + '|' + cls)) return;
   let el = document.querySelector(`#banners [data-b="${id}"]`);
+  if (dismissed.has(id + '|' + cls)) {
+    // back down to a level already put away: the notice of another level that showed meanwhile goes too, not left with old words
+    if (el && el.dataset.cls !== cls) dropBanner(el);
+    return;
+  }
   if (el && el.dataset.text === cls + text) return;
   const labels = actions.map(([l]) => l).join('|');
   if (el && el.dataset.cls === cls && el.dataset.labels === labels) {
@@ -200,6 +204,8 @@ function banner(id, cls, text, actions = []) {
   // would be read with it): the words are said once, an alert only for the ones that stop the tab
   el.removeAttribute('role');
   sayOnce(text, STICKY.has(id) && cls === 'bad');
+  // rebuilt for a new level: a focused button's focus goes to the button of the same name in the new one (never to <body>)
+  const focused = el.contains(document.activeElement) ? document.activeElement.textContent : null;
   el.textContent = '';
   const t = document.createElement('span');
   t.className = 'bt';
@@ -237,15 +243,31 @@ function banner(id, cls, text, actions = []) {
     else x.title = id === 'backup' ? 'until Reef is opened again' : 'hide this notice for now';
     x.onclick = () => {
       dismissed.add(id + '|' + cls);
-      el.remove();
+      dropBanner(el);
     };
     el.appendChild(x);
   }
   const all = [...$('banners').children];
   const rank = (b) => (b.classList.contains('bad') ? 0 : b.classList.contains('warn') ? 1 : 2);
-  all.sort((a, b) => rank(a) - rank(b)).forEach((b) => $('banners').appendChild(b));
+  const sorted = [...all].sort((a, b) => rank(a) - rank(b));
+  // moved only when the order changes (a moved element loses the focus it holds)
+  if (sorted.some((b, i) => b !== all[i])) {
+    const had = document.activeElement;
+    sorted.forEach((b) => $('banners').appendChild(b));
+    if (had && $('banners').contains(had)) had.focus();
+  }
+  if (focused != null) ([...el.querySelectorAll('button')].find((b) => b.textContent === focused) ?? el.querySelector('button'))?.focus();
 }
-const unbanner = (id) => document.querySelector(`#banners [data-b="${id}"]`)?.remove();
+// a notice that goes while it holds the focus hands it on: to the next notice's button, else the page's toolbar
+function dropBanner(el) {
+  const had = el.contains(document.activeElement);
+  el.remove();
+  if (had) (document.querySelector('#banners button') ?? document.querySelector('.tool button.on'))?.focus();
+}
+const unbanner = (id) => {
+  const el = document.querySelector(`#banners [data-b="${id}"]`);
+  if (el) dropBanner(el);
+};
 let fatalShown = false;
 function showFatal(text) {
   fatalShown = true; // the error handler does not raise a second notice after this one
@@ -462,7 +484,18 @@ let wokeAt = 0;
     last = now;
   }, 5e3);
 }
-let lastVouched = Number(LS.get('reef:vouched')) || null;
+// the node's own vouched height as last reported ({ height, at }), for the moments before it reports this visit. It follows the
+// node both ways (a newer lower tip, a broken log, a source change or a wipe lower or clear it there); an old bare number
+// (raised only, never lowered, with no hash behind it) is not trusted and is ignored
+const loadVouched = () => {
+  try {
+    const v = JSON.parse(LS.get('reef:vouched') ?? 'null');
+    return Number.isInteger(v?.height) ? v.height : null;
+  } catch {
+    return null;
+  }
+};
+let lastVouched = loadVouched();
 const SNAPSHOT_BASE = 150307;
 const vouched = () => T.vouchedHeight(node.nostr, lastVouched, SNAPSHOT_BASE);
 // no signed chain tip, or none newer than half an hour: money above the vouched height may wait longer than a block
@@ -558,6 +591,13 @@ function plainError(e) {
 window.reef = { node, tn, OPT, VERSION };
 function onMessage(m) {
   unbanner('slowstart'); // the node spoke
+  // a node that stopped for good (a wipe that did not finish: its files may be partly gone) is said once, and nothing is sent
+  if (m.type === 'error' && m.fatal) {
+    LS.del('reef:vouched');
+    showFatal(`The node stopped: ${m.text}. Nothing can be sent from this tab until it is reloaded.`);
+    renderWallet();
+    return;
+  }
   if (m.type === 'status' || m.type === 'verified') renderInfo();
   else if (m.type === 'synced') {
     node.syncedAt ??= Date.now();
@@ -574,11 +614,12 @@ function onMessage(m) {
   } else if (m.type === 'nostr') {
     const before = vouched();
     node.nostr = m;
-    // remember the highest height a tip vouched for: a later tip that does not cover the blocks cannot lower the bar to nothing
-    const sh = T.signedHeight(m);
-    if (sh != null && !(lastVouched >= sh)) {
-      lastVouched = sh;
-      LS.set('reef:vouched', String(sh));
+    // the node's vouched height, kept for the next visit's first moments (raised and lowered with it; none when it has none)
+    const v = Number.isInteger(m.vouchedTo) ? m.vouchedTo : null;
+    if (v !== lastVouched) {
+      lastVouched = v;
+      if (v == null) LS.del('reef:vouched');
+      else LS.set('reef:vouched', JSON.stringify({ height: v, at: Date.now() }));
     }
     renderInfo();
     // the tip reached further: what waited for it (a confirmation, money received) is settled now, not a block later
@@ -1006,6 +1047,7 @@ const openNode = () => {
   behind().forEach((c) => {
     c.inert = true;
   });
+  $('toastwrap').inert = true; // its live regions too: notices are said once, from inside the node window (notify)
   nodeOpener = document.activeElement?.closest?.('.dd') ? document.querySelector('#menu > [data-m=window]') : document.activeElement;
   $('nw').classList.add('open');
   document.body.classList.add('nwopen');
@@ -1019,6 +1061,7 @@ const closeNode = () => {
   behind().forEach((c) => {
     c.inert = false;
   });
+  $('toastwrap').inert = false;
   (nodeOpener && nodeOpener !== document.body && document.contains(nodeOpener)
     ? nodeOpener
     : toolBtns.find((b) => b.classList.contains('on'))
@@ -1202,7 +1245,7 @@ document.addEventListener('keydown', (e) => {
   } else if (e.ctrlKey && !e.shiftKey && k === 'm') {
     // one key, both ways: to the tray when the window shows, back from it when it does not
     e.preventDefault();
-    win.style.display === 'none' ? $('m-main').onclick() : hideWindow();
+    win.style.display === 'none' ? showWindow() : hideWindow();
   } else if (e.altKey && e.shiftKey && !e.ctrlKey && !typing && (e.code === 'KeyN' || k === 'n')) {
     e.preventDefault();
     $('nw').classList.contains('open') ? closeNode() : openNode();
@@ -1275,7 +1318,9 @@ async function wipeAsk() {
         );
       location.reload();
     } catch (e) {
-      notify('Not wiped', `${e.message}. Close other tabs of this site and try again.`, true);
+      LS.del('reef:vouched'); // some files may be gone already
+      if (nodeStopped()) showFatal(`The node did not wipe in time and is stopped: ${e.message}. Reload before using the wallet.`);
+      else notify('Not wiped', `${e.message}. Close other tabs of this site and try again.`, true);
     }
   }
 }
@@ -1299,10 +1344,10 @@ function fillOptions(
   $('o-torrent').checked = !!o.torrent;
   const mr = suggestedRate();
   $('o-feeuse').style.display = mr != null ? '' : 'none';
+  // only where the rate comes from: the note above already says what it is (one note, not two saying 1 sat/vB)
   $('o-feesugg').textContent =
-    mr != null
-      ? `the tab's mempool: ${node.mempool.count} transactions waiting, a middle rate of ${mr} sat/vB`
-      : '1 sat/vB is what txbt4 blocks take today (too few waiting transactions to suggest more)';
+    mr != null ? `The rate waiting payments pay is the middle of the ${n(node.mempool.count)} in this tab's mempool.` : '';
+  $('o-feesugg').hidden = mr == null;
   $('o-seed').checked = !!o.seed;
   // seeding needs two readers on the snapshot file at once, which only some browsers allow
   tn.seedSupported?.()
@@ -1345,6 +1390,10 @@ function fillOptions(
           ? 'the browser has not been asked yet'
           : 'this browser has no notifications';
   $('o-allow').style.display = perm === 'default' ? '' : 'none';
+  // blocked (or no notifications at all): the box cannot be on, so it is not shown ticked; the note above says why
+  const noNotes = perm === 'denied' || perm === 'unsupported';
+  $('o-notify').disabled = noNotes;
+  if (noNotes) $('o-notify').checked = false;
   const lp = loadJSON('reef:lastpublish', null) ?? o.lastPublish;
   $('o-relaylast').textContent = lp
     ? Object.entries(lp.results)
@@ -1394,7 +1443,7 @@ $('o-feeuse').onclick = () => {
 // the fee rate in Options is the same setting as the fee dialog's, said the same way (no live region: it is the field's
 // description, read when the field is reached)
 function optRatePaint() {
-  const { ok, text } = rateNote($('o-feerate').value);
+  const { ok, text } = rateNote($('o-feerate').value, 'The payment typed on the Send page');
   $('o-feenote').textContent = text;
   $('o-feerate').setAttribute('aria-invalid', String(!ok));
 }
@@ -1658,7 +1707,9 @@ let W = null,
   PROBING = true,
   RUNNING = false;
 const asked = new Set();
-const canAct = () => !IDLE && !PROBING && W && W.coinsKnown; // the tab that runs the node is the only one that changes the wallet
+// a node that is wiped or stopped for good answers nothing: what it last said about the coins is not acted on
+const nodeStopped = () => node.phase === 'wiped' || node.phase === 'error';
+const canAct = () => !IDLE && !PROBING && W && W.coinsKnown && !nodeStopped(); // the tab that runs the node is the only one that changes the wallet
 const scriptTag = () => W.script.slice(4, 20);
 // a stored value of the wrong shape (an object where a list belongs) would stop the wallet on every load: it is moved aside
 // to reef:corrupt:<key> (kept, not lost) and the default used
@@ -1750,6 +1801,9 @@ const exact = (sats) => `${WL.formatAmount(sats, OPT.unit)} ${unit().label}`; //
 // the Send page speaks in the unit its amount field is set to: what is typed, previewed and confirmed is one unit
 const sendUnit = () => (WL.UNITS[$('sendunit').value] ? $('sendunit').value : OPT.unit);
 const exactSend = (sats) => `${WL.formatAmount(sats, sendUnit())} ${WL.UNITS[sendUnit()].label}`;
+const sendAmtHtml = (sats) => (OPT.mask ? HIDDEN + ' ' + esc(WL.UNITS[sendUnit()].label) : esc(exactSend(sats)));
+// "N sat" from the libraries in the Send page's unit: its errors say the figures in the unit the amount is typed in
+const saySend = (text) => String(text ?? '').replace(/(\d+) sat\b(?!\/)/g, (_, v) => (OPT.mask ? 'amount hidden' : exactSend(Number(v))));
 // in the tab's mempool *from a node* (the estate's feed), not merely echoed back by a relay: only that says a node has it
 const inMempool = (txid) => !!node.mempool?.txs.some((t) => t.txid === txid && (t.fed ?? true));
 function applyDisplay() {
@@ -1995,7 +2049,7 @@ async function walletInit() {
                     )
                   ) {
                     // only the tab that runs the wallet writes; the release is kept in memory too, and said only once stored
-                    if (!writable()) return notify('Not here', 'release them in the tab that runs the node', true);
+                    if (!writable()) return notify('Not here', 'release them in the tab that runs the node', false);
                     const q = loadJSON(qk, []).map((x) => ({ ...x, released: true }));
                     if (!store(qk, JSON.stringify(q))) return;
                     quarantineRecs = quarantineRecs.map((x) => ({ ...x, released: true }));
@@ -2114,6 +2168,7 @@ function wireWalletPage(address) {
       } catch {}
     }
     lastUnit = $('sendunit').value;
+    if (W?.coinsKnown) $('sendbal').innerHTML = sendAmtHtml(wallBal().available); // Available beside it, in the same unit
     updatePreview();
   });
   $('feechoose').onclick = () => (IDLE ? notHere() : feeFlow());
@@ -2316,7 +2371,7 @@ function renderWalletInner() {
     $('immature').innerHTML = amtHtml(b.immature);
     $('pending').innerHTML = amtHtml(b.pending);
     $('total').innerHTML = amtHtml(b.total);
-    $('sendbal').innerHTML = amtHtml(b.available);
+    $('sendbal').innerHTML = sendAmtHtml(b.available);
     $('outgoing').textContent = V.reservedText(b, { hitch: hitchHeld().size > 0, quarantine: quarantineHeld().size > 0, money: amtSay });
     renderStatus();
   }
@@ -2368,10 +2423,19 @@ function renderWalletInner() {
     sent,
     shown: (r) => {
       const v = views.get(r);
-      const a = Math.abs(v.sats);
-      // amounts are searched only when they are shown (Mask values hides them from the search too)
-      const amt = OPT.mask ? '' : `${WL.formatAmount(a, OPT.unit, { grouping: false })} ${WL.formatAmount(a, OPT.unit)} ${a}`;
-      return `${say(v.short)} ${say(v.state)} ${v.tag} ${amt} ${V.feeOnly(r, v) ? 'fee' : ''}`;
+      // amounts are searched only when they are shown (Mask values hides them from the search too): the row's figure and, for a
+      // payment, the amount paid without its fee, each in every unit (what the person remembers may be either)
+      const figures = [Math.abs(v.sats), recOf(r)?.sats].filter((x) => Number.isFinite(x) && x > 0);
+      const amt = OPT.mask
+        ? ''
+        : figures
+            .flatMap((x) => [
+              x,
+              ...Object.keys(WL.UNITS).flatMap((u) => [WL.formatAmount(x, u, { grouping: false }), WL.formatAmount(x, u)]),
+            ])
+            .join(' ');
+      // the filter's own word for what is not yet in a block, so searching it finds what the filter shows
+      return `${say(v.short)} ${say(v.state)} ${v.tag} ${amt} ${V.feeOnly(r, v) ? 'fee' : ''} ${r.pending && !recOf(r)?.abandoned ? 'waiting' : ''}`;
     },
   });
   $('txrows').innerHTML = shown.length
@@ -2380,8 +2444,9 @@ function renderWalletInner() {
           const s = recOf(r);
           const v = views.get(r);
           // what a screen reader hears names the row as it is shown: its kind, where to, and the amount in the row
+          // (a payment named as one: "the payment to tb1q…", "the payment to yourself", never "the sent to …")
           const who = s
-            ? `the ${v.tag ? v.tag + ' ' : ''}${r.label.toLowerCase()}${r.label === 'Payment to yourself' ? '' : ' ' + V.shortAddr(s.to)} (${amtSay(v.sats)})`
+            ? `the ${v.tag ? v.tag + ' ' : ''}payment to ${r.label === 'Payment to yourself' ? 'yourself' : V.shortAddr(s.to)} (${amtSay(v.sats)})`
             : '';
           const btn = {
             bump: ['Raise the fee…', 'Raise the fee on', 'Pay a higher fee so a block takes it sooner'],
@@ -2441,7 +2506,13 @@ function renderWalletInner() {
                     );
                     document.querySelector('#banners [data-b=unhide] button.act')?.focus();
                     clearTimeout(unhideT);
-                    unhideT = setTimeout(() => unbanner('unhide'), 30e3);
+                    unhideT = setTimeout(() => {
+                      // its Undo may hold the focus: it goes to the search box above the list, never to <body>
+                      const el = document.querySelector('#banners [data-b=unhide]');
+                      const had = el?.contains(document.activeElement);
+                      el?.remove();
+                      if (had) $('txsearch').focus();
+                    }, 30e3);
                   })
         ).catch((e) => notify('Not done', e.message, true));
       };
@@ -2460,7 +2531,7 @@ function renderWalletInner() {
         .sort((a, b) => b.height - a.height)
         .map(
           (c) =>
-            `<tr><td>${esc(n(c.height))}</td><td class="mono">${txLink(c.key.slice(0, 64), c.key.slice(0, 20) + '…:' + c.key.slice(65))}</td><td>${W.height != null ? esc(n(W.height - c.height + 1)) : '…'}${esc(V.coinNote(c, { height: W.height, sent, hitch: hh, quarantine: qh, held: bb.held, first: rf, mature: WL.isMature }))}</td><td class="amt">${moneyHtml(c.value)}</td></tr>`,
+            `<tr><td>${esc(n(c.height))}</td><td class="mono">${txLink(c.key.slice(0, 64), c.key.slice(0, 20) + '…:' + c.key.slice(65))}</td><td>${W.height != null ? esc(n(W.height - c.height + 1)) : '…'}${esc(V.coinNote(c, { height: W.height, sent, hitch: hh, quarantine: qh, held: bb.held, first: rf, mature: (c2, h) => WL.isMature(c2, WL.maturityHeight(h, vouched())) }))}</td><td class="amt">${moneyHtml(c.value)}</td></tr>`,
         )
         .join('')
     : `<tr><td colspan="4" class="mut">${known ? 'nothing received since the snapshot' : IDLE ? 'shown in the tab that runs the node' : 'waiting for the node'}</td></tr>`;
@@ -2488,7 +2559,7 @@ $('txexport').onclick = () => {
 // ---- sending: the plan shown as it is typed, a confirmation with every figure, then build, sign, check, publish
 function sendError(m) {
   $('sendout').textContent = '';
-  $('senderr').textContent = say(m);
+  $('senderr').textContent = saySend(m);
 }
 function sendInfo(m, cls = '', action = null) {
   $('senderr').textContent = '';
@@ -2536,20 +2607,26 @@ function readSend() {
       .filter((s) => s.pending && s.abandoned && (s.toScript ?? W.addr.decodeAddress(s.to)?.script) === dec.script)
       .flatMap((s) => s.inputs ?? []),
   );
-  const coins = WL.spendable(W.coins, W.height, wallBal().held, WL.reuseFirst(sent, quarantineStored()), prefer);
+  const coins = WL.spendable(
+    W.coins,
+    WL.maturityHeight(W.height, vouched()),
+    wallBal().held,
+    WL.reuseFirst(sent, quarantineStored()),
+    prefer,
+  );
   if (!coins.length) throw new Error(noCoinsWhy());
   const p = WL.plan({ coins, amount, rate, destSpk: dec.script, changeSpk: W.script, all });
   return { to, dec, self: chk.self, all, rate, p };
 }
 // does this payment use every coin that can be spent? (a leftover only "empties the wallet" when nothing else remains)
 function emptiesWallet(r) {
-  const coins = WL.spendable(W.coins, W.height, wallBal().held, WL.reuseFirst(sent, quarantineStored()));
+  const coins = WL.spendable(W.coins, WL.maturityHeight(W.height, vouched()), wallBal().held, WL.reuseFirst(sent, quarantineStored()));
   return r.p.picked.length === coins.length;
 }
 // what Send everything would pay to this destination at the current rate, or null when it cannot be planned
 function allAmountTo(destSpk) {
   try {
-    const coins = WL.spendable(W.coins, W.height, wallBal().held, WL.reuseFirst(sent, quarantineStored()));
+    const coins = WL.spendable(W.coins, WL.maturityHeight(W.height, vouched()), wallBal().held, WL.reuseFirst(sent, quarantineStored()));
     return WL.plan({
       coins,
       amount: null,
@@ -2609,13 +2686,18 @@ function updatePreview() {
     }
   } catch (e) {
     el.className = 'tiny mut';
-    const m = say(e.message);
+    const m = saySend(e.message);
     // short of coins: the way out is to send what there is
     let most = '';
     if (e.short)
       try {
         const dest = W.addr.decodeAddress($('sendto').value.trim());
-        const coins = WL.spendable(W.coins, W.height, wallBal().held, WL.reuseFirst(sent, quarantineStored()));
+        const coins = WL.spendable(
+          W.coins,
+          WL.maturityHeight(W.height, vouched()),
+          wallBal().held,
+          WL.reuseFirst(sent, quarantineStored()),
+        );
         const all = WL.plan({
           coins,
           amount: null,
@@ -2656,31 +2738,32 @@ async function publishHex(hex) {
 }
 // the fee rate from the Send page: one number, the figures follow; kept in Options (the same setting)
 // the payment typed on the Send page, at another rate: what it would cost, or that it no longer fits ('' when none is typed)
-function draftAt(rate) {
+// lead: how the payment is named where the note is shown (on Send it is above the note; in Options it is on another page)
+function draftAt(rate, lead = 'Your payment above') {
   try {
     const dec = W.addr.decodeAddress($('sendto').value.trim());
     if (!dec || WL.checkDestination(dec, { ownScript: W.script }).error) return '';
     const all = $('sendall').getAttribute('aria-pressed') === 'true';
     const amount = all ? null : WL.parseAmount($('sendamt').value, $('sendunit').value);
-    const coins = WL.spendable(W.coins, W.height, wallBal().held, WL.reuseFirst(sent, quarantineStored()));
+    const coins = WL.spendable(W.coins, WL.maturityHeight(W.height, vouched()), wallBal().held, WL.reuseFirst(sent, quarantineStored()));
     try {
       const p = WL.plan({ coins, amount, rate, destSpk: dec.script, changeSpk: W.script, all });
       // a leftover too small for change goes to the fee too, but it is not what the rate costs: said apart, as in the preview
       const left = leftoverOf({ all, p, rate });
       return left
-        ? ` Your payment above would cost ${exact(p.fee - left)} in fees at this rate, plus ${exact(left)} left over (too small to come back as change).`
-        : ` Your payment above would cost ${exact(p.fee)} in fees at this rate.`;
+        ? ` ${lead} would cost ${exact(p.fee - left)} in fees at this rate, plus ${exact(left)} left over (too small to come back as change).`
+        : ` ${lead} would cost ${exact(p.fee)} in fees at this rate.`;
     } catch (e) {
       if (!e.short) return '';
       const most = WL.plan({ coins, amount: null, rate, destSpk: dec.script, changeSpk: W.script, all: true }).amount;
-      return ` Your payment above would no longer fit at this rate; up to ${exact(most)} can be sent.`;
+      return ` ${lead} would no longer fit at this rate; up to ${exact(most)} can be sent.`;
     }
   } catch {
     return '';
   }
 }
 // what a fee rate means, in the same words wherever it is chosen (the fee dialog, Options): → { ok, text, short }
-function rateNote(v) {
+function rateNote(v, lead) {
   const r = Number(v);
   const ok = Number.isInteger(r) && r >= 1 && r <= WL.MAX_RATE;
   if (!ok) return { ok, text: `A whole number from 1 to ${WL.MAX_RATE}.`, short: `A whole number from 1 to ${WL.MAX_RATE}.` };
@@ -2694,7 +2777,7 @@ function rateNote(v) {
       `About ${exact(typical)} for a typical payment. ${sug ? `Payments waiting now pay about ${sug} sat/vB.` : 'A block comes about every 20 minutes; 1 sat/vB is enough today.'}` +
       (high ? ` ${r} sat/vB is much more than blocks need today, and it stays for every payment until changed.` : '') +
       (avail != null && typical > avail ? ' At this rate the fee alone is more than you can spend.' : '') +
-      draftAt(r),
+      draftAt(r, lead),
     short: `About ${exact(typical)} for a typical payment${high ? '; much more than blocks need today' : ''}.`,
   };
 }
@@ -2746,6 +2829,7 @@ async function feeFlow() {
 async function sendFlow() {
   if (sending || !canAct()) return;
   // a disagreeing chain tip is said first: nothing about this chain's coins can be trusted while it lasts
+  if (nodeStopped()) throw new Error('the node is stopped: reload the page before sending');
   if (trust().level === 'bad') throw new Error('the block source disagrees with the signed chain tip: sending waits until that clears');
   const r = readSend();
   const { p } = r;
@@ -2909,7 +2993,7 @@ async function replaceFlow(s, cancel) {
         ]
       : plain
         ? [
-            `The same payment of ${exact(amount)} to ${s.to} is sent again with a fee of ${exact(fee)} (${rate} sat/vB) instead of ${exact(s.fee)}; the ${exact(fee - s.fee)} more comes out of your change.`,
+            `The same payment of ${exact(amount)} to ${V.grouped(s.to)} is sent again with a fee of ${exact(fee)} (${rate} sat/vB) instead of ${exact(s.fee)}; the ${exact(fee - s.fee)} more comes out of your change.`,
             'Whichever version a block takes, the payment is made once.',
           ]
         : [
@@ -3161,6 +3245,7 @@ function openBackup() {
   };
   $('backup').showModal();
 }
+let evictable = false; // the browser did not agree to keep this site's data (navigator.storage.persist)
 function backupNudge(urgent = false) {
   // nothing about the wallet is said until this tab knows whether it runs it (the lock probe settles)
   if (!W || backedUp() || IDLE || PROBING) {
@@ -3168,12 +3253,14 @@ function backupNudge(urgent = false) {
     return;
   }
   const has = W.coins.length > 0 || ledger.size > 0 || sent.length > 0;
+  // the browser would not promise to keep the files: said in this one notice, not a second one also saying "back up"
+  const keep = evictable ? ' If the browser offers it, also allow this site to keep its data.' : '';
   banner(
     'backup',
     has || urgent ? 'bad' : 'warn',
-    has
+    (has
       ? `This wallet holds coins and its key is not backed up. The key lives only in this browser: clearing site data, or the browser freeing space, would lose the coins.`
-      : 'Back up your wallet key before you receive anything: it lives only in this browser.',
+      : 'Back up your wallet key before you receive anything: it lives only in this browser.') + keep,
     [['Back up now…', () => openBackup()]],
   );
 }
@@ -3408,7 +3495,13 @@ const cout = $('cout'),
 const chist = [];
 let hi = 0;
 const err = (code, message) => ({ __err: { code, message } });
+// sizes said to a person in one unit, beside the "1.1 GB" and "830 MB" of the texts (not "10240.0 MiB")
+const gb = (b) => (b >= 10e9 ? Math.round(b / 1e9) : (b / 1e9).toFixed(1)) + ' GB';
 const hide = (x) => (OPT.mask ? 'amount hidden' : x); // Mask values covers the console too
+const ownTx = (t) => {
+  const r = W ? ourTx(t) : null;
+  return !!(r && (r.spendsOurs || r.toUs > 0));
+};
 function cprint(s, cls) {
   const el = document.createElement('span');
   if (cls) el.className = cls;
@@ -3488,22 +3581,33 @@ const ANS = {
     node.mempool
       ? a[0] === 'true'
         ? Object.fromEntries(
-            node.mempool.txs.map((t) => [t.txid, { vsize: t.vsize, fees: { base: t.fee / 1e8 }, time: t.at, feerate: t.feeRate }]),
+            node.mempool.txs.map((t) => {
+              const own = ownTx(t); // the wallet's own: fee and rate masked (the rate times the size gives the fee)
+              return [
+                t.txid,
+                {
+                  vsize: t.vsize,
+                  fees: { base: own ? hide(t.fee / 1e8) : t.fee / 1e8 },
+                  time: t.at,
+                  feerate: own ? hide(t.feeRate) : t.feeRate,
+                },
+              ];
+            }),
           )
         : node.mempool.txs.map((t) => t.txid)
       : err(-28, 'the mempool is followed once the tab is up to date'),
   getmempoolentry: (a) => {
     const t = node.mempool?.txs.find((x) => x.txid === String(a[0] ?? '').toLowerCase());
     if (!t) return err(-5, 'Transaction not in mempool');
-    // the wallet's own payment: its amounts are the person's, masked like getbalance (a stranger's are public anyway)
-    const r = W ? ourTx(t) : null;
-    const own = r && (r.spendsOurs || r.toUs > 0);
+    // the wallet's own payment: its amounts are the person's, masked like getbalance (a stranger's are public anyway); the rate
+    // too, since the rate times the size gives the fee
+    const own = ownTx(t);
     return {
       txid: t.txid,
       vsize: t.vsize,
       fees: { base: own ? hide(t.fee / 1e8) : t.fee / 1e8 },
       time: t.at,
-      feerate: t.feeRate,
+      feerate: own ? hide(t.feeRate) : t.feeRate,
       inputs: t.inputs,
       outputs: own ? t.outputs.map((o) => ({ ...o, value: hide(o.value) })) : t.outputs,
     };
@@ -3588,7 +3692,7 @@ const ANS = {
           scriptPubKey: W.script,
           amount: hide(c.value / 1e8),
           confirmations: W.height != null ? W.height - c.height + 1 : null,
-          spendable: WL.isMature(c, W.height),
+          spendable: WL.isMature(c, WL.maturityHeight(W.height, vouched())),
           coinbase: !!c.coinbase,
         }))
       : err(-18, 'wallet not ready'),
@@ -3621,18 +3725,19 @@ cin.onkeydown = (e) => {
     const f = Object.hasOwn(ANS, cmd) ? ANS[cmd] : null;
     // the log itself is quiet for screen readers; each answer is said once, in one line
     const say1 = (t) => sayOnce(`${cmd}: ${String(t).split('\n')[0].slice(0, 140)}`);
-    if (!f) return cprint('Method not found (code -32601)', 'err'), say1('error: method not found');
+    if (!f) return (cprint('Method not found (code -32601)', 'err'), say1('error: method not found'));
     if (IDLE && !['help', 'uptime'].includes(cmd))
       return (
-        cprint('The node runs in another tab of this browser: ask there (code -1)', 'err'), say1('error: the node runs in another tab')
+        cprint('The node runs in another tab of this browser: ask there (code -1)', 'err'),
+        say1('error: the node runs in another tab')
       );
     let a;
     try {
       a = f(args.map((x) => x.replace(/^"|"$/g, '')));
     } catch (x) {
-      return cprint(x.message, 'err'), say1('error: ' + x.message);
+      return (cprint(x.message, 'err'), say1('error: ' + x.message));
     }
-    if (a && a.__err) return cprint(`${a.__err.message} (code ${a.__err.code})`, 'err'), say1('error: ' + a.__err.message);
+    if (a && a.__err) return (cprint(`${a.__err.message} (code ${a.__err.code})`, 'err'), say1('error: ' + a.__err.message));
     const out = typeof a === 'string' ? a : JSON.stringify(a, null, 2);
     cprint(out);
     say1(typeof a === 'object' && a ? `${Object.keys(a).length} fields, shown in the console` : out);
@@ -3870,6 +3975,9 @@ function flash(id) {
   el.classList.remove('flash');
   void el.offsetWidth; // restart the animation
   el.classList.add('flash');
+  // taken off again (with reduced motion the outline is static, so a second press would show no change)
+  clearTimeout(el._flash);
+  el._flash = setTimeout(() => el.classList.remove('flash'), 1200);
 }
 function readOnlyPage() {
   for (const id of ['sendto', 'sendamt', 'sendunit', 'sendall', 'sendpaste']) $(id).disabled = true;
@@ -3910,10 +4018,20 @@ function goIdle() {
   renderWallet();
   updatePreview();
   renderStatus();
+  // which app holds the node, when the running Reef says so (Bight, Winch and Hitch write nothing): an older Reef is named,
+  // and told through storage to look for the update now rather than at its next hourly check
+  const holder = runningHolder();
+  if (holder) LS.set('reef:newest', VERSION);
+  const older = holder && newer(VERSION, holder.version);
   banner(
     'twotabs',
     'warn',
-    "Reef is already open in another tab of this browser, or Bight, Winch or Hitch runs the node there. This tab stays idle and changes nothing: two tabs would fight over the node's files and could spend the same coins twice. It takes over as soon as the other tab closes.",
+    (older
+      ? `An older Reef (${holder.version}) runs the node in another tab of this browser: reload that tab to update it.`
+      : holder
+        ? 'Reef is already open in another tab of this browser.'
+        : 'Reef is already open in another tab of this browser, or Bight, Winch or Hitch runs the node there.') +
+      " This tab stays idle and changes nothing: two tabs would fight over the node's files and could spend the same coins twice. It takes over as soon as the other tab closes.",
     [['Check again', () => location.reload()]],
   );
   const wait = () =>
@@ -3982,6 +4100,24 @@ addEventListener('storage', (e) => {
     renderWallet();
   } catch {}
 });
+// the tab that runs the node says so (app, version, a heartbeat): an idle tab names it, a newer one can say it is older
+const RUNNING_KEY = 'reef:running';
+function runningHolder() {
+  try {
+    const r = JSON.parse(LS.get(RUNNING_KEY) ?? 'null');
+    return r && typeof r.version === 'string' && Date.now() - r.at < 90e3 ? r : null; // a stale record is a closed tab's
+  } catch {
+    return null;
+  }
+}
+function announceRunning() {
+  const beat = () => LS.set(RUNNING_KEY, JSON.stringify({ app: 'Reef', version: VERSION, at: Date.now() }));
+  beat();
+  setInterval(beat, 30e3);
+  addEventListener('pagehide', () => LS.del(RUNNING_KEY));
+  // a newer Reef opened idle in another tab: look for the update now
+  addEventListener('storage', (e) => e.key === 'reef:newest' && e.newValue && newer(e.newValue, VERSION) && checkVersion());
+}
 async function startNode(force = false) {
   unbanner('welcome');
   try {
@@ -3994,6 +4130,7 @@ async function startNode(force = false) {
       // the stored records are sorted by walletInit, which may still be loading: write nothing until it has finished
       await walletReady;
       if (IDLE) return;
+      announceRunning();
       RUNNING = true;
       LS.set('reef:schema', String(SCHEMA)); // only the tab that runs the node marks the layout
       backupNudge(); // now that this tab is known to run the wallet
@@ -4001,13 +4138,11 @@ async function startNode(force = false) {
       navigator.storage
         ?.persist?.()
         .then((kept) => {
-          if (kept === false && W && !backedUp())
-            banner(
-              'evictable',
-              'warn',
-              "This browser may clear the wallet and the node's files when the disk gets full. Back up the key, and if the browser offers it, allow this site to keep its data.",
-              [['Back up the key…', () => openBackup()]],
-            );
+          // folded into the backup notice (two notices both saying "back up" took a phone's screen)
+          if (kept === false && W && !backedUp()) {
+            evictable = true;
+            backupNudge();
+          }
         })
         .catch(() => {});
       pendingSort?.();
@@ -4055,7 +4190,17 @@ function newerSchema() {
     'schema',
     'bad',
     "This browser's wallet records were written by a newer Reef. This older copy stays read-only so it cannot damage them: reload to get the newer version.",
-    [['Reload', () => location.replace(location.pathname + '?v=' + Date.now())]],
+    [
+      [
+        'Reload',
+        () => {
+          // the same address (source proposals, frame flags, #hash) with a fresh v= so no cache serves this copy again
+          const u = new URL(location.href);
+          u.searchParams.set('v', String(Date.now()));
+          location.replace(u.href);
+        },
+      ],
+    ],
   );
   walletReady.then(() => (renderWallet(), updatePreview(), renderStatus()));
 }
@@ -4144,8 +4289,8 @@ async function begin() {
     free == null
       ? 'The browser does not say how much space it allows.'
       : free < 1.2e9
-        ? `The browser allows ${mib(free)} more for this site, less than the 1.1 GB needed: free disk space first, or the fetch will stop part-way.`
-        : `The browser allows ${mib(free)} for this site; 1.1 GB is needed.`;
+        ? `The browser allows ${gb(free)} more for this site, less than the 1.1 GB needed: free disk space first, or the fetch will stop part-way.`
+        : `The browser allows ${gb(free)} for this site; 1.1 GB is needed.`;
   $('wl-start').onclick = async () => {
     $('welcome').close();
     node.notStarted = false;

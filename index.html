@@ -143,11 +143,12 @@ body.idle #st-conn { opacity:.62 } :root { --off:#6b6b6b } @media (prefers-color
 
 /* round 9 */
 body.nwopen #toastwrap { bottom:64px } /* not over the node window's console line */
-@media (max-width: 340px) { .tool button svg { display:none } .tool button { min-width:0; padding:4px 6px } }
 .row input[type=checkbox] { flex:none }
 @media (prefers-color-scheme: dark) { #ask-ok.danger { background:#b3261e; border-color:#b3261e; color:#fff } }
 #tray .badge { background:#c0392b }
 @media (max-width: 760px) { .testchip { white-space:nowrap; flex:none } .tool button { min-width:62px } }
+/* after the 760 px rule, which would win otherwise: at 340 px the buttons shrink to their words, in a smaller size */
+@media (max-width: 340px) { .tool button svg { display:none } .tool button { min-width:0; padding:4px 3px; font-size:11px; letter-spacing:-.1px; flex:1 1 auto } }
 body.idle #t-info > *, body.idle #t-peers > *, body.idle #t-mempool > *, body.idle #t-traffic > * { display:none } body.idle #t-info::before, body.idle #t-peers::before, body.idle #t-mempool::before, body.idle #t-traffic::before { content:'Shown in the tab that runs the node.'; color:var(--mut); display:block; padding:12px }
 .testchip { display:none } #feerate { white-space:nowrap }
 @media (max-width: 760px) { .testchip { display:inline-flex; align-self:center; margin-left:auto; font-size:10.5px; font-weight:700; letter-spacing:.04em; padding:2px 6px; border-radius:3px; background:var(--tn); color:#fff } #feerate { white-space:normal } }
@@ -166,7 +167,7 @@ th.amt, #p-tx thead th:nth-child(6) { white-space:nowrap }
   .dd [aria-disabled=true]:focus-visible::after { left:0; top:100%; width:auto; right:0; margin:0 }
 }
 /* round 12 */
-button[aria-disabled=true]:not([role]) { opacity:.6; cursor:not-allowed }
+button[aria-disabled=true]:not([role]), button.q:disabled { opacity:.6; cursor:not-allowed }
 .flash { animation:fl 1.2s ease-out } @keyframes fl { 0%,40% { background:#fff1b8; outline:2px solid #e3c47a } 100% { background:transparent; outline-color:transparent } }
 @media (prefers-color-scheme: dark) { @keyframes fl { 0%,40% { background:#4a3d18; outline:2px solid #8a6d2a } 100% { background:transparent; outline-color:transparent } } }
 @media (prefers-reduced-motion: reduce) { .flash { animation:none; outline:2px solid #e3c47a } }
@@ -226,7 +227,7 @@ fieldset { min-inline-size:0 }
     <fieldset><legend>Coins held</legend><div class="tiny" id="rcvincoming" role="status" style="margin-bottom:6px"></div><table><caption class="sr">Coins held by this wallet</caption><thead><tr><th scope="col">Block</th><th scope="col">Outpoint</th><th scope="col">Confirmations</th><th scope="col">Amount (<span class="unit">tBTC</span>)</th></tr></thead><tbody id="rcvrows"><tr><td colspan="4" class="mut">nothing received since the snapshot</td></tr></tbody></table></fieldset>
   </div>
   <div class="page" id="p-tx" role="region" aria-labelledby="h-tx"><h2 class="sr" id="h-tx">Transactions</h2>
-    <div class="row wrap" style="margin-bottom:8px"><select id="txtype" aria-label="Show" style="width:auto"><option value="all">All</option><option value="in">Received</option><option value="out">Sent</option><option value="mined">Mined</option><option value="pending">Waiting</option></select><input id="txsearch" aria-label="Search" placeholder="search: address, amount, status or transaction"><button class="q" id="txexport" type="button">Export CSV…</button></div>
+    <div class="row wrap" style="margin-bottom:8px"><select id="txtype" aria-label="Show" style="width:auto"><option value="all">All</option><option value="in">Received</option><option value="out">Sent</option><option value="mined">Mined</option><option value="pending">Waiting</option></select><input id="txsearch" aria-label="Search" placeholder="Search" title="search by address, amount, status or transaction"><button class="q" id="txexport" type="button">Export CSV…</button></div>
     <table><caption class="sr">Transactions</caption><thead><tr><th scope="col">Date</th><th scope="col">Status</th><th scope="col">Block</th><th scope="col">Type</th><th scope="col">Address</th><th scope="col">Amount (<span class="unit">tBTC</span>)</th><th scope="col"><span class="sr">Actions</span></th></tr></thead><tbody id="txrows"></tbody></table>
       </div>
   <div class="status"><span class="bar"><span id="syncmsg">Starting…</span><span id="announce" class="sr" role="status"></span><span class="pb" id="pb" hidden role="progressbar" aria-label="Sync progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="pbi" style="width:0%"></i></span><span id="synceta" class="mono"></span></span><span class="fill"></span><span class="tnbadge" title="BLAKE2b testnet4, alias txbt4">TESTNET4 · BLAKE2b</span>
@@ -257,7 +258,7 @@ The node answers from this tab's own validated state; wallet commands answer for
   </div>
 </div>
 <script defer src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js" integrity="sha384-8FWZA6BGMXhsfO+BLtrJK0We6gg5o1JyO8xQm6peWDEUs17ACA5ziE/NIAkl9z2k" crossorigin="anonymous"></script>
-<script type="module" src="reef.js?v=2026-10-01.28"></script>
+<script type="module" src="reef.js?v=2026-10-01.29"></script>
 <dialog id="about" aria-labelledby="about-title"><div class="t" id="about-title">About Reef</div><div class="b"><div><img src="og.png" alt="" style="width:64px;height:64px;object-fit:cover;border-radius:12px;border:1px solid var(--line2)"></div><div>
 <p><b>Reef</b> · a Bitcoin node in a browser tab, for txbt4, the BLAKE2b testnet4.</p>
 <p>It looks like Knots and runs a chain Knots defined, but it is not Knots. The tab fetches the fork-point UTXO snapshot, recomputes its hashes, validates every block since the fork and follows the chain tip. The wallet is one key kept in this tab.</p>
