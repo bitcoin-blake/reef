@@ -4,9 +4,9 @@
 // tested against the kernel; this file is the host: storage, the node, the relays, the window. Every string that comes
 // from outside (relays, the mempool, the chain, links, options) reaches the page as text, never as markup.
 const $ = (id) => document.getElementById(id);
-export const VERSION = '2026-10-01.33';
+export const VERSION = '2026-10-01.34';
 const SCHEMA = 2; // the storage layout this version writes
-const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@3037bb4c7ea414e75332632677ac2ffee191b704';
+const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@b54e498a5603771586dc8d9dcb963223014dfd8a';
 const LIB = 'https://cdn.jsdelivr.net/gh/sidestr/spec@fe689e9c723f9bf43393d2dd5b6f924a701c8a18/siding/lib',
   CDN = 'https://cdn.jsdelivr.net/gh/bitcoin-desktop/schema@b8cbf6337c7450fe14ddc5bce00c7280059aab5d';
 // the engine's rule files by content as well as by commit: a CDN that served other rules would validate another chain
@@ -326,7 +326,7 @@ addEventListener('unhandledrejection', (e) => caught(e.reason));
 // ---- the libraries; a CDN outage is said in words, not as a dead page
 // the node's loader is the anchor of the node's own hash table, so it is checked here by its sha256 (the release test
 // recomputes it from the pinned commit) and run from that checked text, never fetched again by the import
-const TABNODE_SHA256 = '2320a0c936e94cdd36939120c7cf879e70d293b8dbd2368cc786b9856f39ad5e';
+const TABNODE_SHA256 = '0a8cfdc504436c3bb1788d04a56c8974dfe7dd4c1c1bfb9b75fc67ace79a1b6c';
 async function sha256hex(bytes) {
   return [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
