@@ -145,14 +145,14 @@ async function profile({
   }, seed);
   await s.close();
   const errors = [];
-  const open = async ({ ready = true } = {}) => {
+  const open = async ({ ready = true, path = 'index.html' } = {}) => {
     const page = await ctx.newPage();
     page.on('pageerror', (e) => errors.push(e.message));
     page.on(
       'console',
       (m) => m.type() === 'error' && !/WebSocket|ERR_|404/.test(m.text()) && errors.push(m.text()), // a policy refusal is an error here
     );
-    await page.goto('http://localhost:8799/index.html');
+    await page.goto('http://localhost:8799/' + path);
     if (ready) await page.waitForFunction(() => window.__fake, null, { timeout: 30000 });
     return page;
   };
@@ -1664,6 +1664,49 @@ async function wallet(coins, extra = {}) {
   t('a phone, after Not now: the "not started" notice with Start is the one shown', (await first(c)) === 'welcome', await first(c));
   t('no page errors in the phone notices', !p.errors.length && !q.errors.length, [...p.errors, ...q.errors].join(' | '));
   await q.ctx.close();
+}
+
+// 21: payment requests (BIP 21): a link's ?pay= fills the Send page and sends nothing; a bitcoin: URI typed into Pay To fills
+// the form; a request Reef cannot honour is refused in words
+{
+  const A = 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx';
+  const uri = `bitcoin:${A}?amount=0.0001&label=Table%207&message=buy-in`;
+  const p = await profile({ seed: { 'reef:started': '1', 'reef:key': KEY } });
+  const a = await p.open({ path: 'index.html?pay=' + encodeURIComponent(uri) });
+  await a.waitForSelector('#banners [data-b=payreq]', { timeout: 30000 });
+  const got = await a.evaluate(() => ({
+    page: document.getElementById('p-send').classList.contains('on'),
+    to: document.getElementById('sendto').value,
+    amt: document.getElementById('sendamt').value,
+    unit: document.getElementById('sendunit').value,
+    req: document.getElementById('sendreq').textContent,
+    url: location.search,
+    dialog: !!document.querySelector('#ask[open]'),
+  }));
+  t(
+    "a ?pay= link opens the Send page filled in (address, amount, the request's words), with a notice, and leaves the address bar",
+    got.page && got.to === A && got.amt === '0.0001' && got.unit === 'tbtc' && /Table 7: buy-in/.test(got.req) && !/pay=/.test(got.url),
+    JSON.stringify(got),
+  );
+  await a.waitForTimeout(1500);
+  t(
+    'a ?pay= link sends nothing by itself: no confirmation opened, nothing published',
+    !got.dialog && !(await a.$('#ask[open]')) && (await a.evaluate(() => (window.__relay ?? []).length)) === 0,
+  );
+  await a.click('#sendclear');
+  await a.fill('#sendto', `BITCOIN:${A.toUpperCase()}?AMOUNT=0.00025`);
+  const typed = await a.evaluate(() => [document.getElementById('sendto').value, document.getElementById('sendamt').value]);
+  t('a bitcoin: URI typed into Pay To fills the address and the amount', typed[0] === A && typed[1] === '0.00025', typed.join(' | '));
+  await a.click('#sendclear');
+  await a.fill('#sendto', `bitcoin:${A}?amount=0.0001&req-pop=x`);
+  await a.waitForFunction(() => document.getElementById('senderr').textContent.length > 0, null, { timeout: 5000 }).catch(() => {});
+  t(
+    'a request that needs something Reef does not support is refused in words',
+    /req-pop/.test(await a.textContent('#senderr')),
+    await a.textContent('#senderr'),
+  );
+  t('no page errors with payment requests', !p.errors.length, p.errors.join(' | '));
+  await p.ctx.close();
 }
 
 await browser.close();

@@ -32,6 +32,55 @@ const throws = (f, re) => {
   }
 };
 
+// ---- payment requests (BIP 21): what a link or a pasted bitcoin: URI asks for, read exactly; nothing else is a request
+{
+  const A = 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx';
+  const r = W.parsePaymentUri(`bitcoin:${A}?amount=0.001&label=Table%207&message=buy-in+for+seat+3`);
+  t(
+    'a request gives the address, the amount exactly and its words',
+    r.address === A && r.sats === 100000 && r.label === 'Table 7' && r.message === 'buy-in for seat 3',
+    JSON.stringify(r),
+  );
+  t('a request with no amount leaves the amount to the person', W.parsePaymentUri(`bitcoin:${A}`).sats === null);
+  t(
+    'the scheme in any case, and an address in capitals (a QR code) read in lower case',
+    W.parsePaymentUri(`BITCOIN:${A.toUpperCase()}?AMOUNT=1.00000001`).address === A &&
+      W.parsePaymentUri(`BITCOIN:${A.toUpperCase()}?AMOUNT=1.00000001`).sats === 100000001,
+  );
+  t(
+    'a plain address, or other text, is not a request',
+    W.parsePaymentUri(A) === null && W.parsePaymentUri('lightning:x') === null && W.parsePaymentUri('') === null,
+  );
+  t('an unknown optional parameter is ignored', W.parsePaymentUri(`bitcoin:${A}?amount=0.5&lightning=lnbc1&foo=bar`).sats === 50000000);
+  t(
+    'a required parameter Reef does not know refuses the request',
+    throws(() => W.parsePaymentUri(`bitcoin:${A}?req-pop=x`), /req-pop/),
+  );
+  t(
+    'an amount with a comma, grouping, a sign, a unit or too many decimals is refused',
+    ['1,5', '1 000', '-1', '0.001BTC', '1e-3', '0.000000001'].every((a) =>
+      throws(() => W.parsePaymentUri(`bitcoin:${A}?amount=${encodeURIComponent(a)}`)),
+    ),
+  );
+  t(
+    'an amount of 0 is refused',
+    throws(() => W.parsePaymentUri(`bitcoin:${A}?amount=0.0`), /nothing/),
+  );
+  t(
+    'the amount named twice is refused',
+    throws(() => W.parsePaymentUri(`bitcoin:${A}?amount=1&amount=2`), /twice/),
+  );
+  t(
+    'no address is refused',
+    throws(() => W.parsePaymentUri('bitcoin:?amount=1'), /no address/),
+  );
+  t(
+    'a broken % escape is refused in words',
+    throws(() => W.parsePaymentUri(`bitcoin:${A}?label=%E0%A4%A`), /escape/),
+  );
+  t('the words are capped', W.parsePaymentUri(`bitcoin:${A}?label=${'x'.repeat(500)}`).label.length === 200);
+}
+
 // ---- amounts: exact, in every unit, with the mistakes people make refused in words
 t(
   '0.001 tBTC is 100,000 sat, exactly (no float)',

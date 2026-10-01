@@ -4,7 +4,7 @@
 // tested against the kernel; this file is the host: storage, the node, the relays, the window. Every string that comes
 // from outside (relays, the mempool, the chain, links, options) reaches the page as text, never as markup.
 const $ = (id) => document.getElementById(id);
-export const VERSION = '2026-10-01.40';
+export const VERSION = '2026-10-01.41';
 const SCHEMA = 2; // the storage layout this version writes
 const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@f1da4a6b64a6a9a6f791d2e5dea8a1c1be81ea09';
 const LIB = 'https://cdn.jsdelivr.net/gh/sidestr/spec@fe689e9c723f9bf43393d2dd5b6f924a701c8a18/siding/lib',
@@ -2214,6 +2214,7 @@ async function walletInit() {
   }
   W.validRecord = (x) => S.validRecord(x, { check, scriptOf, ownScript: script });
   wireWalletPage(address);
+  payLink();
   renderMpMem(); // its own transactions can be told apart now
   // the node may have started first and waited: once loaded, the stored records are sorted and written (never skipped)
   if (RUNNING && pendingSort) {
@@ -2269,6 +2270,7 @@ function wireWalletPage(address) {
     updatePreview();
   };
   $('sendclear').onclick = () => {
+    $('sendreq').textContent = '';
     $('sendto').value = '';
     $('sendamt').value = '';
     $('sendamt').disabled = false;
@@ -2287,8 +2289,11 @@ function wireWalletPage(address) {
   };
   $('sendpaste').onclick = async () => {
     try {
-      $('sendto').value = (await navigator.clipboard.readText()).trim();
-      updatePreview();
+      const text = (await navigator.clipboard.readText()).trim();
+      if (!applyRequest(text)) {
+        $('sendto').value = text;
+        updatePreview();
+      }
     } catch {
       sendError('the browser did not allow reading the clipboard: paste with Ctrl+V');
     }
@@ -2306,6 +2311,11 @@ function wireWalletPage(address) {
         $('sendpreview').textContent = t;
       }, 800);
     });
+  $('sendto').addEventListener('input', () => {
+    const v = $('sendto').value.trim();
+    if (/^bitcoin:/i.test(v)) applyRequest(v);
+    else if (v !== $('sendreq').dataset.to) $('sendreq').textContent = '';
+  });
   // a change of unit converts the amount typed, so the digits never silently mean a thousand times more
   let lastUnit = OPT.unit;
   $('sendunit').value = OPT.unit;
@@ -2744,6 +2754,51 @@ $('txexport').onclick = () => {
 };
 
 // ---- sending: the plan shown as it is typed, a confirmation with every figure, then build, sign, check, publish
+// A payment request (BIP 21: a link's ?pay=, or a bitcoin: URI typed or pasted into Pay To) fills the form: the address, the
+// amount in the Send unit, and the requester's own words beside it, as text. It never sends: Send… and its confirmation,
+// with every figure, still decide. Returns false for text that is not a request
+function applyRequest(text) {
+  let r;
+  try {
+    r = WL.parsePaymentUri(text);
+  } catch (e) {
+    sendError(e.message);
+    return true;
+  }
+  if (!r) return false;
+  $('sendto').value = r.address;
+  if (r.sats != null) {
+    if ($('sendall').getAttribute('aria-pressed') === 'true') {
+      $('sendall').setAttribute('aria-pressed', 'false');
+      $('sendamt').disabled = false;
+    }
+    $('sendamt').value = WL.formatAmount(r.sats, sendUnit(), { grouping: false })
+      .replace(/(\.\d*?)0+$/, '$1')
+      .replace(/\.$/, '');
+  }
+  const words = [r.label, r.message].filter(Boolean).join(': ');
+  $('sendreq').textContent = words ? `The request says: “${words}”` : '';
+  $('sendreq').dataset.to = r.address;
+  updatePreview();
+  return true;
+}
+// ?pay=<bitcoin: URI> in the page's own link: the Send page, filled in, with a notice; nothing is sent until the person
+// presses Send… and confirms. The parameter is taken out of the address bar, so a reload never offers the same payment again
+function payLink() {
+  const pay = q.get('pay');
+  if (!pay) return;
+  const u = new URL(location.href);
+  u.searchParams.delete('pay');
+  history.replaceState(null, '', u.pathname + u.search + u.hash);
+  showPage('send');
+  if (!applyRequest(pay)) return sendError('the link asked for a payment, but what it gave is not a bitcoin: payment request');
+  banner(
+    'payreq',
+    'warn',
+    'A link filled in a payment on the Send page. Check the address and the amount: nothing is sent until you press Send… and confirm.',
+    [['Clear it', () => ($('sendclear').click(), unbanner('payreq'))]],
+  );
+}
 function sendError(m) {
   $('sendout').textContent = '';
   $('senderr').textContent = saySend(m);
