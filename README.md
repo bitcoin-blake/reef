@@ -26,7 +26,7 @@ The rest as before: Options for the fee rate, relays, units and value masking; *
 
 ## Releasing
 
-1. Change the code; run `npm test` (the syntax of `reef.js`, the payment state machine, the wallet against the kernel, and the release checks: `VERSION` in `reef.js`, `version.json` and `reef.js?v=` in `index.html` agree, and the security policy names the exact node, library and engine pins, including the ones the node worker itself imports).
+1. Change the code; run `npm test` (also run on every push by `.github/workflows/test.yml`, with the node, library and engine checked out at the pinned commits) (the syntax of `reef.js`, the payment state machine, the wallet against the kernel, and the release checks: `VERSION` in `reef.js`, `version.json` and `reef.js?v=` in `index.html` agree, and the security policy names the exact node, library and engine pins, including the ones the node worker itself imports).
 2. Bump `VERSION` in all three places together, so a cached page never mixes versions and open tabs are offered the new one.
 3. A new node pin goes into `reef.js`, the policy in `index.html`, and the other apps of the origin (Bight, Winch, Hitch) in the same sitting: they share the node's files and its lock.
 4. Push; GitHub Pages serves the new files within about ten minutes.

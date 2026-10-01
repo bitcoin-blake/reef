@@ -72,6 +72,7 @@ t('send-all with a balance under the fee is refused', throws(() => W.plan({ coin
   { const r = [{ ...sent[0] }, { ...sent[0], txid: 'bb'.repeat(32), fee: 400, change: 6600 }]; r[0].replacedBy = r[1].txid; const b3 = W.balances({ coins: [c1], sent: r, height }); t('a payment and its fee-raised replacement count once, at the worse of the two', b3.pending === 6600 && b3.outgoing === 3400 && b3.total === 6600, JSON.stringify(b3)); }
   { const r = [{ ...sent[0] }, { txid: 'bb'.repeat(32), sats: 0, fee: 400, change: 9600, self: true, kind: 'cancel', pending: true, inputs: [c1.key] }]; r[0].replacedBy = r[1].txid; const b4 = W.balances({ coins: [c1], sent: r, height }); t('a cancel does not raise the balance before a block says it won', b4.total === 6845 && b4.outgoing === 3155, JSON.stringify(b4)); }
   t('a refused payment holds nothing', W.balances({ coins: [c1], sent: [{ ...sent[0], refused: 'x' }], height }).available === 10000);
+  { const r = W.balances({ coins: [c1, coin(23, 4000)], sent: [], height, reserved: new Set([c1.key]) }); t('coins another app reserves are not available, are counted apart and in the total', r.available === 4000 && r.elsewhere === 10000 && r.total === 14000 && r.held.has(c1.key)); }
   t('an abandoned send no longer holds its coins', W.balances({ coins: [c1], sent: [{ ...sent[0], abandoned: true }], height }).available === 10000); }
 
 // ---- the key for other wallets: WIF and a rawtr() descriptor, both round-tripping and checked against known vectors

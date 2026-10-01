@@ -45,7 +45,7 @@ t('a spend answer for a payment already settled changes nothing', S.onSpendAnswe
   t('a payment in the tab\'s mempool is never offered to forget', !S.forgettable(sent, sent[0], 152120, inMp));
   t('one waiting 6 blocks and not in the mempool may be forgotten; 5 blocks not yet', S.forgettable(sent, sent[0], 152106, () => false) && !S.forgettable(sent, sent[0], 152105, () => false)); }
 { const st = (s, o = {}) => S.stateOf(s, { inMempool: () => false, height: 152101, now: 2000, ...o });
-  t('the states read in words, each with what to do next', st(pay()) === 'handed to the relays' && /retrying/.test(st(pay({ relays: [] }))) && st(pay(), { inMempool: () => true }) === 'waiting for a block' && /raise the fee/.test(st(pay({ tip: 152097 }), { inMempool: () => true })) && /higher fee/.test(st(pay({ replacedBy: 'x' }))) && /original stands/.test(st(pay({ refused: 'too cheap' }))) && /cancel it/.test(st(pay({ refusedNote: 'fee' }))) && /next payment/.test(st(pay({ abandoned: true }))) && /made elsewhere/.test(st(pay({ hex: undefined }))) && st(pay({ pending: false, height: 1 })) === 'confirmed' && /every 10 minutes/.test(st(pay(), { now: 2000 + 11 * 60e3 }))); }
+  t('the states read in words, each with what to do next', st(pay()) === 'handed to the relays' && /retrying/.test(st(pay({ relays: [] }))) && st(pay(), { inMempool: () => true }) === 'waiting for a block' && /raise the fee/.test(st(pay({ tip: 152097 }), { inMempool: () => true })) && /higher fee/.test(st(pay({ replacedBy: 'x' }))) && /original stands/.test(st(pay({ refused: 'too cheap' }))) && /cancel it/.test(st(pay({ refusedNote: 'fee' }))) && /next payment/.test(st(pay({ abandoned: true }))) && /made elsewhere/.test(st(pay({ hex: undefined }))) && st(pay({ pending: false, height: 1 })) === 'confirmed' && /2 confirmations \(a block can still be undone\)/.test(st(pay({ pending: false, height: 152100 }))) && /every 10 minutes/.test(st(pay(), { now: 2000 + 11 * 60e3 }))); }
 
 // ---- round three: the persist round trip the page performs
 { const stored = [pay({ replacedBy: tx('2') }), pay({ txid: tx('2'), fee: 400, change: 6600, replaces: tx('1') })]; const mem = clone(stored);
@@ -96,6 +96,28 @@ t('a refusal in another hex case is recognised', S.onRefused([pay({ hex: 'ab' })
   t('a record whose destination is not an output of its own transaction is dropped', !S.validRecord(pay(), { check, scriptOf }));
   const check2 = () => ({ txid: tx('1'), inputs: [inA], outputs: [{ value: 3000, scriptPubKey: '5120' + 'dd'.repeat(32) }, { value: 6000, scriptPubKey: '5120' + 'ee'.repeat(32) }] }); t('a record whose fee does not match its transaction is dropped', !S.validRecord(pay(), { check: check2, scriptOf })); }
 { const sent = [pay({ vAt: Date.now() + 60e3 })]; t('a verdict\'s time never goes back, even if the clock does', S.stamp(sent) > sent[0].vAt); }
+// ---- round five: the words at the end of a forget, and a reorganisation that undoes it
+{ const mk = () => [pay({ txid: tx('a'), to: 'tb1pold', sats: 7000, abandoned: true, inputs: [inA] }), pay({ txid: tx('b'), to: 'tb1pnew', sats: 5000, inputs: [inA, inB], at: 3000 })];
+  { const sent = mk(); const fx = S.onCoins({ sent, coins: [{ key: tx('b') + ':1', value: 1000, height: 152111 }] });
+    const n = fx.find((e) => e.notice === 'Forgotten payment settled');
+    t('the payment made on purpose goes through: the notice calls the old one forgotten and is not an alarm', n && !n.bad && /forgotten payment of 7000 sat to tb1pold/.test(n.body) && /went into your payment to tb1pnew/.test(n.body) && /forgotten, never happened/.test(S.stateOf(sent[0], { inMempool: () => false, height: 152111, now: 0, sent })));
+    const fx2 = S.onRecheck(sent, tx('b'), { found: false }, 152112);
+    t('then its block is undone: both are waiting again and the old one is forgotten again (its coins go first again)', sent[1].pending && sent[0].pending && sent[0].abandoned && !sent[0].failed && fx2[0].bad); }
+  { const sent = mk(); const fx = S.onCoins({ sent, coins: [{ key: tx('a') + ':1', value: 6845, height: 152111 }] }); const n = fx.find((e) => e.notice === 'Payment did not happen');
+    t('the forgotten one is mined after all: the new payment did not happen, said as a failure naming its recipient', n && n.bad && /payment of 5000 sat to tb1pnew/.test(n.body) && /payment you had forgotten/.test(n.body)); } }
+t('an idle tab says the waiting is followed elsewhere', /followed in the tab that runs the node/.test(S.stateOf(pay(), { inMempool: () => false, height: 1, now: 0, idle: true })));
+// ---- round five (funds): references survive a save; final verdicts revisited; deep reorganisations
+{ const sent = [pay()]; const held = sent[0]; const merged = S.mergeSent(sent, [pay({ lastPub: 9e12 })]); held.replacedBy = tx('2');
+  t('a record held across a dialog is the same object after a save: what the flow writes is not lost', merged[0] === held && merged[0].replacedBy === tx('2')); }
+{ const sent = [pay({ pending: false, replaced: tx('9'), vAt: 1 })]; const fx = S.onCoins({ sent, coins: [{ key: tx('1') + ':1', value: 6845, height: 152120 }], height: 152120 });
+  t('a payment marked as not having happened whose change appears is confirmed after all, with a warning about paying twice', !sent[0].pending && sent[0].height === 152120 && !sent[0].replaced && fx.some((e) => /paid twice/.test(e.body))); }
+{ const sent = [pay({ pending: false, height: 152000, vAt: 1 })]; const fx = S.onCoins({ sent, coins: [{ key: inA, value: 10000, height: 151990 }], height: 152120 });
+  t('a confirmation undone by a reorganisation deeper than six blocks is noticed when its coins come back', sent[0].pending && sent[0].tip === 152120 && fx.some((e) => e.notice === 'A block was undone')); }
+{ const a = [pay({ pending: false, height: 5, vAt: 10 })]; const stored = [pay({ abandoned: true, vAt: 5 })]; const m = S.mergeSent(a, stored);
+  t('a later confirmation clears a forgotten mark that an older stored copy still has', !m[0].abandoned && m[0].pending === false); }
+{ const own = '5120' + 'ee'.repeat(32); const check = () => ({ txid: tx('1'), inputs: [inA], outputs: [{ value: 3000, scriptPubKey: '5120' + 'dd'.repeat(32) }, { value: 6845, scriptPubKey: own }] }); const scriptOf = () => '5120' + 'dd'.repeat(32);
+  t('a record must match its own transaction in change and kind too', S.validRecord(pay(), { check, scriptOf, ownScript: own }) && !S.validRecord(pay({ change: 9999 }), { check, scriptOf, ownScript: own }) && !S.validRecord(pay({ kind: 'cancel' }), { check, scriptOf, ownScript: own }));
+  const selfCheck = () => ({ txid: tx('1'), inputs: [inA], outputs: [{ value: 3000, scriptPubKey: own }, { value: 6845, scriptPubKey: own }] }); const old = pay({ toScript: own, to: 'tb1pme', self: false }); t('an older record of a payment to oneself, not marked so, is corrected rather than rejected', S.validRecord(old, { check: selfCheck, scriptOf: () => own, ownScript: own }) && old.self === true); }
 // ---- the page's version and version.json agree (a release that forgets one shows a false update banner)
 { const { readFileSync } = await import('node:fs'); const src = readFileSync(new URL('../reef.js', import.meta.url), 'utf8'); const v = src.match(/export const VERSION = '([^']+)'/)?.[1]; const j = JSON.parse(readFileSync(new URL('../version.json', import.meta.url), 'utf8'));
   t('reef.js VERSION matches version.json', v && v === j.version, `${v} vs ${j.version}`);

@@ -1,0 +1,28 @@
+# Runs the wallet rules and the payment state machine against the real kernel, with the node, the sidestr library and the
+# engine checked out at the commits the page pins (read from reef.js), plus the release checks (versions, policy pins).
+name: test
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: pins
+        id: pins
+        run: |
+          echo "node=$(grep -o 'blaketestnode@[0-9a-f]\{40\}' reef.js | head -1 | cut -d@ -f2)" >> "$GITHUB_OUTPUT"
+          echo "lib=$(grep -o 'sidestr/spec@[0-9a-f]\{40\}' reef.js | head -1 | cut -d@ -f2)" >> "$GITHUB_OUTPUT"
+          echo "engine=$(grep -o 'schema@[0-9a-f]\{40\}' reef.js | head -1 | cut -d@ -f2)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with: { repository: bitcoin-blake/blaketestnode, ref: '${{ steps.pins.outputs.node }}', path: deps/blaketestnode, fetch-depth: 0 }
+      - uses: actions/checkout@v4
+        with: { repository: sidestr/spec, ref: '${{ steps.pins.outputs.lib }}', path: deps/spec }
+      - uses: actions/checkout@v4
+        with: { repository: bitcoin-desktop/schema, ref: '${{ steps.pins.outputs.engine }}', path: deps/schema }
+      - run: npm test
+        env:
+          BLAKETESTNODE: ${{ github.workspace }}/deps/blaketestnode
+          SIDESTR_LIB: ${{ github.workspace }}/deps/spec/siding/lib
+          SCHEMA: ${{ github.workspace }}/deps/schema
