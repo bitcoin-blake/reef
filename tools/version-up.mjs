@@ -11,7 +11,7 @@ try {
   console.log('no base commit to compare with');
   process.exit(0);
 }
-if (!changed.some((f) => /^(reef\.js|lib\/|index\.html)/.test(f))) process.exit(0);
+if (!changed.some((f) => /^(reef\.js|reef-app\.js|lib\/|index\.html)/.test(f))) process.exit(0);
 const key = (v) => (/^(\d{4})-(\d{2})-(\d{2})\.(\d+)$/.exec(v) ?? []).slice(1).map(Number);
 const now = JSON.parse(readFileSync('version.json', 'utf8')).version;
 const was = JSON.parse(sh(`git show ${base}:version.json`)).version;

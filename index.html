@@ -142,6 +142,8 @@ body.idle #st-conn { opacity:.62 } :root { --off:#6b6b6b } @media (prefers-color
 }
 
 /* round 9 */
+#tray .badge { background:#c0392b }
+@media (max-width: 760px) { .testchip { white-space:nowrap; flex:none } .tool button { min-width:62px } }
 body.idle #t-info > *, body.idle #t-peers > *, body.idle #t-mempool > *, body.idle #t-traffic > * { display:none } body.idle #t-info::before, body.idle #t-peers::before, body.idle #t-mempool::before, body.idle #t-traffic::before { content:'Shown in the tab that runs the node.'; color:var(--mut); display:block; padding:12px }
 .testchip { display:none } #feerate { white-space:nowrap }
 @media (max-width: 760px) { .testchip { display:inline-flex; align-self:center; margin-left:auto; font-size:10.5px; font-weight:700; letter-spacing:.04em; padding:2px 6px; border-radius:3px; background:var(--tn); color:#fff } #feerate { white-space:normal } }
@@ -200,7 +202,7 @@ th.amt, #p-tx thead th:nth-child(6) { white-space:nowrap }
             <label for="sendamt">Amount:</label><div class="row wrap"><input id="sendamt" inputmode="decimal" placeholder="amount" autocomplete="off" style="max-width:220px;font-family:var(--mono)"><select id="sendunit" aria-label="Unit" style="width:auto"><option value="tbtc">tBTC</option><option value="mtbtc">mtBTC</option><option value="sats">sat</option></select><button class="q" id="sendall" type="button" aria-pressed="false" title="send everything spendable; the fee comes out of it">Send everything</button></div>
       <span></span><div class="tiny" id="sendpreview" aria-live="polite"></div>
     </div></fieldset>
-    <fieldset><legend>Transaction Fee</legend><div class="form"><span class="lbl">Fee:</span><div class="row wrap"><span id="feerate">…</span><button class="q" id="feechoose" title="set the fee rate in Options">Change…</button><span class="mut" style="flex-basis:100%" id="feehint">A block comes about every 20 minutes; the lowest rate, 1 sat/vB, is enough today.</span></div><span></span><div class="tiny mut">Every payment can be replaced with a higher fee, or cancelled, until a block takes it (the Transactions page).</div></div></fieldset>
+    <fieldset><legend>Transaction Fee</legend><div class="form"><span class="lbl">Fee:</span><div class="row wrap"><span id="feerate">…</span><button class="q" id="feechoose" title="choose the fee rate">Change…</button><span class="mut" style="flex-basis:100%" id="feehint">A block comes about every 20 minutes; the lowest rate, 1 sat/vB, is enough today.</span></div><span></span><div class="tiny mut">Every payment can be replaced with a higher fee, or cancelled, until a block takes it (the Transactions page).</div></div></fieldset>
     <div class="row wrap"><button class="q p" id="sendgo" type="button">Send…</button><button class="q" id="sendclear" type="button">Clear</button><span class="fill" style="flex:1"></span><span>Available: <span class="mono" style="font-weight:600" id="sendbal">…</span></span></div><div class="tiny bad" id="senderr" role="alert" style="margin-top:.6rem"></div><div class="tiny" id="sendout" role="status" style="min-height:1.2em"></div><details class="tiny mut" style="margin-top:.4rem"><summary>How a payment leaves this tab</summary>It is built and signed here and checked by the same script rules the chain uses, then handed to relays (Nostr, kind 23503) where a node that serves txbt4 picks it up and broadcasts it. Until a block carries it, it shows as waiting and is announced again every 10 minutes, unless this tab's node refuses it.</details>
   </div>
   <div class="page" id="p-receive" role="region" aria-labelledby="h-receive"><h2 class="sr" id="h-receive">Receive</h2>
@@ -239,7 +241,7 @@ The node answers from this tab's own validated state; wallet commands answer for
   </div>
 </div>
 <script defer src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js" integrity="sha384-8FWZA6BGMXhsfO+BLtrJK0We6gg5o1JyO8xQm6peWDEUs17ACA5ziE/NIAkl9z2k" crossorigin="anonymous"></script>
-<script type="module" src="reef.js?v=2026-10-01.17"></script>
+<script type="module" src="reef.js?v=2026-10-01.18"></script>
 <dialog id="about" aria-labelledby="about-title"><div class="t" id="about-title">About Reef</div><div class="b"><div><img src="og.png" alt="" style="width:64px;height:64px;object-fit:cover;border-radius:12px;border:1px solid var(--line2)"></div><div>
 <p><b>Reef</b> · a Bitcoin node in a browser tab, for txbt4, the BLAKE2b testnet4.</p>
 <p>It looks like Knots and runs a chain Knots defined, but it is not Knots. The tab fetches the fork-point UTXO snapshot, recomputes its hashes, validates every block since the fork and follows the chain tip. The wallet is one key kept in this tab.</p>
@@ -273,7 +275,7 @@ The node answers from this tab's own validated state; wallet commands answer for
 </div></div>
 <div class="op" id="o-display"><div class="form">
   <label>Unit to show amounts in:</label><div><select id="o-unit" style="width:auto"><option value="tbtc">tBTC</option><option value="mtbtc">mtBTC</option><option value="sats">sat</option></select></div>
-  <label>Mask values:</label><div><label class="row"><input id="o-mask" type="checkbox" style="width:auto"> hide amounts on the Overview, Send and Transactions pages</label><div class="note">also Settings → Mask values, or Alt+Shift+M</div></div>
+  <label>Mask values:</label><div><label class="row"><input id="o-mask" type="checkbox" style="width:auto"> hide amounts everywhere in the window</label><div class="note">also Settings → Mask values, or Alt+Shift+M</div></div>
   <span class="lbl">Windows:</span><div class="row"><button id="o-resetgeom">Reset window positions and sizes</button><span class="note" id="o-geomnote"></span></div>
 </div></div>
 </div><div class="note warn" id="o-err" role="alert" style="margin:0 12px"></div><div class="f"><button id="o-reset" class="left">Reset to defaults</button><button id="o-cancel">Cancel</button><button id="o-ok">OK</button></div></dialog>
@@ -286,7 +288,7 @@ The node answers from this tab's own validated state; wallet commands answer for
 <label for="bk-desc">Descriptor:</label><input id="bk-desc" class="mono" readonly></div>
 <details class="tiny mut"><summary>For other wallet software</summary>Import the descriptor (rawtr). The address is the key's own output, not a BIP 86 tr() address, so importing the WIF as tr() shows a different, empty address.</details>
 <div class="row wrap"><button id="bk-copy" type="button">Copy the key</button><button id="bk-file" type="button">Save as a file…</button></div><p class="tiny" id="bk-note" role="status"></p>
-<p class="tiny">To restore: open Reef in any browser, then Settings → Options → Wallet → Use another key, and paste this key.</p><label class="row"><input type="checkbox" id="bk-done" style="width:auto"> I have saved the key somewhere safe, outside this browser</label>
+<p class="tiny">To restore: open Reef in any browser (Not now at the welcome is fine), then Settings → Options → Wallet → Use another key, and paste this key. The balance shows once the tab has fetched and checked the chain, a few minutes.</p><label class="row"><input type="checkbox" id="bk-done" style="width:auto"> I have saved the key somewhere safe, outside this browser</label>
 </div><div class="f"><button id="bk-cancel" type="button">Not now</button><button id="bk-ok" type="button" class="p">Done</button></div></dialog>
 <dialog id="welcome" aria-labelledby="wl-t" aria-describedby="wl-d"><div class="t" id="wl-t">Welcome to Reef</div><div class="b1" id="wl-d">
 <p>Reef is a Bitcoin node and wallet that runs in this tab, on <b>txbt4</b>, a test network (the BLAKE2b testnet4). Its coins are test coins with no value.</p>

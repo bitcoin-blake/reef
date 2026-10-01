@@ -4,7 +4,7 @@
 // tested against the kernel; this file is the host: storage, the node, the relays, the window. Every string that comes
 // from outside (relays, the mempool, the chain, links, options) reaches the page as text, never as markup.
 const $ = (id) => document.getElementById(id);
-export const VERSION = '2026-10-01.17';
+export const VERSION = '2026-10-01.18';
 const SCHEMA = 2; // the storage layout this version writes
 const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@cebed0bb2fcf2157e32e8411a5594fb48d878a81';
 const LIB = 'https://cdn.jsdelivr.net/gh/sidestr/spec@fe689e9c723f9bf43393d2dd5b6f924a701c8a18/siding/lib',
@@ -90,7 +90,17 @@ if (!['tbtc', 'mtbtc', 'sats'].includes(OPT.unit)) OPT.unit = 'tbtc';
 if (!Array.isArray(OPT.relays) || !OPT.relays.every((r) => typeof r === 'string' && /^wss:\/\//.test(r))) OPT.relays = DEFAULT_RELAYS;
 if (!(Number.isInteger(OPT.feeRate) && OPT.feeRate >= 1)) OPT.feeRate = 1;
 for (const k of ['notify', 'mask', 'torrent', 'seed']) OPT[k] = !!OPT[k];
-const saveOptions = () => LS.set('reef:options', JSON.stringify(OPT));
+const saveOptions = () => {
+  if (IDLE) {
+    // an idle tab changes only how things look; the rest stays what the running tab stored
+    let stored = {};
+    try {
+      stored = JSON.parse(LS.get('reef:options') ?? '{}') ?? {};
+    } catch {}
+    return LS.set('reef:options', JSON.stringify({ ...stored, unit: OPT.unit, mask: OPT.mask }));
+  }
+  return LS.set('reef:options', JSON.stringify(OPT));
+};
 const RELAYS = () => (OPT.relays?.length ? OPT.relays : DEFAULT_RELAYS);
 const q = new URLSearchParams(location.search);
 const embedded = q.get('embedded') === '1' || q.get('frame') === '0';
@@ -117,14 +127,19 @@ const txLink = (txid, text = txid) => `<a href="${EXPLORER}/tx/${esc(txid)}" tar
 // ---- banners: one line each at the top of the window, for what the person must know now
 const dismissed = new Set();
 const STICKY = new Set(['fatal', 'nodeerr', 'walleterr', 'schema', 'savefail', 'keygone', 'lockfail', 'badkey', 'nokey', 'trustbad']);
+// spoken from where the reader is: inside an open dialog or the (modal) node window, everything else is inert and silent
 function sayOnce(text, urgent = false) {
-  let r = document.getElementById(urgent ? 'say-alert' : 'say-status');
+  const host =
+    document.querySelector('dialog[open]') ??
+    (document.getElementById('nw')?.classList.contains('open') ? document.getElementById('nw') : document.body);
+  const id = (urgent ? 'say-alert' : 'say-status') + (host === document.body ? '' : '-' + (host.id || 'dlg'));
+  let r = document.getElementById(id);
   if (!r) {
     r = document.createElement('div');
-    r.id = urgent ? 'say-alert' : 'say-status';
+    r.id = id;
     r.className = 'sr';
     r.setAttribute('role', urgent ? 'alert' : 'status');
-    document.body.appendChild(r);
+    host.appendChild(r);
   }
   // one child per message, removed after a while: two notices close together are both read, neither overwrites the other
   const m = document.createElement('p');
@@ -200,8 +215,34 @@ function showFatal(text) {
   banner('fatal', 'bad', text, [['Reload', () => location.reload()]]);
 }
 
+// errors nobody caught: said, and kept (the last 20) for Copy diagnostics, instead of a page silently stuck
+const pageErrors = [];
+const caught = (what) => {
+  const text = String(what?.message ?? what ?? 'unknown error').slice(0, 300);
+  pageErrors.push({ at: Date.now(), text });
+  if (pageErrors.length > 20) pageErrors.shift();
+  banner(
+    'pageerr',
+    'warn',
+    `Something in the page went wrong (${text.slice(0, 120)}). If Reef stops responding, reload; Help → Copy diagnostics records it.`,
+    [['Reload', () => location.reload()]],
+  );
+};
+addEventListener('error', (e) => caught(e.error ?? e.message));
+addEventListener('unhandledrejection', (e) => caught(e.reason));
+// a cached page and its script from different releases: before anything is imported (an old page's security policy names
+// the old node pin, so the import itself would fail), reload once per pair of versions
+{
+  const asked = document.querySelector('script[src*="reef.js"]')?.src.match(/v=([^&]+)/)?.[1];
+  const mixKey = 'reef:mixed:' + decodeURIComponent(asked ?? '') + '>' + VERSION; // once per pair of versions, not once per tab
+  if (asked && decodeURIComponent(asked) !== VERSION && !SS.get(mixKey)) {
+    SS.set(mixKey, '1');
+    location.replace(location.pathname + (keepQuery() ? keepQuery() + '&' : '?') + 'v=' + encodeURIComponent(VERSION));
+    await new Promise(() => {}); // nothing more runs in a page being replaced (no lock, no worker, no import)
+  }
+}
 // ---- the libraries; a CDN outage is said in words, not as a dead page
-let createTabNode, mib, secs, n, WL, S, V;
+let createTabNode, mib, secs, n, WL, S, V, T;
 try {
   // a CDN that hangs rather than fails would leave "starting" for ever: twenty seconds, then said
   ({ createTabNode, mib, secs, n } = await Promise.race([
@@ -211,20 +252,12 @@ try {
   WL = await import(`./lib/wallet.mjs?v=${VERSION}`);
   S = await import(`./lib/state.mjs?v=${VERSION}`);
   V = await import(`./lib/view.mjs?v=${VERSION}`);
+  T = await import(`./lib/trust.mjs?v=${VERSION}`);
 } catch (e) {
   showFatal(
     `Reef could not load its node code (${e.message}). The CDN (cdn.jsdelivr.net) may be unreachable: check the connection and reload.`,
   );
   throw e;
-}
-{
-  const asked = document.querySelector('script[src*="reef.js"]')?.src.match(/v=([^&]+)/)?.[1];
-  const mixKey = 'reef:mixed:' + decodeURIComponent(asked ?? '') + '>' + VERSION; // once per pair of versions, not once per tab
-  if (asked && decodeURIComponent(asked) !== VERSION && !SS.get(mixKey)) {
-    SS.set(mixKey, '1');
-    location.replace(location.pathname + (keepQuery() ? keepQuery() + '&' : '?') + 'v=' + encodeURIComponent(VERSION));
-    await new Promise(() => {}); // nothing more runs in a page being replaced (no lock, no worker)
-  }
 }
 const T0 = Date.now();
 $('startup').textContent = fmt(Math.floor(T0 / 1000));
@@ -264,7 +297,7 @@ function setSync(msg, pct, eta) {
   const phase = node.error ? 'error' : node.synced ? 'synced' : node.phase;
   if (phase !== lastPhase) {
     lastPhase = phase;
-    $('announce').textContent = msg;
+    sayOnce(msg);
   }
   document.title = node.error
     ? 'Reef · stopped'
@@ -329,63 +362,20 @@ function renderInfo() {
   renderStatus();
 }
 // how far the chain the tab follows is confirmed by someone other than its block source: a signed tip (NIP-333)
-const ago = (sec) =>
-  sec < 5400 ? `${Math.round(sec / 60)} minutes` : sec < 172800 ? `${Math.round(sec / 3600)} hours` : `${Math.round(sec / 86400)} days`;
-function trust() {
-  if (IDLE) return { level: 'idle', text: 'idle: the node runs in another tab of this browser' };
-  if (!node.synced) return { level: 'sync', text: 'syncing: the balance is known once the tab is up to date' };
-  const t = node.nostr;
-  const now = Date.now() / 1000;
-  // a source that stopped without an error looks "up to date" at an old height: the newest block's own time says otherwise
-  const quiet = node.time ? now - node.time : 0;
-  if (t?.diverged)
-    return {
-      level: 'bad',
-      text: `the block source DISAGREES with the signed chain tip at ${n(t.height)}: do not trust the balance or confirmations until this clears`,
-    };
-  if (node.lastSync && Date.now() - node.lastSync > 180e3 && !node.error)
-    return {
-      level: 'warn',
-      text: `the node has not heard from the block source since ${new Date(node.lastSync).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}: balances are as of block ${n(node.height)}`,
-    };
-  if (quiet > 5400 && !(t && t.height > node.height))
-    return {
-      level: 'warn',
-      text: `no new block for ${ago(quiet)} (the last is ${n(node.height)}): the block source or the chain may have stopped, so a payment made now waits until blocks come again`,
-    };
-  if (!t)
-    return {
-      level: 'none',
-      text: `Up to date (block ${n(node.height)}). Reef could not get a second, independent check of the latest block (a signed chain tip); this is usually harmless.`,
-    };
-  if (t.height > node.height + 2)
-    return {
-      level: 'warn',
-      text: `the tab is ${n(t.height - node.height)} blocks behind the signed chain tip (${n(t.height)}): the block source may be stale`,
-    };
-  if (t.created_at && now - t.created_at > 3 * 3600 && t.height < node.height)
-    return {
-      level: 'none',
-      text: `Up to date (block ${n(node.height)}). The signed chain tip that double-checks it has not been refreshed for ${ago(now - t.created_at)}; its publisher may be down. This is usually harmless.`,
-    };
-  // a live signed tip should not trail the block source by two blocks: if it does, those blocks are the source's word alone
-  if (t.height < node.height - 1 && (t.live || (t.created_at && now - t.created_at < 1800)))
-    return {
-      level: 'warn',
-      text: `the block source is ${n(node.height - t.height)} blocks ahead of the signed chain tip (${n(t.height)}): those blocks, and payments in them, are not yet vouched for`,
-    };
-  if (t.height < node.height - 1)
-    return {
-      level: 'none',
-      text: `up to date with the block source at ${n(node.height)}; the latest signed chain tip reaching this browser is older (${n(t.height)}), so the last ${n(node.height - t.height)} blocks are confirmed by the block source alone`,
-    };
-  if (!(t.agree > 0))
-    return {
-      level: 'none',
-      text: `Up to date (block ${n(node.height)}). The signed chain tip has not been checked against these blocks yet.`,
-    };
-  return { level: 'ok', text: `up to date: block ${n(node.height)}, matching the signed chain tip` };
-}
+const trust = () =>
+  T.trustOf(
+    {
+      idle: IDLE,
+      synced: node.synced,
+      nostr: node.nostr,
+      time: node.time,
+      lastSync: node.lastSync,
+      height: node.height,
+      error: node.error,
+      syncedAt: node.syncedAt,
+    },
+    Date.now(),
+  );
 let srcErrSince = null;
 // after the tab is up to date, only errors of the network pass by themselves (the node retries every 30 s); anything else —
 // a file, a rule, a disagreement with the signed tip — stops and is said as such
@@ -411,13 +401,14 @@ function renderStatus() {
   else unbanner('trustbad');
   if (node.synced && !node.error && tr.level === 'warn') banner('trust', 'warn', tr.text);
   else unbanner('trust');
-  // the node that broadcasts payments speaks through the estate's mempool feed: a silent feed is a silent broadcaster
-  const fedAt = node.mempool?.lastFeedAt;
-  if (node.synced && node.mempool?.following && fedAt && Date.now() - fedAt > 15 * 60e3)
+  // the node that broadcasts payments is judged by its heartbeat (the mirror's mempool file, rewritten every pass), not by
+  // how many transactions it relays: a quiet chain is not a dead broadcaster
+  const beat = node.mempool?.feedFileAt;
+  if (node.synced && beat && Date.now() - beat > 10 * 60e3)
     banner(
       'feed',
       'warn',
-      `The txbt4 node that broadcasts payments has not been heard from since ${new Date(fedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. Payments made now may wait; raising the fee will not help until it is back.`,
+      `The txbt4 node that broadcasts payments has not reported since ${new Date(beat).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. Payments made now may wait; raising the fee will not help until it is back.`,
     );
   else unbanner('feed');
   // after the tab is up to date, a failed fetch from the block source is retried every 30 s by the node: a warning, not a
@@ -487,11 +478,7 @@ function onMessage(m) {
   else if (m.type === 'coins') onCoins(m);
   else if (m.type === 'spend' && typeof m.req === 'string' && m.req.startsWith('sent:')) onSpendAnswer(m);
   else if (m.type === 'spend' && typeof m.req === 'string' && m.req.startsWith('recheck:')) {
-    // "not found" is believed only from a search that reached this wallet's height; a short one is asked again next block
-    if (W && !IDLE && !m.found && !(Number.isInteger(m.to) && m.to >= W.height)) {
-      const r = sent.find((x) => x.txid === m.req.slice(8));
-      if (r) delete r.checkedAt;
-    } else if (W && !IDLE) {
+    if (W && !IDLE) {
       carryOut(S.onRecheck(sent, m.req.slice(8), m, W.height));
       saveSent();
       renderWallet();
@@ -501,8 +488,8 @@ function onMessage(m) {
     if (W && !IDLE && r) {
       if (WL.onReceiptAnswer(ledger, r.txid, m, W.height) === 'removed')
         notify(
-          'A received payment was undone',
-          `${amt(WL.receiptSats(r))} received in block ${n(r.height)} is no longer in the chain: a reorganisation removed it, and the balance never counted it after that.`,
+          'A received payment went back to waiting',
+          `${amtSay(WL.receiptSats(r))} received in block ${n(r.height)} is no longer in a block: the chain was reorganised. A payment like this usually confirms again in a later block; if it does not, ask the sender.`,
           true,
         );
       saveLedger();
@@ -913,7 +900,10 @@ const closeNode = () => {
   behind().forEach((c) => {
     c.inert = false;
   });
-  (nodeOpener && document.contains(nodeOpener) ? nodeOpener : toolBtns.find((b) => b.classList.contains('on')))?.focus?.();
+  (nodeOpener && nodeOpener !== document.body && document.contains(nodeOpener)
+    ? nodeOpener
+    : toolBtns.find((b) => b.classList.contains('on'))
+  )?.focus?.();
 };
 $('m-node').onclick = openNode;
 $('nwclose').onclick = closeNode;
@@ -1012,7 +1002,7 @@ $('m-mask').onclick = () => {
   OPT.mask = !OPT.mask;
   saveOptions();
   applyDisplay();
-  $('announce').textContent = OPT.mask ? 'Amounts hidden' : 'Amounts shown';
+  sayOnce(OPT.mask ? 'Amounts hidden' : 'Amounts shown');
 };
 $('m-exit').onclick = () => hideWindow();
 $('m-min').onclick = () => hideWindow();
@@ -1074,12 +1064,14 @@ document.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
   // Alt+Shift: Ctrl+Shift+D (bookmark all tabs) and Ctrl+Shift+M (the profile menu) belong to the browser
   const typing = e.target?.matches?.('input, textarea, select, [contenteditable]');
+  if (document.querySelector('dialog[open]')) return; // a dialog has the keyboard: no window shortcuts behind it
   if (e.altKey && e.shiftKey && !e.ctrlKey && !typing && (e.code === 'KeyM' || k === 'm')) {
     e.preventDefault();
     $('m-mask').onclick();
   } else if (e.ctrlKey && !e.shiftKey && !typing && k === 'm') {
+    // one key, both ways: to the tray when the window shows, back from it when it does not
     e.preventDefault();
-    $('m-main').onclick();
+    win.style.display === 'none' ? $('m-main').onclick() : hideWindow();
   } else if (e.altKey && e.shiftKey && !e.ctrlKey && !typing && (e.code === 'KeyN' || k === 'n')) {
     e.preventDefault();
     $('nw').classList.contains('open') ? closeNode() : openNode();
@@ -1275,6 +1267,7 @@ $('o-backup').onclick = () => {
 $('o-newkey').onclick = () => {
   if (!W) return;
   $('o-importkey').value = W.signer.randomKey();
+  $('o-importkey').dataset.generated = '1'; // made here, so not a restored backup
   $('o-keywarn').textContent = 'a new key: press OK to use it in this tab';
 };
 const keyProblem = (v) =>
@@ -1285,6 +1278,7 @@ const keyProblem = (v) =>
       : null;
 $('o-importkey').oninput = () => {
   delete $('o-importkey').dataset.use;
+  delete $('o-importkey').dataset.generated;
   if (!W) return;
   const v = $('o-importkey').value.trim();
   $('o-keywarn').textContent = v ? (keyProblem(v) ?? 'press OK to switch to this key') : '';
@@ -1301,7 +1295,10 @@ $('o-resetgeom').onclick = () => {
 $('o-ok').onclick = async () => {
   // an earlier key chosen with "Use it again" is held aside, never shown in the field
   const raw = $('o-importkey').value.trim() || $('o-importkey').dataset.use || '';
-  if (raw && (IDLE || PROBING || !W || !RUNNING)) {
+  // a never-used key made here can be replaced without the node (restoring a backup after "Not now"); otherwise only where
+  // the wallet runs
+  const unusedHere = !!LS.get('reef:keynew') && !ledger.size && !sent.length;
+  if (raw && (IDLE || PROBING || !W || (!RUNNING && !unusedHere))) {
     optTab('wallet');
     $('o-keywarn').textContent =
       !RUNNING && !IDLE
@@ -1358,18 +1355,26 @@ $('o-ok').onclick = async () => {
         `${waiting.length} payment${waiting.length === 1 ? ' is' : 's are'} still waiting with this key; switching would stop following ${waiting.length === 1 ? 'it' : 'them'}. Wait until confirmed, or cancel or forget ${waiting.length === 1 ? 'it' : 'them'} first.`;
       return;
     }
-    if (!W.coinsKnown) {
+    // a key this browser made and never used can be replaced at once (restoring a backup in a new browser); any other key
+    // only once the tab knows what it holds
+    const fresh = !!LS.get('reef:keynew') && !ledger.size && !sent.length && !(W.coins ?? []).length;
+    if (!W.coinsKnown && !fresh) {
       optTab('wallet');
       $('o-keywarn').textContent = 'Wait until the tab is up to date before switching: Reef does not know yet what the current key holds.';
       return;
     }
-    const b = WL.balances({ coins: W.coins, sent, height: W.height }).total;
+    const b = fresh && !W.coinsKnown ? 0 : WL.balances({ coins: W.coins, sent, height: W.height }).total;
+    const restoring = !$('o-importkey').dataset.generated && !$('o-importkey').dataset.use;
     $('options').close();
     const ok = await ask(
       'Switch to another key',
       [
         `This tab will use the new key from now on. The current key, which ${b ? `holds ${exact(b)}` : 'holds no coins this tab can see (coins from before block 150,307 are not shown)'}, stays in this browser's list of earlier keys (Options → Wallet), but this browser is not a backup.`,
-        backedUp() ? 'The current key is backed up.' : 'The current key is NOT backed up. Back it up first unless it is empty.',
+        fresh
+          ? 'The current key was made in this browser and has never been used.'
+          : backedUp()
+            ? 'The current key is backed up.'
+            : 'The current key is NOT backed up. Back it up first unless it is empty.',
         'Coins sent to a key before the snapshot at block 150,307 are not shown by a tab.',
         ...(forgotten.length
           ? [
@@ -1379,7 +1384,7 @@ $('o-ok').onclick = async () => {
         ...(hitchHeld().size ? ["Hitch holds some of this key's coins for a channel funding; Hitch keeps following them."] : []),
       ],
       'Switch',
-      !backedUp(),
+      !backedUp() && !fresh,
     );
     if (!ok) return;
     const old = (() => {
@@ -1400,6 +1405,9 @@ $('o-ok').onclick = async () => {
       );
       return;
     }
+    // a key pasted in came from a backup kept outside this browser: it is not "not backed up"
+    if (restoring) LS.set('reef:backup:' + W.signer.pubkeyOf(key).slice(0, 16), String(Date.now()));
+    LS.del('reef:keynew');
     location.search = keepQuery();
     return;
   }
@@ -1728,7 +1736,6 @@ async function walletInit() {
       ok: (x) => S.validRecord(x, { check, scriptOf, ownScript: script }),
       seenHas: (k2) => seen.has(k2),
     });
-    const fresh = r.quarantine.filter((x) => !q0.some((y) => y.txid === x.txid));
     sent = r.keep;
     quarantined = new Set(r.quarantine.map((x) => x.txid));
     quarantineRecs = r.quarantine;
@@ -1772,8 +1779,11 @@ async function walletInit() {
                       'Keep them held',
                     )
                   ) {
+                    // only the tab that runs the wallet writes; the release is kept in memory too, and said only once stored
+                    if (!writable()) return notify('Not here', 'release them in the tab that runs the node', true);
                     const q = loadJSON(qk, []).map((x) => ({ ...x, released: true }));
-                    LS.set(qk, JSON.stringify(q));
+                    if (!store(qk, JSON.stringify(q))) return;
+                    quarantineRecs = quarantineRecs.map((x) => ({ ...x, released: true }));
                     unbanner('quarantine');
                     renderWallet();
                   }
@@ -1887,7 +1897,7 @@ function wireWalletPage(address) {
     lastUnit = $('sendunit').value;
     updatePreview();
   });
-  $('feechoose').onclick = () => feeFlow();
+  $('feechoose').onclick = () => (IDLE ? sendError('The fee rate is set in the tab that runs the wallet.') : feeFlow());
   applyDisplay();
   renderWallet();
   if (LS.get('reef:keynew') && !ledger.size) setTimeout(() => backupNudge(), 1500);
@@ -1928,6 +1938,7 @@ const wallBal = () =>
     height: W.height,
     reserved: new Set([...hitchHeld(), ...quarantineHeld()]),
     incoming: incomingTxs().reduce((a, x) => a + x.toUs, 0),
+    vouched: T.signedHeight(node.nostr),
   });
 function carryOut(effects) {
   for (const e of effects) {
@@ -1953,21 +1964,26 @@ function onCoins(m) {
   if (undone.length)
     notify(
       'A mined block was replaced',
-      `${amt(undone.reduce((a, r) => a + WL.receiptSats(r), 0))} from block ${undone.map((r) => n(r.height)).join(', ')} is no longer yours: another block took its place in the chain (this happens on a test chain).`,
+      `${amtSay(undone.reduce((a, r) => a + WL.receiptSats(r), 0))} from block ${undone.map((r) => n(r.height)).join(', ')} is no longer yours: another block took its place in the chain (this happens on a test chain).`,
       true,
     );
   if (!first) {
     const mined = added.filter((r) => r.coinbase),
       got = added.filter((r) => !r.coinbase);
-    for (const r of got) notify('Payment received', `${amt(WL.receiptSats(r))} in block ${n(r.height)}`);
+    const vouchedAt = T.signedHeight(node.nostr);
+    for (const r of got)
+      notify(
+        'Payment received',
+        `${amtSay(WL.receiptSats(r))} in block ${n(r.height)}${vouchedAt != null && r.height > vouchedAt ? ': the signed chain tip has not reached that block yet, so it counts as pending until it does' : ''}`,
+      );
     if (got.length) offerNotify();
     if (mined.length)
       notify(
         'Mined coins',
-        `${amt(mined.reduce((a, r) => a + WL.receiptSats(r), 0))} in ${mined.length} block${mined.length === 1 ? '' : 's'}; spendable after 100 confirmations`,
+        `${amtSay(mined.reduce((a, r) => a + WL.receiptSats(r), 0))} in ${mined.length} block${mined.length === 1 ? '' : 's'}; spendable after 100 confirmations`,
       );
   }
-  const fx = S.onCoins({ sent, coins: W.coins, asked, height: W.height });
+  const fx = S.onCoins({ sent, coins: W.coins, asked, height: W.height, vouched: T.signedHeight(node.nostr) });
   if (first) {
     carryOut(fx.filter((e) => !e.notice));
     const news = fx.filter((e) => e.notice && e.bad);
@@ -2044,7 +2060,7 @@ function walletMempool() {
     if (toUs && !mpSeen.has(t.txid)) {
       mpSeen.add(t.txid);
       if (mpSeen.size > 500) mpSeen.delete(mpSeen.values().next().value);
-      if (!first) notify('Payment on its way', `${amt(toUs)} to you, unconfirmed`);
+      if (!first) notify('Payment on its way', `${amtSay(toUs)} to you, unconfirmed`);
     }
   }
   if (added) saveSent();
@@ -2074,7 +2090,7 @@ function renderWalletInner() {
           : `balance known once the tab is up to date (${node.synced ? 'reading the coins' : ({ fetch: 'fetching the snapshot', hash: 'checking the snapshot', verify: 'verifying the snapshot', sync: 'validating the blocks since' }[node.phase] ?? 'starting') + ($('synceta').textContent ? ', ' + $('synceta').textContent : '')})`;
   } else {
     const b = wallBal();
-    if (lastAvail != null && lastAvail !== b.available && !OPT.mask) $('announce').textContent = `Available: ${amt(b.available)}`;
+    if (lastAvail != null && lastAvail !== b.available && !OPT.mask) sayOnce(`Available: ${amtSay(b.available)}`);
     lastAvail = b.available;
     $('avail').innerHTML = amtHtml(b.available);
     $('immature').innerHTML = amtHtml(b.immature);
@@ -2109,7 +2125,7 @@ function renderWalletInner() {
     sent,
     idle: IDLE,
     canAct: canAct(),
-    signedHeight: node.nostr?.agree > 0 && !node.nostr?.diverged ? node.nostr.height : null,
+    signedHeight: T.signedHeight(node.nostr),
   };
   const views = new Map(rows.map((r) => [r, V.viewRow(r, vctx)]));
   const recOf = (r) => (r.kind === 'out' ? sent.find((x) => x.txid === r.txid) : null);
@@ -2119,7 +2135,7 @@ function renderWalletInner() {
     ? recent
         .map((r) => {
           const v = views.get(r);
-          return `<div class="r" role="listitem"><span aria-hidden="true">${v.icon}</span><span>${v.block ? 'block ' + esc(n(v.block)) : esc(v.short)}</span><span class="addr" title="${esc(r.addr)}">${txLink(r.txid, V.recentLabel(r))}</span><span class="amt ${r.pending ? 'pend' : r.kind === 'in' ? 'in' : 'out'}">${amtHtml(v.sats)}</span></div>`;
+          return `<div class="r" role="listitem"><span aria-hidden="true">${v.icon}</span><span title="${v.block ? 'block ' + esc(n(v.block)) : ''}">${esc(say(v.short))}</span><span class="addr" title="${esc(r.addr)}">${txLink(r.txid, V.recentLabel(r))}</span><span class="amt ${r.pending ? 'pend' : r.kind === 'in' ? 'in' : 'out'}">${amtHtml(v.sats)}</span></div>`;
         })
         .join('')
     : `<div class="r" role="listitem"><span></span><span class="mut" style="grid-column:2/5">${esc(V.recentEmpty({ known, idle: IDLE, any: rows.length > 0 }))}${known && !IDLE && !rows.length ? ': <a href="#" data-go2="receive">your address is on the Receive page</a>' : ''}</span></div>`;
@@ -2155,12 +2171,8 @@ function renderWalletInner() {
             )
             .join('');
           return `<tr><td class="when">${r.at ? esc(when(r.at)) : '—'}</td><td title="${esc(say(v.state))}"><span aria-hidden="true">${v.icon}</span><span class="state" aria-hidden="true">${esc(
-            v.struck
-              ? v.tag
-              : say(v.state)
-                  .split(':')[0]
-                  .replace(/\s*\(details.*$/, ''),
-          )}</span><span class="sr">${esc(say(v.state))}</span></td><td>${v.block ? esc(n(v.block)) : '—'}</td><td>${esc(r.label)}</td><td class="addr" style="max-width:360px">${txLink(r.txid, r.kind === 'in' ? 'your address' : r.addr)}</td><td class="amt ${r.kind === 'in' ? 'in' : 'out'}${v.struck ? ' struck' : ''}">${moneyHtml(v.sats)}<span class="cardunit"> ${esc(unit().label)}</span><span class="sr">${v.tag ? esc(` (${v.tag})`) : ''}</span></td><td class="acts">${acts}</td></tr>`;
+            say(v.short),
+          )}</span><span class="sr">${esc(say(v.state))}</span></td><td>${v.block ? esc(n(v.block)) : '—'}</td><td>${esc(r.label)}</td><td class="addr" title="${esc(r.addr)}">${txLink(r.txid, r.kind === 'in' || r.label === 'Payment to yourself' ? 'your address' : V.shortAddr(r.addr))}</td><td class="amt ${r.kind === 'in' ? 'in' : 'out'}${v.struck ? ' struck' : ''}">${moneyHtml(v.sats)}<span class="cardunit"> ${esc(unit().label)}</span><span class="sr">${v.tag ? esc(` (${v.tag})`) : ''}</span></td><td class="acts">${acts}</td></tr>`;
         })
         .join('')
     : `<tr><td colspan="7" class="mut">${IDLE ? 'shown in the tab that runs the node' : known ? (rows.length ? 'nothing matches' : 'no transactions since the snapshot') : 'waiting for the node'}</td></tr>`;
@@ -2189,7 +2201,7 @@ function renderWalletInner() {
     });
   const onWay = incomingTxs();
   $('rcvincoming').textContent = onWay.length
-    ? `On its way to you: ${amt(onWay.reduce((a, x) => a + x.toUs, 0))} in ${onWay.length} unconfirmed payment${onWay.length === 1 ? '' : 's'}.`
+    ? `On its way to you: ${amtSay(onWay.reduce((a, x) => a + x.toUs, 0))} in ${onWay.length} unconfirmed payment${onWay.length === 1 ? '' : 's'}.`
     : '';
   const bb = wallBal(),
     hh = hitchHeld(),
@@ -2218,7 +2230,7 @@ $('txexport').onclick = () => {
     address: W.address,
     ledger,
   });
-  const vctx = { inMempool, height: W.height, now: Date.now(), sent, idle: IDLE };
+  const vctx = { inMempool, height: W.height, now: Date.now(), sent, idle: IDLE, signedHeight: T.signedHeight(node.nostr) }; // as the lists
   const csv = [V.EXPORT_HEAD, ...rows.map((r) => V.exportRow(r, vctx))].join('\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
@@ -2259,9 +2271,9 @@ function reuseNote(p) {
 function noCoinsWhy() {
   const b = wallBal();
   const parts = [];
-  if (b.immature) parts.push(`${amt(b.immature)} is mined coins, spendable after 100 blocks`);
+  if (b.immature) parts.push(`${amtSay(b.immature)} is mined coins, spendable after 100 blocks`);
   const incoming = incomingTxs().reduce((a, x) => a + x.toUs, 0);
-  if (incoming) parts.push(`${amt(incoming)} is on its way to you and can be spent once a block includes it`);
+  if (incoming) parts.push(`${amtSay(incoming)} is on its way to you and can be spent once a block includes it`);
   if (b.outgoing || b.pending - incoming > 0) parts.push('some is held by a payment of yours still waiting (see Transactions)');
   if (b.elsewhere) parts.push(`${amtSay(b.elsewhere)} is reserved by Hitch or by a payment record Reef could not verify`);
   return parts.length ? `Nothing can be spent right now: ${parts.join('; ')}.` : 'No coins yet: your address is on the Receive page.';
@@ -2370,11 +2382,24 @@ async function feeFlow() {
     const okRate = Number.isInteger(r) && r >= 1 && r <= WL.MAX_RATE;
     $('ask-ok').disabled = !okRate;
     const sug = node.mempool ? suggestedRate() : null;
+    const avail = W?.coinsKnown ? wallBal().available : null;
     note.textContent = okRate
-      ? `About ${exact(typical(r))} for a typical payment. ${sug ? `Payments waiting now pay about ${sug} sat/vB.` : 'A block comes about every 20 minutes; 1 sat/vB is enough today.'}`
+      ? `About ${exact(typical(r))} for a typical payment. ${sug ? `Payments waiting now pay about ${sug} sat/vB.` : 'A block comes about every 20 minutes; 1 sat/vB is enough today.'}` +
+        (r >= 10 && !(sug && r <= sug)
+          ? ` ${r} sat/vB is much more than blocks need today, and it stays for every payment until changed.`
+          : '') +
+        (avail != null && typical(r) > avail ? ' At this rate the fee alone is more than you can spend.' : '')
       : `A whole number from 1 to ${WL.MAX_RATE}.`;
   };
   inp.oninput = paint;
+  // the rate field has the focus, and Enter applies a valid rate
+  inp.onkeydown = (e) => {
+    if (e.key === 'Enter' && !$('ask-ok').disabled) {
+      e.preventDefault();
+      $('ask-ok').click();
+    }
+  };
+  setTimeout(() => inp.focus(), 0);
   box.append(field, note);
   setTimeout(paint, 0);
   if (!(await ask('Fee rate', [box], 'Use this rate', false, 'Cancel'))) return;
@@ -2401,10 +2426,7 @@ async function sendFlow() {
     trustWarn: trust().level === 'warn' ? trust().text : null,
     reuse: reuseNote(p),
     waitingSame,
-    settlingSame: sent.filter((s) => {
-      const w = !s.pending && (s.replaced || s.failed) ? sent.find((x) => x.txid === (s.replaced || s.failed)) : null;
-      return w?.height != null && W.height != null && W.height - w.height + 1 < S.RECHECK_DEPTH && s.toScript === r.dec.script && !s.self;
-    }),
+    settlingSame: S.settlingTo(sent, r.dec.script, W.height, (a) => W.addr.decodeAddress(a)?.script),
   });
   if (!(await ask('Confirm the payment', lines, 'Send', false, 'Back'))) return;
   // the world may have moved while the dialog was open: the same coins and the same figures, or nothing is sent
@@ -2469,7 +2491,7 @@ async function sendFlow() {
         'good',
         ['See it on the Transactions page', () => showPage('tx')],
       );
-    cprint(`· payment of ${amt(p.amount)} made (fee ${p.fee} sat): ${txid.slice(0, 16)}…`, 'log');
+    cprint(`· payment of ${amtSay(p.amount)} made (fee ${p.fee} sat): ${txid.slice(0, 16)}…`, 'log');
     offerNotify();
     return { txid };
   } finally {
@@ -2723,7 +2745,7 @@ function openBackup() {
     $('bk-show').setAttribute('aria-pressed', String(!shown));
     $('bk-wif').setAttribute('aria-label', shown ? 'Key, hidden: choose Show' : 'Key (WIF)');
     $('bk-desc').setAttribute('aria-label', shown ? 'Descriptor, hidden: choose Show' : 'Descriptor');
-    if (!shown) arm();
+    // seeing the key is not saving it: the box is ticked only after Copy or Save
   };
   $('bk-copy').onclick = async () => {
     try {
@@ -2870,6 +2892,7 @@ function notify(title, body, bad = /not |did not|failed|stopped/i.test(title)) {
   if (!$('tray').hidden) {
     unseen++;
     $('tray-badge').textContent = unseen;
+    $('tray-badge').setAttribute('aria-label', `${unseen} new notice${unseen === 1 ? '' : 's'}`);
     $('tray-badge').hidden = false;
   }
   const el = document.createElement('div');
@@ -2881,7 +2904,13 @@ function notify(title, body, bad = /not |did not|failed|stopped/i.test(title)) {
   x.className = 'tx';
   x.textContent = '×';
   x.setAttribute('aria-label', 'Dismiss notice: ' + title);
-  x.onclick = () => el.remove();
+  // a toast that goes away while it holds the focus hands it on, never to <body>
+  const gone = () => {
+    const had = el.contains(document.activeElement);
+    el.remove();
+    if (had) (document.querySelector('.toast .tx') ?? document.querySelector('.tool button.on'))?.focus();
+  };
+  x.onclick = gone;
   el.append(b, document.createElement('br'), document.createTextNode(body), x); // the words first: a live region reads in order
   (bad ? $('toasts-alert') : $('toasts')).appendChild(el);
   let timer;
@@ -2890,13 +2919,16 @@ function notify(title, body, bad = /not |did not|failed|stopped/i.test(title)) {
     timer = setTimeout(
       () => {
         el.classList.add('out');
-        setTimeout(() => el.remove(), 400);
+        setTimeout(gone, 400);
       },
       bad ? 30000 : 20000,
     );
   };
-  el.onmouseenter = el.onfocusin = () => clearTimeout(timer);
-  el.onmouseleave = el.onfocusout = arm;
+  // hovered or focused, it stays (focusin/focusout are events, not on* properties)
+  el.addEventListener('mouseenter', () => clearTimeout(timer));
+  el.addEventListener('focusin', () => clearTimeout(timer));
+  el.addEventListener('mouseleave', arm);
+  el.addEventListener('focusout', arm);
   arm();
   if (OPT.notify && 'Notification' in window && Notification.permission === 'granted') {
     try {
@@ -3195,7 +3227,7 @@ cin.onkeydown = (e) => {
     const [cmd, ...args] = line.split(/\s+/);
     const f = Object.hasOwn(ANS, cmd) ? ANS[cmd] : null;
     // the log itself is quiet for screen readers; each answer is said once, in one line
-    const say1 = (t) => ($('announce').textContent = `${cmd}: ${String(t).split('\n')[0].slice(0, 140)}`);
+    const say1 = (t) => sayOnce(`${cmd}: ${String(t).split('\n')[0].slice(0, 140)}`);
     if (!f) return cprint('Method not found (code -32601)', 'err'), say1('error: method not found');
     if (IDLE && !['help', 'uptime'].includes(cmd))
       return (
@@ -3277,7 +3309,21 @@ async function copyDiagnostics() {
     lastError: node.lastError ?? null,
     trust: trust(),
     hist: node.hist,
-    mempool: node.mempool ? { count: node.mempool.count, stats: node.mempool.stats } : null,
+    mempool: node.mempool
+      ? {
+          count: node.mempool.count,
+          stats: node.mempool.stats,
+          following: node.mempool.following ?? null,
+          lastFeedAt: node.mempool.lastFeedAt ?? null,
+          feedFileAt: node.mempool.feedFileAt ?? null,
+        }
+      : null,
+    nodeState: {
+      unresponsive: !!node.unresponsive,
+      seedUnsupported: !!node.seedUnsupported,
+      retryAt: node.retryAt ?? null,
+      lockError: node.lockError ?? null,
+    },
     sources: { snapshot: SNAP_URL === DEFAULT_SNAP ? 'default' : SNAP_URL, blocks: BLOCKS_URL === DEFAULT_BLOCKS ? 'default' : BLOCKS_URL },
     wallet: W
       ? {
@@ -3288,6 +3334,7 @@ async function copyDiagnostics() {
           lastPublish: loadJSON('reef:lastpublish', null),
         }
       : null,
+    pageErrors,
     tab: { idle: IDLE, running: RUNNING, schema: LS.get('reef:schema'), schemaHere: SCHEMA, online: navigator.onLine },
     time: { now: Date.now(), skewMs: clockSkew, tipTime: node.time, lastSync: node.lastSync ?? null },
     tip: node.nostr
@@ -3328,7 +3375,7 @@ async function copyDiagnostics() {
   }
 }
 // ---- a newer Reef: checked every hour, offered, never forced
-// "2026-10-01.17" → comparable: a stale copy at the web host never offers an older version as newer
+// "2026-10-01.18" → comparable: a stale copy at the web host never offers an older version as newer
 const versionKey = (v) => {
   const m = /^(\d{4})-(\d{2})-(\d{2})\.(\d+)$/.exec(String(v ?? ''));
   return m ? [+m[1], +m[2], +m[3], +m[4]] : null;
@@ -3421,6 +3468,21 @@ if (embedded && document.hasStorageAccess)
     })
     .catch(() => {});
 // the idle tab: one path, whether the probe or the loader found the node taken; it waits for the lock and offers to take over
+// a tab that does not run the wallet: what would change it stays focusable where it explains itself, and says why
+function readOnlyPage() {
+  for (const id of ['sendto', 'sendamt', 'sendunit', 'sendall', 'sendpaste']) $(id).disabled = true;
+  for (const [id, why] of [
+    ['sendgo', 'sendout'],
+    ['feechoose', 'sendout'],
+    ['txexport', null],
+  ]) {
+    $(id).setAttribute('aria-disabled', 'true');
+    if (why) $(id).setAttribute('aria-describedby', why);
+    $(id).title = 'the wallet runs in another tab: do this there';
+  }
+  $('cin').disabled = true;
+  $('cin').placeholder = 'the node runs in another tab: use its console';
+}
 function goIdle() {
   IDLE = true;
   // the key is shared: an idle tab can still say whether it is backed up, next to the address it shows
@@ -3436,10 +3498,7 @@ function goIdle() {
   $('m-wipe').classList.add('off');
   $('m-wipe').setAttribute('aria-description', 'the node runs in another tab: wipe from there');
   $('m-wipe').title = 'the node runs in another tab: wipe from there';
-  for (const id of ['sendto', 'sendamt', 'sendunit', 'sendall', 'sendpaste']) $(id).disabled = true;
-  // Send stays focusable and says why (a disabled button is skipped by the keyboard and never explains itself)
-  $('sendgo').setAttribute('aria-disabled', 'true');
-  $('sendgo').setAttribute('aria-describedby', 'sendout');
+  readOnlyPage();
   sendInfo('The node and the wallet run in another tab of this browser: send from there.');
   setSync('idle: the node runs in another tab of this browser', null);
   document.title = 'Reef · idle (open in another tab)';
@@ -3472,7 +3531,9 @@ function goIdle() {
 // the key in storage gone (site data cleared, a clear-on-exit in another window) while this tab still holds it: written back,
 // and the person told to back it up now, since the next visit would otherwise make a new, empty key without a word
 function guardKey() {
-  if (!W || IDLE || !RUNNING || LS.get('reef:key') === W.key) return;
+  if (!W || LS.get('reef:key') === W.key) return;
+  // an idle tab holds the same key: it writes back the key alone (the records are the running tab's to write)
+  if (IDLE || !RUNNING) return void LS.set('reef:key', W.key);
   const back = LS.set('reef:key', W.key);
   // everything this tab still holds goes back too: the records, what it has seen, the layout marker, that it has started
   if (back) {
@@ -3495,6 +3556,9 @@ function guardKey() {
 addEventListener('storage', (e) => {
   if (e.key === null || e.key === 'reef:key') guardKey();
 });
+// clearing site data from the browser's settings fires no event here: check whenever the page may be left or reloaded
+addEventListener('pagehide', () => guardKey());
+document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && guardKey());
 addEventListener('storage', (e) => {
   if (!IDLE || !W || e.key !== sentKey()) return;
   try {
@@ -3568,10 +3632,7 @@ function newerSchema() {
   IDLE = true;
   IDLE_TEXT = 'This copy of Reef is older than the one that wrote the wallet records here: reload for the newer version.';
   document.body.classList.add('idle');
-  for (const id of ['sendto', 'sendamt', 'sendunit', 'sendall', 'sendpaste']) $(id).disabled = true;
-  // Send stays focusable and says why (a disabled button is skipped by the keyboard and never explains itself)
-  $('sendgo').setAttribute('aria-disabled', 'true');
-  $('sendgo').setAttribute('aria-describedby', 'sendout');
+  readOnlyPage();
   setSync('read-only: a newer Reef wrote the wallet records in this browser', null);
   banner(
     'schema',

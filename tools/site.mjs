@@ -13,6 +13,9 @@ for (const m of html.matchAll(/(?:src|href)="([^"#:?]+)(?:\?[^"]*)?"/g)) refs.ad
 const js = readFileSync('reef.js', 'utf8');
 for (const m of js.matchAll(/import\(`\.\/([^`?$]+)/g)) refs.add(m[1]);
 for (const m of js.matchAll(/fetch\('([^':?]+)'/g)) refs.add(m[1]);
+// the modules' own relative imports, so a lib file that imports another is checked too
+import { readdirSync } from 'node:fs';
+for (const f of readdirSync('lib')) for (const m of readFileSync(join('lib', f), 'utf8').matchAll(/from '\.\/([^']+)'/g)) refs.add('lib/' + m[1]);
 const missing = [...refs].filter((r) => !r.startsWith('//') && !existsSync(join(out, r)));
 if (missing.length) {
   console.log(`the site refers to files it does not have: ${missing.join(', ')}`);

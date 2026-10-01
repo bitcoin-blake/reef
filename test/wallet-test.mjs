@@ -112,6 +112,7 @@ t(
 );
 
 // ---- coin selection and the payment, signed and verified under the interpreter
+const pay2 = (o) => ({ to: 'x', sats: 1000, fee: 100, inputs: [], ...o });
 const coin = (i, value, extra = {}) => ({
   key: hash.bytesToHex(hash.sha256(new TextEncoder().encode('coin' + i))) + ':' + (i % 3),
   value,
@@ -800,5 +801,44 @@ t(
     return f.has('f:0') && f.has('g:0') && !f.has('h:0');
   })(),
 );
+{
+  const T1 = 'c1'.repeat(32);
+  const L = new Map();
+  W.recordReceipts(L, [{ key: T1 + ':0', value: 5e9, height: 152000, coinbase: true }], () => false);
+  t('a mined reward is recorded as mined (the flag the undone-block check needs)', L.get(T1).coinbase === true);
+  const H = W.history({
+    coins: [],
+    sent: [pay2({ txid: 'f'.repeat(64), failed: 'g'.repeat(64), pending: false })],
+    height: 152100,
+    address: 'me',
+  });
+  t('a payment that did not happen counts 0 in the history (and the export)', H[0].sats === 0);
+  t(
+    'a tombstone is not a row',
+    W.history({ coins: [], sent: [{ txid: 'a'.repeat(64), tomb: true }], height: 1, address: 'me' }).length === 0,
+  );
+  const one = [coin(31, 10000)];
+  const exact = 10000 - Math.ceil(W.estimateVsize(1, [spkB, spkA]));
+  t(
+    'a payment that uses the coin to the last sat (exactly amount + fee) is made',
+    W.plan({ coins: one, amount: exact, rate: 1, destSpk: spkB, changeSpk: spkA }).amount === exact,
+  );
+}
+{
+  const cs = [
+    { key: 'a:0', value: 1000, height: 152100 },
+    { key: 'b:0', value: 5000, height: 152101 },
+  ];
+  const b = W.balances({ coins: cs, sent: [], height: 152101, vouched: 152100 });
+  t(
+    'a coin in a block above the signed tip is pending, not available, and not spendable',
+    b.available === 1000 && b.unvouched === 5000 && b.pending === 5000 && b.total === 6000 && b.held.has('b:0'),
+  );
+  t('with no limit known, every coin counts as before', W.balances({ coins: cs, sent: [], height: 152101 }).available === 6000);
+  t(
+    '"1.000.000" is refused in tBTC (dots as thousands), "1.000" stays one',
+    throws(() => W.parseAmount('1.000.000'), /one dot/) && W.parseAmount('1.000') === 100000000,
+  );
+}
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

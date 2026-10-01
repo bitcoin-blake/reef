@@ -361,7 +361,7 @@ t(
       ((sent[0].checkedAt = 152111), S.recheckDue(sent, 152111).length === 0) &&
       S.recheckDue(sent, 152116).length === 0,
   );
-  const fx = S.onRecheck(sent, tx('1'), { found: false }, 152112);
+  const fx = S.onRecheck(sent, tx('1'), { found: false, to: 152112 }, 152112);
   t(
     'a reorganisation that leaves the coins unspent puts the payment back to waiting, and says so',
     sent[0].pending && sent[0].height === undefined && fx[0].bad,
@@ -440,7 +440,7 @@ t('a refusal in another hex case is recognised', S.onRefused([pay({ hex: 'ab' })
         /went into your payment to tb1pnew/.test(n.body) &&
         /forgotten, never happened/.test(S.stateOf(sent[0], { inMempool: () => false, height: 152111, now: 0, sent })),
     );
-    const fx2 = S.onRecheck(sent, tx('b'), { found: false }, 152112);
+    const fx2 = S.onRecheck(sent, tx('b'), { found: false, to: 152112 }, 152112);
     t(
       'then its block is undone: both are waiting again and the old one is forgotten again (its coins go first again)',
       sent[1].pending && sent[0].pending && sent[0].abandoned && !sent[0].failed && fx2[0].bad,
@@ -600,7 +600,7 @@ t(
     B = pay({ txid: tx('b'), to: 'tb1py', inputs: [inA, inB], at: 3000 });
   const sent = [A, B];
   S.onCoins({ sent, coins: [{ key: tx('a') + ':1', value: 6845, height: 152110 }] });
-  S.onRecheck(sent, tx('a'), { found: false }, 152111);
+  S.onRecheck(sent, tx('a'), { found: false, to: 152111 }, 152111);
   t(
     'a forgotten payment that won and was then undone is forgotten again (not published again)',
     A.pending && A.abandoned && S.republishDue(sent, 1e13).every((x) => x.txid !== tx('a')),
@@ -733,7 +733,7 @@ t(
   const winner = pay({ txid: tx('2'), pending: false, height: 152110, inputs: [inA], to: 'tb1pother' });
   const loser = pay({ pending: false, failed: tx('2'), wasAbandoned: true });
   const sent = [loser, winner];
-  S.onRecheck(sent, tx('2'), { found: false }, 152111);
+  S.onRecheck(sent, tx('2'), { found: false, to: 152111 }, 152111);
   t(
     'an undone block brings a forgotten payment back as waiting and forgotten (its coins first, not republished)',
     loser.pending && loser.abandoned && !loser.failed && winner.pending,
@@ -743,9 +743,9 @@ t(
   const sent = [pay({ inputs: [inA, inB], values: [5000, 5000] })];
   const asked = new Set();
   t(
-    'the node is asked about a payment only when all its coins are gone, not one',
-    S.onCoins({ sent, coins: [{ key: inB, value: 5000, height: 1 }], asked }).length === 0 &&
-      S.onCoins({ sent, coins: [], asked }).length === 1,
+    'the node is asked about a payment as soon as one of its coins is gone, and only once',
+    S.onCoins({ sent, coins: [{ key: inB, value: 5000, height: 1 }], asked }).length === 1 &&
+      S.onCoins({ sent, coins: [], asked }).length === 0,
   );
 }
 {
@@ -1015,6 +1015,95 @@ t(
     "a cancel record: nothing to the recipient, the coins back as change, the payment's all flag and the new tip",
     cx.sats === 0 && cx.change === 4000 && cx.all === true && cx.tip === 8 && cx.to === 'me' && cx.toScript === 'ms',
   );
+}
+{
+  const d = '5120' + 'dd'.repeat(32);
+  const raise = [
+    pay({ txid: tx('a'), pending: false, replaced: tx('b'), toScript: d }),
+    pay({ txid: tx('b'), replaces: tx('a'), pending: false, height: 152100, toScript: d }),
+  ];
+  t('a fee raise that was mined is not "cancelled or did not happen"', S.settlingTo(raise, d, 152101).length === 0);
+  const cancelled = [
+    pay({ txid: tx('a'), pending: false, replaced: tx('c'), toScript: d }),
+    pay({ txid: tx('c'), kind: 'cancel', replaces: tx('a'), pending: false, height: 152100, self: true }),
+  ];
+  t(
+    'a cancel that won within six blocks makes the address settling; at six it no longer does',
+    S.settlingTo(cancelled, d, 152104).length === 1 && S.settlingTo(cancelled, d, 152105).length === 0,
+  );
+  const failed = [
+    pay({ txid: tx('f'), pending: false, failed: tx('g'), toScript: null, to: 'old' }),
+    pay({ txid: tx('g'), pending: false, height: 152100, to: 'x' }),
+  ];
+  t(
+    'a payment that did not happen counts, its address decoded when the record has no script',
+    S.settlingTo(failed, d, 152101, (a) => (a === 'old' ? d : null)).length === 1,
+  );
+  t('with no height known, nothing is settling', S.settlingTo(cancelled, d, null).length === 0);
+}
+{
+  const r = pay({ pending: false, height: 152100 });
+  const sent = [r];
+  const fx = S.onRecheck(sent, r.txid, { found: false, to: 152104 }, 152105);
+  t(
+    'a recheck whose search stopped short of this height undoes nothing and is asked again',
+    fx.length === 0 && !r.pending && r.checkedAt == null,
+  );
+  const moved = pay({ pending: false, height: 152100 });
+  S.onRecheck([moved], moved.txid, { found: true, txid: moved.txid, height: 152102 }, 152103);
+  t('a recheck that finds the payment in another block moves it there', moved.height === 152102 && !moved.pending);
+}
+{
+  // round 10: reorganisation paths and the "paid twice" conditions
+  const d = '5120' + 'dd'.repeat(32);
+  // a payment shown as not having happened, whose change then appears: mined after all
+  const f = pay({ txid: tx('f'), pending: false, failed: tx('w'), toScript: d, at: 1 });
+  const w = pay({
+    txid: tx('w'),
+    pending: false,
+    height: 152100,
+    inputs: [inA],
+    to: 'tb1pother',
+    toScript: '5120' + 'ee'.repeat(32),
+    at: 2,
+  });
+  const fx = S.onCoins({ sent: [f, w], coins: [{ key: tx('f') + ':1', value: 6845, height: 152101 }], height: 152102 });
+  t(
+    'a payment shown as "did not happen" whose change appears is mined after all',
+    !f.failed && f.height === 152101 && fx.some((e) => e.notice === 'A payment was mined after all'),
+  );
+  // paid twice: only a later payment to the same address, made by this wallet, still standing
+  const mk = (o) => pay({ txid: tx('m'), pending: false, failed: tx('w'), toScript: d, at: 5, ...o });
+  const later = pay({ txid: tx('n'), pending: false, height: 152101, inputs: [inB], toScript: d, at: 9 });
+  const earlier = pay({ txid: tx('o'), pending: false, height: 152099, inputs: [inB], toScript: d, at: 1 });
+  const notice = (sent) =>
+    S.onCoins({ sent, coins: [{ key: tx('m') + ':1', value: 6845, height: 152101 }], height: 152102 }).find((e) => e.notice);
+  t(
+    '"paid twice" when the same address was paid again later',
+    notice([mk(), w, later])?.bad === true && /paid twice/.test(notice([mk(), w, pay({ ...later })]).body),
+  );
+  t('...not for an earlier payment to it', notice([mk(), w, earlier])?.bad === false);
+  t('...not for a payment to yourself', notice([mk({ self: true }), w, pay({ ...later })])?.bad === false);
+  t('...not for a later one that itself did not happen', notice([mk(), w, pay({ ...later, failed: tx('x') })])?.bad === false);
+  // confirm stamps the winner, so a stale copy from another tab cannot win the merge back
+  const c1 = pay({ vAt: 3 });
+  S.confirm([c1], c1, 152101);
+  const merged = S.mergeSent([c1], [pay({ vAt: 3 })]);
+  t('a confirmation is stamped: an older pending copy from another tab does not undo it', merged[0].pending === false && c1.vAt > 3);
+  // a coins reply from before the payment's block undoes nothing
+  const r = pay({ pending: false, height: 152105 });
+  S.onCoins({ sent: [r], coins: [{ key: inA, value: 10000, height: 152000 }], height: 152104 });
+  t('a coins reply older than the block a payment is in does not undo it', !r.pending && r.height === 152105);
+}
+{
+  const s1 = pay();
+  const fx = S.onCoins({ sent: [s1], coins: [{ key: tx('1') + ':1', value: 6845, height: 152102 }], height: 152102, vouched: 152101 });
+  t('a payment whose change is in a block above the signed tip is not confirmed yet', s1.pending && !fx.length);
+  S.onCoins({ sent: [s1], coins: [{ key: tx('1') + ':1', value: 6845, height: 152102 }], height: 152102, vouched: 152102 });
+  t('...and is once the tip reaches it', !s1.pending && s1.height === 152102);
+  const s2 = pay({ inputs: [inA, inB], values: [5000, 5000] });
+  const fx2 = S.onCoins({ sent: [s2], coins: [{ key: inA, value: 5000, height: 1 }], asked: new Set() });
+  t('a waiting payment with one of its coins gone is asked about (that coin)', fx2.length === 1 && fx2[0].input === inB);
 }
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

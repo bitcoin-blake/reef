@@ -329,5 +329,31 @@ t(
       ),
     );
 }
+{
+  // round 10: the survivors that mattered
+  const conf = { kind: 'in', txid: tx('v'), label: 'Received', addr: 'me', sats: 5, pending: false, height: 152100, conf: 2 };
+  t(
+    'with no signed tip (null), confirmations are shown as usual, not "not yet vouched for"',
+    /confirming/.test(V.viewRow(conf, { ...ctx([]), signedHeight: null }).state),
+  );
+  const rn = pay({ refusedNote: 'x' }),
+    rf = pay({ refused: 'y', replaces: tx('0') });
+  t(
+    'short states: refused here, a higher fee not accepted',
+    V.viewRow(row(rn), ctx([rn])).short === 'not accepted here' && V.viewRow(row(rf), ctx([rf])).short === 'higher fee not accepted',
+  );
+  const above = V.viewRow(conf, { ...ctx([]), signedHeight: 152099 });
+  t('a block above the signed tip reads "not yet vouched for" in a list', above.short === 'not yet vouched for');
+  const struck = pay({ pending: false, replaced: tx('e') });
+  t(
+    'a struck row keeps its own words even above the signed tip',
+    /^did not happen/.test(V.viewRow({ ...row(struck), height: 152101 }, { ...ctx([struck]), signedHeight: 152099 }).state),
+  );
+  const rows = [{ kind: 'in', txid: tx('i'), label: 'Received', addr: 'a', sats: 1, pending: false }, row(pay())];
+  t(
+    'the "sent" filter shows only payments out',
+    V.filterRows(rows, { type: 'out' }).length === 1 && V.filterRows(rows, { type: 'out' })[0].kind === 'out',
+  );
+}
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);
