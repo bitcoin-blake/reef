@@ -62,7 +62,7 @@ t('a spend answer for a payment already settled changes nothing', S.onSpendAnswe
   const fx2 = S.onRefused(sent, tx('1'), 'fee too low', '00'); const W2 = await import('../lib/wallet.mjs');
   t('a refusal of our own original is a note: its coins stay held and it is still published', fx2.length === 1 && sent[0].refusedNote && !sent[0].refused && S.republishDue(sent, 1e12).length === 1 && W2.balances({ coins: [{ key: inA, value: 10000, height: 1 }], sent, height: 10 }).available === 0); }
 // ---- stored records are checked against their own transaction
-{ const check = (hex) => (hex === '00' ? { txid: tx('1'), inputs: [inA] } : { txid: tx('9'), inputs: [] }); const scriptOf = (a) => (a === 'tb1pdest' ? '5120' + 'dd'.repeat(32) : null);
+{ const check = (hex) => (hex === '00' ? { txid: tx('1'), inputs: [inA], outputs: [{ value: 3000, scriptPubKey: '5120' + 'dd'.repeat(32) }, { value: 6845, scriptPubKey: '5120' + 'ee'.repeat(32) }] } : { txid: tx('9'), inputs: [] }); const scriptOf = (a) => (a === 'tb1pdest' ? '5120' + 'dd'.repeat(32) : null);
   t('a record whose hex is its own transaction is kept', S.validRecord(pay(), { check, scriptOf }));
   t('a record whose hex is another transaction, or whose destination does not match its address, is dropped', !S.validRecord(pay({ hex: 'deadbeef' }), { check, scriptOf }) && !S.validRecord(pay({ toScript: '5120' + 'ee'.repeat(32) }), { check, scriptOf }) && !S.validRecord({ txid: 'x' }, { check, scriptOf })); }
 // ---- a reorganisation: the verdict learnt last wins the merge
@@ -72,10 +72,36 @@ t('a spend answer for a payment already settled changes nothing', S.onSpendAnswe
 // ---- forgetting is measured from the newest version of a payment
 { const sent = [pay({ tip: 152100, replacedBy: tx('2') }), pay({ txid: tx('2'), tip: 152105, replaces: tx('1') })];
   t('a payment raised at 152,105 is not forgettable at 152,107 though the original is old', !S.forgettable(sent, sent[0], 152107, () => false) && S.forgettable(sent, sent[0], 152111, () => false)); }
+// ---- round four: a payment made after a forget is not a version of the forgotten one
+{ const mk = () => { const A = pay({ txid: tx('a'), to: 'tb1px', abandoned: true, inputs: [inA] }); const B = pay({ txid: tx('b'), to: 'tb1py', sats: 5000, inputs: [inA, inB], at: 3000 }); return [A, B]; };
+  { const sent = mk(); const fx = S.onCoins({ sent, coins: [{ key: tx('a') + ':1', value: 6845, height: 152110 }] }); const [A, B] = sent;
+    t('the forgotten payment is mined after all: it is confirmed and no longer marked forgotten', !A.pending && A.height === 152110 && !A.abandoned);
+    t('the payment that spent its coins did not happen, and the notice says its recipient was not paid', !B.pending && B.failed === tx('a') && !B.replaced && fx.some((e) => e.bad && /was not made/.test(e.body) && /Pay again/.test(e.body)) && /pay again/.test(S.stateOf(B, { inMempool: () => false, height: 152110, now: 0, sent }))); }
+  { const sent = mk(); S.onCoins({ sent, coins: [{ key: tx('b') + ':1', value: 1000, height: 152111 }] }); const [A, B] = sent;
+    t('the next payment is mined: it is confirmed, the forgotten one did not happen', !B.pending && B.height === 152111 && !A.pending && A.failed === tx('b')); }
+  { const sent = mk(); t('the two are not versions of each other; each is the other\'s conflict', S.groupOf(sent, sent[0]).length === 1 && S.conflictsOf(sent, sent[0])[0] === sent[1] && /went into your payment/.test(S.stateOf(sent[0], { inMempool: () => false, height: 1, now: 0, sent }))); } }
+{ const sent = [pay({ replacedBy: tx('2') }), pay({ txid: tx('2'), replaces: tx('1'), replacedBy: tx('3') }), pay({ txid: tx('3'), replaces: tx('2') })];
+  t('the newest version of a twice-raised payment is found from the original', S.newestOf(sent, sent[0]).txid === tx('3') && S.groupOf(sent, sent[2]).length === 3); }
+// ---- round four (funds): reorganisations, replays, tombstones, records, clocks
+{ const sent = [pay()]; S.confirm(sent, sent[0], 152110); t('a confirmation two blocks deep is checked again at the next block, once', S.recheckDue(sent, 152111).length === 1 && (sent[0].checkedAt = 152111, S.recheckDue(sent, 152111).length === 0) && S.recheckDue(sent, 152116).length === 0);
+  const fx = S.onRecheck(sent, tx('1'), { found: false }, 152112); t('a reorganisation that leaves the coins unspent puts the payment back to waiting, and says so', sent[0].pending && sent[0].height === undefined && fx[0].bad); }
+{ const P = pay({ replacedBy: tx('2') }), C = pay({ txid: tx('2'), kind: 'cancel', self: true, sats: 0, fee: 400, change: 9600, replaces: tx('1') }); const sent = [P, C]; S.confirm(sent, C, 152110);
+  const fx = S.onRecheck(sent, tx('2'), { found: true, txid: tx('1'), height: 152111 }, 152111);
+  t('a cancel confirmed, then a reorganisation mines the original: the payment is confirmed, the cancel undone, and the person told', !P.pending && P.height === 152111 && C.replaced === tx('1') && fx.some((e) => e.notice === 'A block was undone') && fx.some((e) => e.notice === 'Payment confirmed')); }
+{ const O = pay({ replacedBy: tx('2') }), r1 = pay({ txid: tx('2'), replaces: tx('1'), replacedBy: tx('3') }), r2 = pay({ txid: tx('3'), replaces: tx('2') }); const sent = [O, r1, r2];
+  t('an old version replayed and refused after a newer one leaves the chain of versions as it is', S.onRefused(sent, tx('2'), 'a replacement must pay more', '00').length === 0 && O.replacedBy === tx('2') && r1.replacedBy === tx('3')); }
+t('a refusal in another hex case is recognised', S.onRefused([pay({ hex: 'ab' })], tx('1'), 'x', 'AB').length === 1);
+{ const m = S.mergeSent([pay()], [{ txid: tx('1'), pending: false, tomb: true, at: 1 }]); t('a tombstone\'s verdict never wins over a waiting record', m[0].pending === true && !m[0].tomb); }
+{ const check = (hex) => ({ txid: tx('1'), inputs: [inA], outputs: [{ value: 3000, scriptPubKey: '5120' + 'ff'.repeat(32) }, { value: 6845, scriptPubKey: '5120' + 'ee'.repeat(32) }] }); const scriptOf = () => '5120' + 'dd'.repeat(32);
+  t('a record whose destination is not an output of its own transaction is dropped', !S.validRecord(pay(), { check, scriptOf }));
+  const check2 = () => ({ txid: tx('1'), inputs: [inA], outputs: [{ value: 3000, scriptPubKey: '5120' + 'dd'.repeat(32) }, { value: 6000, scriptPubKey: '5120' + 'ee'.repeat(32) }] }); t('a record whose fee does not match its transaction is dropped', !S.validRecord(pay(), { check: check2, scriptOf })); }
+{ const sent = [pay({ vAt: Date.now() + 60e3 })]; t('a verdict\'s time never goes back, even if the clock does', S.stamp(sent) > sent[0].vAt); }
 // ---- the page's version and version.json agree (a release that forgets one shows a false update banner)
 { const { readFileSync } = await import('node:fs'); const src = readFileSync(new URL('../reef.js', import.meta.url), 'utf8'); const v = src.match(/export const VERSION = '([^']+)'/)?.[1]; const j = JSON.parse(readFileSync(new URL('../version.json', import.meta.url), 'utf8'));
   t('reef.js VERSION matches version.json', v && v === j.version, `${v} vs ${j.version}`);
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8'); t('index.html loads reef.js?v= the same version', html.includes(`reef.js?v=${v}"`));
   const node = src.match(/blaketestnode@([0-9a-f]{40})/)?.[1], lib = src.match(/sidestr\/spec@([0-9a-f]{40})/)?.[1], eng = src.match(/schema@([0-9a-f]{40})/)?.[1]; const csp = html.match(/Content-Security-Policy" content="([^"]+)"/)?.[1] ?? '';
+  { const { execSync } = await import('node:child_process'); const { homedir } = await import('node:os'); let w = ''; try { w = execSync(`git -C ${process.env.BLAKETESTNODE ?? homedir() + '/remote/github.com/bitcoin-blake/blaketestnode'} show ${node}:browser/worker.js`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); } catch {}
+    const wpins = [...new Set([...w.matchAll(/https:\/\/cdn\.jsdelivr\.net\/gh\/[^'"`]+?@[0-9a-f]{40}/g)].map((m) => m[0] + '/'))]; t('every pinned path the node worker itself imports is allowed by the policy', w && wpins.length >= 2 && wpins.every((u) => csp.includes(u)), wpins.filter((u) => !csp.includes(u)).join(' ')); }
   t('the security policy names the exact pinned node, library and engine', !!node && !!lib && !!eng && csp.includes(`blaketestnode@${node}/`) && csp.includes(`spec@${lib}/`) && csp.includes(`schema@${eng}/`) && !/cdn\.jsdelivr\.net[ ;]/.test(csp)); }
 console.log(`\n${ok} passed, ${bad} failed`); process.exit(bad ? 1 : 0);

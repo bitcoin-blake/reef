@@ -24,6 +24,17 @@ The rest as before: Options for the fee rate, relays, units and value masking; *
 
 **Tests**: `npm test` runs `test/state-test.mjs` (the payment records as a state machine: two tabs merging field by field, confirmation by change or by the node's spend lookup, a replacement or a cancel that wins or loses, a refused replacement, republishing, forgetting, and that `reef.js` and `version.json` carry the same version) and `test/wallet-test.mjs` (with `SCHEMA`, `BLAKETESTNODE` and `SIDESTR_LIB` pointing at checkouts, defaults under `~`) runs the wallet's rules against the kernel: exact amounts, destination checks, sizes and fees measured on signed transactions, coin selection, send-everything, dust, balances with waiting payments and replacements, the key formats (WIF, descriptor checksum) and the history.
 
+## Releasing
+
+1. Change the code; run `npm test` (the syntax of `reef.js`, the payment state machine, the wallet against the kernel, and the release checks: `VERSION` in `reef.js`, `version.json` and `reef.js?v=` in `index.html` agree, and the security policy names the exact node, library and engine pins, including the ones the node worker itself imports).
+2. Bump `VERSION` in all three places together, so a cached page never mixes versions and open tabs are offered the new one.
+3. A new node pin goes into `reef.js`, the policy in `index.html`, and the other apps of the origin (Bight, Winch, Hitch) in the same sitting: they share the node's files and its lock.
+4. Push; GitHub Pages serves the new files within about ten minutes.
+
+## What a tab cannot protect
+
+The wallet key is kept in this browser's storage for the site `bitcoin-blake.github.io`, which every page published from the bitcoin-blake organisation shares. A compromised dependency or a script-injection bug in any of those pages could read it. Reef's own page loads only pinned code under a strict policy, but that does not cover its neighbours. For test coins this is accepted; for anything of value the wallet would need its own origin or a key encrypted under a passphrase. A tab is only watching while it is open, and it trusts its block source as far as the signed chain tip it can reach confirms it.
+
 ## Name
 
 It looks like Knots and runs a chain Knots defined, but it is not Knots, and the name is its own: a reef knot. The About box says what it is.

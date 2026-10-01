@@ -93,4 +93,13 @@ t('send-all with a balance under the fee is refused', throws(() => W.plan({ coin
   const first = W.reuseFirst(sent); const p = W.plan({ coins: W.spendable([small, big], height, W.balances({ coins: [small, big], sent, height }).held, first), amount: 5000, rate: 1, destSpk: spkB, changeSpk: spkA });
   t('the next payment spends a coin of the forgotten one first, though a larger coin alone would do', p.picked[0].key === small.key && p.picked.length === 2);
   t('a refused payment\'s coins go first too', W.reuseFirst([{ ...sent[0], abandoned: false, refused: 'x' }]).has(small.key) && !W.reuseFirst([{ ...sent[0], abandoned: false }]).size); }
+// ---- replacements: BIP 125 fees, who pays, signed and checked
+{ const c = coin(51, 100000); const p0 = W.plan({ coins: [c], amount: 30000, rate: 1, destSpk: spkB, changeSpk: spkA }); const s = { inputs: [c.key], values: [c.value], sats: p0.amount, fee: p0.fee, change: p0.change, toScript: spkB };
+  const r = W.planReplace(s, { rate: 1, ownSpk: spkA }); const tx = W.unsignedTx({ picked: [c], outputs: r.outputs }); const prev = [{ value: c.value, scriptPubKey: spkA }]; txsign.signKeyPath({ k, hash, signer }, tx, prev, keyA); const vs = W.vsizeOf(k, tx);
+  t('a fee raise pays at least the old fee plus 1 sat/vB on its own size, and a higher rate, from the change', r.fee >= s.fee + vs && r.fee / vs > s.fee / p0.vsize && r.outputs[0].value === 30000 && r.outputs[1].value === s.change - (r.fee - s.fee) && k.interpreter.verifyInput(tx, 0, prev[0], prev, null, { unifiedSighash: unified }).ok === true, `fee ${r.fee} old ${s.fee} vsize ${vs}`);
+  const r2 = W.planReplace({ ...s, fee: r.fee, change: r.change }, { rate: 1, ownSpk: spkA }); t('a raise of a raise climbs again', r2.fee >= r.fee + r2.vsize);
+  const cx = W.planReplace(s, { cancel: true, rate: 1, ownSpk: spkA }); t('a cancel pays the coins back to the wallet, less a fee above the original\'s', cx.outputs.length === 1 && cx.outputs[0].scriptPubKey === spkA && cx.amount === 100000 - cx.fee && cx.fee >= s.fee + cx.vsize);
+  t('a payment without change cannot be raised: cancel instead', throws(() => W.planReplace({ ...s, change: 0 }, { rate: 1, ownSpk: spkA }), /cancel it instead/));
+  const all = W.planReplace({ ...s, all: true, change: 0, sats: 100000 - s.fee }, { rate: 1, ownSpk: spkA }); t('raising the fee on a payment of everything says the recipient receives less', all.reducesRecipient && all.amount === 100000 - all.fee && all.outputs.length === 1);
+  t('a raise with too little change is refused with the way out', throws(() => W.planReplace({ ...s, sats: 100000 - s.fee - 50, change: 50 }, { rate: 1, ownSpk: spkA }), /too small/)); }
 console.log(`\n${ok} passed, ${bad} failed`); process.exit(bad ? 1 : 0);
