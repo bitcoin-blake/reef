@@ -85,13 +85,13 @@ t(
   const v = V.viewRow(row(s), ctx([s]));
   t(
     'a confirmed payment shows its block and the undo caveat while shallow',
-    v.block === 152100 && /2 confirmations \(a block can still be undone\)/.test(v.state) && v.actions.length === 0,
+    v.block === 152100 && /confirming \(2 of 6\)/.test(v.state) && v.actions.length === 0,
   );
 }
 {
   const r = { kind: 'in', txid: tx('9'), label: 'Received', addr: 'me', sats: 5000, pending: false, height: 152099, conf: 3 };
   const v = V.viewRow(r, ctx([]));
-  t('a receipt reads its confirmations with the caveat', /3 confirmations \(a block/.test(v.state) && v.icon === '⬇');
+  t('a receipt reads its confirmations with the caveat', /confirming \(3 of 6\)/.test(v.state) && v.icon === '⬇');
 }
 {
   const rows = [
@@ -146,7 +146,7 @@ t(
   const at6 = { kind: 'in', txid: tx('6'), label: 'Received', addr: 'me', sats: 1, pending: false, height: 1, conf: 6 };
   t(
     'at six confirmations the undo caveat is gone',
-    V.viewRow(at6, ctx([])).state === '6 confirmations' && /undone/.test(V.viewRow({ ...at6, conf: 5 }, ctx([])).state),
+    V.viewRow(at6, ctx([])).state === '6 confirmations' && V.viewRow({ ...at6, conf: 5 }, ctx([])).state === 'confirming (5 of 6)',
   );
 }
 {
@@ -167,7 +167,8 @@ t(
   );
   t(
     'a coin held by a set-aside record says so before a waiting payment, and a waiting payment before "spent first"',
-    V.coinNote(c, { height: 1, sent: [], quarantine: k, held: k, first: k, mature: () => true }) === ' (held by a set-aside record)' &&
+    V.coinNote(c, { height: 1, sent: [], quarantine: k, held: k, first: k, mature: () => true }) ===
+      ' (held: a payment record Reef could not verify)' &&
       V.coinNote(c, { height: 1, sent: [], held: k, first: k, mature: () => true }) === ' (held by a waiting payment)',
   );
 }
@@ -205,7 +206,42 @@ t(
     line,
   );
   const conf = { kind: 'in', txid: tx('c'), label: 'Received', addr: 'me', sats: 5, pending: false, height: 10, conf: 2 };
-  t('a receipt is exported with its confirmations, not just "confirmed"', /2 confirmations/.test(V.exportRow(conf, ctx([]))));
+  t('a receipt is exported with its confirmations, not just "confirmed"', /confirming \(2 of 6\)/.test(V.exportRow(conf, ctx([]))));
+}
+{
+  // round 8
+  const c = pay({ txid: tx('c'), kind: 'cancel', replaces: tx('1'), sats: 0, change: 9600 });
+  t('a waiting cancel offers a higher fee (as a cancel) but not "Cancel…"', V.viewRow(row(c), ctx([c])).actions.join() === 'bump,again');
+  const r = pay({ refusedNote: 'fee too low' });
+  t(
+    'a payment refused here is not offered "Announce again"',
+    !V.viewRow(row(r), ctx([r])).actions.includes('again') && V.viewRow(row(r), ctx([r])).actions.includes('cancel'),
+  );
+  const o = pay({ pending: false, replaced: tx('c') });
+  const w = pay({ txid: tx('c'), kind: 'cancel', pending: false, height: 152101 });
+  t('a payment whose cancel won is tagged "cancelled"', V.viewRow(row(o), ctx([o, w])).tag === 'cancelled');
+  const me = pay({ txid: tx('m'), self: true, sats: 5000, change: 4845 });
+  t(
+    'the output of a payment to yourself is "paid to yourself", the other "change"',
+    V.coinNote({ key: tx('m') + ':0', value: 5000, height: 1 }, { height: 5, sent: [me], mature: () => true }) === ' (paid to yourself)' &&
+      V.coinNote({ key: tx('m') + ':1', value: 4845, height: 1 }, { height: 5, sent: [me], mature: () => true }) === ' (change)',
+  );
+  const at = { kind: 'out', txid: tx('d'), label: 'Sent to', addr: 'a', sats: -1, pending: false, height: 3, at: Date.UTC(2026, 9, 1, 12) };
+  t(
+    'the export carries the date first',
+    V.exportRow(at, ctx([])).startsWith('"2026-10-01T12:00:00.000Z","3"') && V.EXPORT_HEAD.startsWith('date,'),
+  );
+}
+{
+  const nr = pay({ relays: [] });
+  const v = V.viewRow(row(nr), ctx([nr]));
+  t('a short state is the words before the colon', v.state.includes(':') && v.short === v.state.split(':')[0] && !v.short.includes(':'));
+  const f = pay({ abandoned: true });
+  const settled = pay({ txid: tx('3'), inputs: [inA], pending: false, height: 152101, to: 'tb1pother' });
+  t(
+    'a forgotten payment can still be cancelled once the payment that took its coins has settled',
+    V.viewRow(row(f), ctx([f, settled])).actions.includes('cancel'),
+  );
 }
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

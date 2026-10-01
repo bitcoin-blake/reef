@@ -173,7 +173,7 @@ for (const [name, opts] of [
   );
   t(
     'a newer schema: sending is disabled and a notice says why',
-    (await page.isDisabled('#sendgo')) && !!(await page.$('#banners [data-b=schema]')),
+    (await page.getAttribute('#sendgo', 'aria-disabled')) === 'true' && !!(await page.$('#banners [data-b=schema]')),
   );
   await p.ctx.close();
 }
@@ -189,9 +189,9 @@ for (const [name, opts] of [
   await b.waitForTimeout(4500);
   t(
     'a second tab is idle: sending disabled, the node not started there',
-    (await b.isDisabled('#sendgo')) &&
+    (await b.getAttribute('#sendgo', 'aria-disabled')) === 'true' &&
       (await b.evaluate(() => document.body.classList.contains('idle'))) &&
-      (await b.evaluate(() => window.__fake.starts)) <= 1,
+      (await b.evaluate(() => !window.__fake.posts.some((p) => p.type === 'coins'))),
   );
   t('the running tab is not marked idle', !(await a.evaluate(() => document.body.classList.contains('idle'))));
   const shown = await a.evaluate(() =>

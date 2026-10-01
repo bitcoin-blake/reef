@@ -550,5 +550,150 @@ t(
     W.raiseRate({ s: allS, ownSpk: spkA }) === Math.ceil((112 / W.estimateVsize(1, [spkB])) * 1.5),
   );
 }
+{
+  // round 8
+  const c = { kind: 'cancel', inputs: ['a:0'], values: [10000], sats: 0, change: 9600, fee: 400, toScript: spkA };
+  t(
+    'raising the fee on a cancel as if it were a payment is refused (it would pay 0 to yourself)',
+    throws(() => W.planReplace(c, { rate: 1, ownSpk: spkA }), /raised as a cancel/),
+  );
+  const cc = W.planReplace(c, { cancel: true, rate: 5, ownSpk: spkA });
+  t(
+    'a cancel raised as a cancel pays everything back with a higher fee, one output',
+    cc.outputs.length === 1 && cc.fee > 400 && cc.outputs[0].value === 10000 - cc.fee,
+  );
+  t(
+    'no replacement has an output below dust',
+    throws(
+      () =>
+        W.planReplace(
+          { inputs: ['a:0'], values: [500], sats: 300, fee: 100, change: 100, toScript: spkB, all: false, kind: 'payment' },
+          { cancel: true, rate: 1, ownSpk: spkA },
+        ),
+      /cover|too small/,
+    ),
+  );
+  const orig = { txid: 'o', pending: true, inputs: ['k:0'], sats: 3000, fee: 155, change: 6845 };
+  const ref = { txid: 'r', pending: true, refused: 'x', replaces: 'o', inputs: ['k:0'], sats: 3000, fee: 2000, change: 5000 };
+  const bal = W.balances({ coins: [], sent: [orig, ref], height: 1 });
+  t(
+    'a replacement refused here still counts in the worse figures (it may be mined elsewhere)',
+    bal.pending === 5000 && bal.outgoing === 5000,
+    JSON.stringify(bal),
+  );
+  const H = W.history({
+    coins: [],
+    sent: [
+      { txid: 'w'.repeat(64), to: 'x', sats: 1, fee: 1, pending: false, height: 100, at: 5 },
+      { txid: 'l'.repeat(64), to: 'x', sats: 1, fee: 1, pending: false, replaced: 'w'.repeat(64), at: 4 },
+      { txid: 'n'.repeat(64), to: 'x', sats: 1, fee: 1, pending: false, height: 101, at: 6 },
+    ],
+    height: 110,
+    address: 'me',
+  });
+  t(
+    'a version that did not happen sits right under the one that won, not at the top',
+    H.map((r) => r.txid[0]).join('') === 'nwl',
+    H.map((r) => r.txid[0]).join(''),
+  );
+  const L = new Map();
+  W.recordReceipts(L, [{ key: 'ab'.repeat(32) + ':0', value: 1, height: 1 }], () => false, 777);
+  t('a receipt remembers when this wallet first saw it', L.get('ab'.repeat(32)).at === 777);
+}
+{
+  const T1 = '11'.repeat(32),
+    T2 = '22'.repeat(32),
+    T3 = '33'.repeat(32),
+    T4 = '44'.repeat(32);
+  const L = new Map([
+    [T1, { txid: T1, outs: { 0: 5 }, height: 100 }],
+    [T2, { txid: T2, outs: { 1: 5 }, height: 100 }],
+    [T3, { txid: T3, outs: { 0: 5 }, height: 100 }],
+    [T4, { txid: T4, outs: { 0: 5 }, height: 100, spentElsewhere: true }],
+  ]);
+  const q = W.receiptsToCheck(L, [{ key: T1 + ':0', value: 5, height: 100 }], [{ inputs: [T2 + ':1'] }], 105);
+  t(
+    'a receipt is asked about only when its coins went without a payment of ours, once',
+    q.length === 1 && q[0].txid === T3 && q[0].key === T3 + ':0' && q[0].from === 100,
+    JSON.stringify(q),
+  );
+  L.get(T3).checkedAt = 105;
+  t(
+    '...not again in the same block, and not past 100 blocks',
+    W.receiptsToCheck(L, [], [], 105).every((x) => x.txid !== T3) && W.receiptsToCheck(L, [], [], 200).length === 0,
+  );
+}
+{
+  // round 8: boundaries
+  const s10 = { inputs: ['a:0'], fee: 1550, change: 100000, toScript: spkB };
+  const old = 1550 / W.estimateVsize(1, [spkB, spkA]);
+  t(
+    'a raise from about 10 sat/vB starts at half again (not a fifth again)',
+    W.raiseRate({ s: s10, ownSpk: spkA }) === Math.ceil(old * 1.5),
+    String(W.raiseRate({ s: s10, ownSpk: spkA })),
+  );
+  t(
+    'the starting rate is sized on the payment as it was (two outputs, not one)',
+    W.raiseRate({ s: s10, ownSpk: spkA }) === Math.ceil((1550 / W.estimateVsize(1, [spkB, spkA])) * 1.5) &&
+      W.raiseRate({ s: { ...s10, all: true, change: 0 }, ownSpk: spkA }) === Math.ceil((1550 / W.estimateVsize(1, [spkB])) * 1.5) &&
+      W.raiseRate({ s: s10, ownSpk: spkA }) !== W.raiseRate({ s: { ...s10, all: true, change: 0 }, ownSpk: spkA }),
+  );
+  t('the starting rate never passes the highest rate', W.raiseRate({ s: { ...s10, fee: 10_000_000 }, ownSpk: spkA }) === W.MAX_RATE);
+  t(
+    'raising a payment of everything that would leave less than 546 sat is refused',
+    throws(
+      () =>
+        W.planReplace(
+          { inputs: ['a:0'], values: [800], sats: 600, fee: 200, change: 0, all: true, toScript: spkB },
+          { rate: 1, ownSpk: spkA },
+        ),
+      /minimum/,
+    ),
+  );
+  t(
+    'a replacement needs the value of every coin it spends',
+    throws(
+      () =>
+        W.planReplace({ inputs: ['a:0', 'b:0'], values: [800], sats: 600, fee: 200, change: 0, toScript: spkB }, { rate: 1, ownSpk: spkA }),
+      /only a waiting payment/,
+    ),
+  );
+  t(
+    'a cancel never says it reduces the recipient',
+    W.planReplace(
+      { inputs: ['a:0'], values: [100000], sats: 600, fee: 200, change: 0, all: true, toScript: spkB },
+      { cancel: true, rate: 1, ownSpk: spkA },
+    ).reducesRecipient === false,
+  );
+  const T = 'ef'.repeat(32);
+  const L = new Map([[T, { txid: T, outs: { 0: 5 }, height: 100, coinbase: true }]]);
+  t(
+    'an undone mined block is judged only while its coin is immature (at 99, not 100, confirmations)',
+    W.undoneReceipts(L, [], 198).length === 1 && W.undoneReceipts(L, [], 199).length === 0,
+  );
+  t('with no height known, nothing is judged undone', W.undoneReceipts(L, [], null).length === 0);
+  const L2 = new Map();
+  W.recordReceipts(L2, [{ key: T + ':0', value: 5, height: 100 }], () => false);
+  W.recordReceipts(L2, [{ key: T + ':1', value: 7, height: 100 }], () => false);
+  t('a second output of the same receipt is added to it', W.receiptSats(L2.get(T)) === 12);
+  const H = W.history({
+    coins: [],
+    sent: [],
+    height: 198,
+    address: 'me',
+    ledger: new Map([[T, { txid: T, outs: { 0: 5 }, height: 100, coinbase: true }]]),
+  });
+  t(
+    'a mined coin is immature at 99 confirmations and mature at 100',
+    H[0].immature === true &&
+      W.history({
+        coins: [],
+        sent: [],
+        height: 199,
+        address: 'me',
+        ledger: new Map([[T, { txid: T, outs: { 0: 5 }, height: 100, coinbase: true }]]),
+      })[0].immature === false,
+  );
+}
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

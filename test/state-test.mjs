@@ -183,7 +183,7 @@ t(
       /next payment/.test(st(pay({ abandoned: true }))) &&
       /made elsewhere/.test(st(pay({ hex: undefined }))) &&
       st(pay({ pending: false, height: 1 })) === 'confirmed' &&
-      /2 confirmations \(a block can still be undone\)/.test(st(pay({ pending: false, height: 152100 }))) &&
+      /confirming \(2 of 6\)/.test(st(pay({ pending: false, height: 152100 }))) &&
       /every 10 minutes/.test(st(pay(), { now: 2000 + 11 * 60e3 })),
   );
 }
@@ -242,11 +242,11 @@ t(
   const fx2 = S.onRefused(sent, tx('1'), 'fee too low', '00');
   const W2 = await import('../lib/wallet.mjs');
   t(
-    'a refusal of our own original is a note: its coins stay held and it is still published',
+    'a refusal of our own original is a note: its coins stay held, and it is not announced again (a refusal is never routed around)',
     fx2.length === 1 &&
       sent[0].refusedNote &&
       !sent[0].refused &&
-      S.republishDue(sent, 1e12).length === 1 &&
+      S.republishDue(sent, 1e12).length === 0 &&
       W2.balances({ coins: [{ key: inA, value: 10000, height: 1 }], sent, height: 10 }).available === 0,
   );
 }
@@ -809,6 +809,107 @@ t(
   t(
     'one in the mempool is waiting, change counted, not doubled',
     m.length === 1 && m[0].pending && m[0].sats === 8000 && m[0].change === 2000 && m[0].tip === 5,
+  );
+}
+{
+  // round 8
+  const sent = [pay(), pay({ txid: tx('c'), kind: 'cancel', replaces: tx('1'), sats: 0, change: 9600, fee: 400 })];
+  sent[0].replacedBy = tx('c');
+  t(
+    'a payment being cancelled says so while it waits',
+    S.stateOf(sent[0], { inMempool: () => true, height: 152101, now: 2000, sent }) === 'being cancelled: waiting for a block',
+  );
+  const won = [pay({ pending: false, replaced: tx('c') }), pay({ txid: tx('c'), kind: 'cancel', pending: false, height: 152102 })];
+  t(
+    'a payment whose cancel won reads as cancelled, not as "another version was mined"',
+    S.stateOf(won[0], { inMempool: () => false, height: 152110, now: 2000, sent: won }) === 'cancelled: the coins came back to you',
+  );
+  const rec = { txid: tx('r'), recovered: true, partial: true, pending: true, inputs: [inA, tx('z') + ':0'], sats: 1, fee: 0 };
+  const sorted = S.sortStored({ sent: [rec], ok: () => true, seenHas: (k) => k === inA });
+  t('a found payment with one input from elsewhere is kept, not set aside', sorted.keep.length === 1 && !sorted.quarantine.length);
+  const none = S.sortStored({ sent: [{ ...rec, inputs: [tx('z') + ':0'] }], ok: () => true, seenHas: (k) => k === inA });
+  t('...but one claiming no coin of ours at all is set aside', none.quarantine.length === 1);
+  const q = S.sortStored({
+    sent: [pay({ pending: false, height: 5 })],
+    quarantine: [{ ...pay({ hex: 'bad' }), quarantinedAt: 1 }],
+    ok: (x) => x.hex === '00',
+    seenHas: () => true,
+  });
+  t('a set-aside record whose payment has settled is no longer held', q.quarantine.length === 0 && q.keep.length === 1);
+  t(
+    'confirmations under six read as progress',
+    S.confirmWords(5) === 'confirming (5 of 6)' && S.confirmWords(6) === '6 confirmations' && S.confirmWords(1).includes('1 of 6'),
+  );
+}
+{
+  // round 8: boundaries the mutations slipped past
+  const check = () => ({
+    txid: tx('1'),
+    inputs: [inA],
+    outputs: [
+      { value: 3000, scriptPubKey: '5120' + 'dd'.repeat(32) },
+      { value: 6845, scriptPubKey: '5120' + 'ee'.repeat(32) },
+    ],
+  });
+  const scriptOf = () => '5120' + 'dd'.repeat(32);
+  t(
+    "a record whose coins differ from its transaction's is dropped (it would hold other coins)",
+    !S.validRecord(pay({ inputs: [inB] }), { check, scriptOf }) && S.validRecord(pay(), { check, scriptOf }),
+  );
+  t(
+    'a txid one character short is dropped',
+    !S.validRecord(pay({ txid: tx('1').slice(1) }), { check: () => ({ ...check(), txid: tx('1').slice(1) }), scriptOf }),
+  );
+  const st = (o, h) => S.stateOf(pay(o), { inMempool: () => true, height: h, now: 2000, sent: [] });
+  t(
+    'the hint to raise the fee comes at exactly three blocks waiting, not two',
+    /raise the fee/.test(st({ tip: 152100 }, 152103)) && !/raise the fee/.test(st({ tip: 152100 }, 152102)),
+  );
+  const c1 = pay({ hidden: true, refusedNote: 'x' });
+  S.confirm([c1], c1, 152101);
+  t('a confirmed payment is shown again and its refusal note goes', !c1.hidden && !c1.refusedNote && c1.height === 152101);
+  const asked = new Set();
+  const fx = S.onCoins({ sent: [pay({ tip: 152100 })], coins: [], asked });
+  t('the spend search starts one block before the payment was made', fx[0].from === 152099);
+  const fx0 = S.onCoins({ sent: [pay({ tip: 100 })], coins: [], asked: new Set() });
+  t('...and never before the BLAKE2b chain begins', fx0[0].from === S.FIRST_BLAKE_HEIGHT);
+  t(
+    'a payment with no coins recorded is not asked about',
+    S.onCoins({ sent: [pay({ inputs: [] })], coins: [], asked: new Set() }).length === 0,
+  );
+  const q = S.sortStored({ sent: [pay()], quarantine: [{ ...pay(), quarantinedAt: 1 }], ok: () => true, seenHas: () => true });
+  t('a set-aside record that now passes is restored once, not twice', q.keep.length === 1 && q.quarantine.length === 0);
+  const q2 = S.sortStored({
+    sent: [],
+    quarantine: [{ ...pay({ hex: 'bad' }), quarantinedAt: 7 }],
+    ok: (x) => x.hex === '00',
+    seenHas: () => true,
+  });
+  t('a record still failing keeps the time it was first set aside', q2.quarantine[0].quarantinedAt === 7);
+  const h = pay({ pending: false, replaced: tx('9') });
+  S.hide([h], h);
+  t('hiding stamps the record (so the hide wins a merge)', h.hidden && h.vAt > 0);
+  t(
+    'a payment already forgotten is not offered "forget" again',
+    !S.forgettable([pay({ abandoned: true, tip: 1 })], pay({ abandoned: true, tip: 1 }), 152100, () => false),
+  );
+  const seen = new Map([[inA, 1000]]);
+  const neg = S.recoverFromCoins({ coins: [{ key: tx('5') + ':0', value: 5000, height: 1, inputs: [inA] }], sent: [], seen });
+  t('a found payment that brought back more than went in counts 0, not a negative', neg[0].record.sats === 0);
+  const mp = S.recoverFromMempool({
+    txs: [
+      { txid: tx('6'), inputs: [tx('z') + ':0'] },
+      { txid: tx('7'), inputs: [inA, tx('z') + ':1'] },
+    ],
+    sent: [],
+    seen,
+    hitch: new Set([inA]),
+    toUs: () => 0,
+    height: 1,
+  });
+  t(
+    'a mempool transaction spending none of our coins is not ours; one with some is partial, and a Hitch coin makes it a funding',
+    mp.length === 1 && mp[0].txid === tx('7') && mp[0].partial && /Hitch/.test(mp[0].to),
   );
 }
 console.log(`\n${ok} passed, ${bad} failed`);

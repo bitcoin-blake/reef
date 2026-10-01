@@ -1,9 +1,8 @@
 # Reef, Bight, Winch and Hitch share one node (the same OPFS files and the lock 'bitcoin-blake:node' on one origin): two
-# node versions on the same files is the failure this guards against. Daily, and on every push, the published pages are
+# node versions on the same files is the failure this guards against. Daily (and after each Reef deploy, in test.yml) the published pages are
 # fetched and their node pins compared; a difference fails the run (README, Releasing, step 3).
 name: pins
 on:
-  push:
   schedule: [{ cron: '17 6 * * *' }]
   workflow_dispatch:
 jobs:

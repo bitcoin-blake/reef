@@ -1,14 +1,25 @@
 # Runs the wallet rules and the payment state machine against the real kernel, with the node, the sidestr library and the
 # engine checked out at the commits the page pins (read from reef.js), plus the release checks (versions, policy pins), the
 # page itself in headless Chromium with a fake node (test/smoke.mjs), the formatting, and that a code change bumped the version.
+# Only a green run on main is deployed to GitHub Pages (the deploy job); after it, the published apps' node pins are compared.
 name: test
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 2 }
+        with: { fetch-depth: 0 }
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - name: pins
@@ -30,14 +41,11 @@ jobs:
           SCHEMA: ${{ github.workspace }}/deps/schema
       - name: formatting
         run: npx --yes prettier@3.3.3 --check reef.js lib test
-      - name: version bumped with the code
+      - name: version bumped with the code, and upwards
         run: |
-          if git rev-parse -q --verify HEAD~1 >/dev/null; then
-            changed=$(git diff --name-only HEAD~1 HEAD)
-            if echo "$changed" | grep -qE '^(reef\.js|lib/|index\.html)' && ! echo "$changed" | grep -q '^version.json$'; then
-              echo "reef.js, lib/ or index.html changed but version.json did not: bump the version (README, Releasing)"; exit 1
-            fi
-          fi
+          base="${{ github.event.before }}"
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then base=$(git rev-parse HEAD~1 2>/dev/null || true); fi
+          [ -z "$base" ] || node tools/version-up.mjs "$base"
       - name: smoke (the page in headless Chromium, fake node)
         run: |
           npm i --no-save playwright-core@1.61.1
@@ -47,3 +55,37 @@ jobs:
           CI: '1'
           SIDESTR_LIB: ${{ github.workspace }}/deps/spec/siding/lib
           SCHEMA: ${{ github.workspace }}/deps/schema
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.d.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: the site, without the tests and the workflow
+        run: mkdir _site && cp -r index.html reef.js reef-app.js version.json og.html og.png lib README.md LICENSE _site/ && ls _site
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: _site }
+      - id: d
+        uses: actions/deploy-pages@v4
+  pins:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: the four published apps pin the same node (after this deploy is served)
+        run: |
+          want=$(node -pe 'require("./version.json").version')
+          for i in $(seq 1 30); do
+            got=$(curl -fsSL "https://bitcoin-blake.github.io/reef/version.json?nocache=$RANDOM" | node -pe 'JSON.parse(require("fs").readFileSync(0)).version' || true)
+            [ "$got" = "$want" ] && break; sleep 10
+          done
+          declare -A pin
+          for f in reef/reef.js bight/bight.js winch/winch.js hitch/hitch.js; do
+            p=$(curl -fsSL "https://bitcoin-blake.github.io/$f?nocache=$RANDOM" | grep -o 'blaketestnode@[0-9a-f]\{40\}' | sort -u)
+            echo "$f: $p"; pin[$f]=$p
+          done
+          if [ "$(printf '%s\n' "${pin[@]}" | sort -u | wc -l)" != 1 ]; then echo "::error::the apps pin different node versions"; exit 1; fi
+

@@ -29,9 +29,26 @@ The rest as before: Options for the fee rate, relays, units and value masking; *
 1. Change the code; run `npm test` (also run on every push by `.github/workflows/test.yml`, with the node, library and engine checked out at the pinned commits) (the syntax of `reef.js`, the payment state machine, the wallet against the kernel, and the release checks: `VERSION` in `reef.js`, `version.json` and `reef.js?v=` in `index.html` agree, and the security policy names the exact node, library and engine pins, including the ones the node worker itself imports).
 2. Bump `VERSION` in all three places together, so a cached page never mixes versions and open tabs are offered the new one.
 3. A new node pin goes into `reef.js`, the policy in `index.html`, and the other apps of the origin (Bight, Winch, Hitch) in the same sitting: they share the node's files and its lock.
-4. Push; GitHub Pages serves the new files within about ten minutes.
+4. Push to `main`. GitHub Pages is deployed by the workflow only when every test is green (the `deploy` job needs `test`); a red run deploys nothing. The `pins` job then waits until the new `version.json` is served and checks that Reef, Bight, Winch and Hitch pin the same node. CI also fails a code change whose `version.json` did not go up (`tools/version-up.mjs`).
+5. A new snapshot or a change to the stored layout: bump `SCHEMA` in `reef.js` only with a migration and a smoke test of it; an older copy then stays read-only (it never writes over newer records). The node keeps its context headers per snapshot base, so a new base refetches them.
+
+## Services Reef depends on
+
+| Service | What it provides | What the page says when it is down |
+|---|---|---|
+| The block mirror (melvin.me) | the snapshot, the block file and its index, context headers, the mempool seed | before sync: a stop with Retry (the first catch-up retries by itself); after sync: "the block source has not answered since …", then "no new block for …" |
+| The NIP-333 chain-tip publisher | a signed chain tip to check the mirror against | the status icon says the tip could not be checked; a disagreement stops sending |
+| Nostr relays | carry payments (kind 23503) and the tip | "no relay took it" after a send; the relays answer in Options → Network |
+| The sidestr producer with a txbt4 node | broadcasts the payments the relays carry | not detected yet: a payment then stays "waiting for a block" (see below) |
+| cdn.jsdelivr.net | the node, library and engine code, pinned by commit (the rule files also by hash) | "could not load its node code" / "the node has said nothing for a minute" |
+| GitHub Pages | the page itself | the browser's own error |
+
+Not yet said by the page: a producer that is down. Payments then wait while being announced; raising the fee does not help. Watching the producer from the page needs a heartbeat it publishes, which it does not have yet.
+
 
 ## What a tab cannot protect
+
+Safari deletes a site's storage after seven days without a visit, the key included: in Safari, back the key up before receiving anything.
 
 The wallet key is kept in this browser's storage for the site `bitcoin-blake.github.io`, which every page published from the bitcoin-blake organisation shares. A compromised dependency or a script-injection bug in any of those pages could read it. Reef's own page loads only pinned code under a strict policy, but that does not cover its neighbours. For test coins this is accepted; for anything of value the wallet would need its own origin or a key encrypted under a passphrase. A tab is only watching while it is open, and it trusts its block source as far as the signed chain tip it can reach confirms it.
 
