@@ -100,7 +100,7 @@ async function profile({
       } else body = existsSync(p) ? readFileSync(p) : null;
       if (body == null) return route.fulfill({ status: 404, body: '' });
       // the page checks its node loader by sha256: the fake loader's hash stands in for the pinned one (the real pin is
-      // checked against the commit by the release test)
+      // is the sha256 of tabnode.js at that commit)
       if (typeof p === 'string' && p.endsWith('/reef.js')) body = forSmoke(String(body), { outsideImport });
       if (outsideImport && typeof p === 'object' && p.sha === LIB_PIN && p.path === OUTSIDE) body = outsideBody();
       if (tamper && typeof p === 'string' && p.endsWith('/fake/tabnode.js')) body = String(body) + '\n// changed\n';

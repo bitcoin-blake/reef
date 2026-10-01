@@ -21,7 +21,7 @@ export const RULES_SHA256 = {
 };
 // the wallet's own code (it holds the key): every file of the sidestr library and the engine the page imports, by content
 // as well as by commit, run from the checked text with its imports rewritten to the checked copies (never fetched again by
-// the import). The release test checks the hashes against the pinned commits and that the table covers every import
+// the import). A repin recomputes the hashes from the pinned commits; the table must cover every import
 export const CODE_SHA256 = {
   'siding/lib/schnorr.mjs': '898b907460f0a6e35b657307eac92e842a4e46d9f98580bf617b2b93afc4b943',
   'siding/lib/txsign.mjs': '5f2af06056e30e6c0997c917ba05bfcce305b947a80df1c242a6b04931039875',
@@ -355,8 +355,8 @@ addEventListener('unhandledrejection', (e) => caught(e.reason));
   }
 }
 // ---- the libraries; a CDN outage is said in words, not as a dead page
-// the node's loader is the anchor of the node's own hash table, so it is checked here by its sha256 (the release test
-// recomputes it from the pinned commit) and run from that checked text, never fetched again by the import
+// the node's loader is the anchor of the node's own hash table, so it is checked here by its sha256 (recomputed from
+// the pinned commit at each repin) and run from that checked text, never fetched again by the import
 const TABNODE_SHA256 = '986a0697263158aa5cc4135cd83a672e6f4af17d10c1b5fda06b675bab792224';
 async function sha256hex(bytes) {
   return [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((b) => b.toString(16).padStart(2, '0')).join('');
