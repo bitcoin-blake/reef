@@ -3,6 +3,7 @@
 // cannot see. Needs playwright-core and a Chromium: CHROME=<path> or `npx playwright-core install chromium-headless-shell`.
 //   SCHEMA=<bitcoin-desktop/schema> SIDESTR_LIB=<siding/lib> node test/smoke.mjs
 import { readFileSync, existsSync } from 'node:fs';
+import { execSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 const H = (p) => p.replace(/^~/, homedir());
@@ -25,8 +26,9 @@ const t = (name, cond, detail = '') => {
 };
 const MAP = [
   [/^https:\/\/cdn\.jsdelivr\.net\/gh\/bitcoin-blake\/blaketestnode@[0-9a-f]+\/browser\/tabnode\.js$/, () => `${ROOT}test/fake/tabnode.js`],
-  [/^https:\/\/cdn\.jsdelivr\.net\/gh\/sidestr\/spec@[0-9a-f]+\/(.*)$/, (m) => `${SPEC}/${m[1]}`],
-  [/^https:\/\/cdn\.jsdelivr\.net\/gh\/bitcoin-desktop\/schema@[0-9a-f]+\/(.*)$/, (m) => `${SCHEMA}/${m[1]}`],
+  // the libraries at the commit the page pins (git show), as the CDN serves them: the page checks the engine's files by hash
+  [/^https:\/\/cdn\.jsdelivr\.net\/gh\/sidestr\/spec@([0-9a-f]+)\/(.*)$/, (m) => ({ dir: SPEC, sha: m[1], path: m[2] })],
+  [/^https:\/\/cdn\.jsdelivr\.net\/gh\/bitcoin-desktop\/schema@([0-9a-f]+)\/(.*)$/, (m) => ({ dir: SCHEMA, sha: m[1], path: m[2] })],
   [/^http:\/\/localhost:8799\/seed$/, () => null],
   [/^http:\/\/localhost:8799\/([^?]*)/, (m) => `${ROOT}${m[1] || 'index.html'}`],
 ];
@@ -44,9 +46,18 @@ async function profile({ libDelay = 0, startMs = 50, seed = {} } = {}) {
       if (!m) continue;
       const p = f(m);
       if (p === null) return route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>seed</title>' });
-      if (!existsSync(p)) return route.fulfill({ status: 404, body: '' });
+      let body;
+      if (typeof p === 'object') {
+        try {
+          body = execSync(`git -C ${p.dir} show ${p.sha}:${p.path}`, { stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 1 << 26 });
+        } catch {
+          body = existsSync(`${p.dir}/${p.path}`) ? readFileSync(`${p.dir}/${p.path}`) : null;
+        }
+      } else body = existsSync(p) ? readFileSync(p) : null;
+      if (body == null) return route.fulfill({ status: 404, body: '' });
       if (libDelay && !u.startsWith('http://localhost:8799')) await new Promise((r) => setTimeout(r, libDelay));
-      return route.fulfill({ status: 200, contentType: type(p), body: readFileSync(p), headers: { 'access-control-allow-origin': '*' } });
+      const name = typeof p === 'object' ? p.path : p;
+      return route.fulfill({ status: 200, contentType: type(name), body, headers: { 'access-control-allow-origin': '*' } });
     }
     if (/^https:\/\/cdn\.jsdelivr\.net\/npm\//.test(u)) return route.continue(); // qrcode, webtorrent: pinned with SRI where loaded
     return route.fulfill({ status: 404, body: '' }); // the mirror, relays over http: nothing leaves the test

@@ -4,11 +4,21 @@
 // tested against the kernel; this file is the host: storage, the node, the relays, the window. Every string that comes
 // from outside (relays, the mempool, the chain, links, options) reaches the page as text, never as markup.
 const $ = (id) => document.getElementById(id);
-export const VERSION = '2026-10-01.13';
+export const VERSION = '2026-10-01.14';
 const SCHEMA = 2; // the storage layout this version writes
-const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@448f74a64f19d5a6edabe6b02815a2c67e79374d';
+const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@9df31d246ec3ba32c6cb673875397627c6991ea5';
 const LIB = 'https://cdn.jsdelivr.net/gh/sidestr/spec@fe689e9c723f9bf43393d2dd5b6f924a701c8a18/siding/lib',
   CDN = 'https://cdn.jsdelivr.net/gh/bitcoin-desktop/schema@b8cbf6337c7450fe14ddc5bce00c7280059aab5d';
+// the engine's rule files by content as well as by commit: a CDN that served other rules would validate another chain
+// (sha256 of each file at the pinned commit; test/state-test.mjs checks them against the checkout)
+export const RULES_SHA256 = {
+  'schema/core.jsonld': 'fb5f3e2b984bfaa36eee6d5e6a6a191c3865cc09cadb4ffee16fae76a54e6ef5',
+  'schema/proof.jsonld': '0defcdc32d7421d1440628681027564a7e5590f62d351cc5f075b6cd57c4d1e0',
+  'schema/script.jsonld': 'c3a28b41ceae1c1f83288fe1755d1550989e5c5a3e51f1bf8c729a6e42db73a8',
+  'schema/chain.jsonld': 'ccbdb40f9ffd72c0686c6303ab8899f79f6c651735bdfcef431af6c23efec821',
+  'schema/validate.jsonld': '4eb6792d4330397631d14dc4a8734ddb28fdd2459a3f98fc2bf822596a95bfb0',
+  'schema/overlays/knots-blake2b.jsonld': 'b5b76b03a8b1159b4dd304a9b3b65b9a5891204f81fa0b26e4b42692d0a2022e',
+};
 const EXPLORER = 'https://mempool.guide/testnet4',
   REPO = 'https://github.com/bitcoin-blake/reef';
 const DEFAULT_RELAYS = ['wss://nos.lol', 'wss://relay.primal.net', 'wss://nostr.mom', 'wss://nostr.oxtr.dev'];
@@ -1356,27 +1366,21 @@ const saveSent = () => {
   const qStored = loadJSON(qk0, []);
   const missing = quarantineRecs.filter((x) => quarantined.has(x.txid) && !qStored.some((y) => y.txid === x.txid));
   if (missing.length && !store(qk0, JSON.stringify([...qStored, ...missing].slice(-500)))) return false; // set aside before dropping, or not at all
+  // what another tab stored is sorted by the same rule as at startup (lib/state.mjs sortStored): a record that fails it is
+  // set aside, written there before it is left out of the records, and its coins stay held
   const stored = loadJSON(sentKey(), []).filter((x) => !quarantined.has(x.txid));
-  const failing = stored.filter((x) => W.validRecord && !W.validRecord(x));
+  const sorted = W.validRecord
+    ? S.sortStored({ sent: stored, ok: W.validRecord, seenHas: (k) => seen.has(k) })
+    : { keep: stored, quarantine: [] };
+  const failing = sorted.quarantine;
   if (failing.length) {
-    const qk = 'reef:quarantine:' + scriptTag();
-    const q = loadJSON(qk, []);
-    LS.set(
-      qk,
-      JSON.stringify(
-        [...q, ...failing.filter((x) => !q.some((y) => y.txid === x.txid)).map((x) => ({ ...x, quarantinedAt: Date.now() }))].slice(-500),
-      ),
-    );
+    const q = loadJSON(qk0, []);
+    const next = [...q, ...failing.filter((x) => !q.some((y) => y.txid === x.txid))].slice(-500);
+    if (!store(qk0, JSON.stringify(next))) return false;
     for (const x of failing) quarantined.add(x.txid);
+    quarantineRecs = [...quarantineRecs, ...failing];
   }
-  sent = S.trimSent(
-    S.mergeSent(
-      sent,
-      stored.filter((x) => !failing.includes(x)),
-    ),
-    300,
-    1000,
-  );
+  sent = S.trimSent(S.mergeSent(sent, sorted.keep), 300, 1000);
   return store(sentKey(), JSON.stringify(S.forStorage(sent)));
 };
 const saveSeen = () => {
@@ -1423,14 +1427,22 @@ async function walletInit() {
   const j = async (p) => {
     const r = await fetch(`${CDN}/${p}`);
     if (!r.ok) throw new Error(`the engine's ${p} could not be fetched (${r.status})`);
-    return r.json();
+    const bytes = new Uint8Array(await r.arrayBuffer());
+    const got = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((b) => b.toString(16).padStart(2, '0')).join('');
+    if (got !== RULES_SHA256[p])
+      throw new Error(`the engine's ${p} from the CDN is not the pinned file (sha256 ${got.slice(0, 12)}…); nothing was loaded`);
+    return JSON.parse(new TextDecoder().decode(bytes));
   };
+  // the five files at once (they were fetched one after another)
+  const [core, proof, script0, chain, validate] = await Promise.all(
+    ['core', 'proof', 'script', 'chain', 'validate'].map((f) => j(`schema/${f}.jsonld`)),
+  );
   const k = createKernel({
-    core: await j('schema/core.jsonld'),
-    proof: await j('schema/proof.jsonld'),
-    script: await j('schema/script.jsonld'),
-    chain: await j('schema/chain.jsonld'),
-    validate: await j('schema/validate.jsonld'),
+    core,
+    proof,
+    script: script0,
+    chain,
+    validate,
     network: 'btc:testnet4-blake2b',
     overlays: [knotsBlake2b(await j('schema/overlays/knots-blake2b.jsonld'))],
   });
@@ -1726,32 +1738,11 @@ function onCoins(m) {
   W.height = m.height;
   W.coinsKnown = true;
   for (const c of W.coins) if (!seen.has(c.key)) seen.set(c.key, c.value);
-  // a coin whose transaction spent coins of ours, with no send recorded here (the record was lost, or the send was made elsewhere with this key): our change, recovered from the chain
-  for (const c of W.coins)
-    if (!c.coinbase && !sent.some((s) => c.key.startsWith(s.txid)) && c.inputs?.some((k) => seen.has(k))) {
-      const known = c.inputs.filter((k) => seen.has(k));
-      const inSum = known.reduce((a, k) => a + seen.get(k), 0);
-      const partial = known.length < c.inputs.length;
-      const viaHitch = c.inputs.some((k2) => hitchHeld().has(k2));
-      sent.push({
-        txid: c.key.slice(0, 64),
-        to: viaHitch ? '(a channel funding by Hitch)' : '(recovered from the chain)',
-        sats: Math.max(0, inSum - c.value),
-        fee: 0,
-        partial,
-        at: Date.now(),
-        pending: false,
-        height: c.height,
-        inputs: c.inputs,
-        tip: c.height,
-        recovered: true,
-      });
-      if (!first)
-        notify(
-          viaHitch ? 'Channel funding confirmed' : 'Payment confirmed',
-          `${partial ? 'at least ' : ''}${amt(inSum - c.value)} spent, in block ${n(c.height)} (${viaHitch ? 'by Hitch, with this key' : 'recovered from the chain'})`,
-        );
-    }
+  // a coin whose transaction spent coins of ours, with no record here: recovered from the chain (lib/state.mjs)
+  for (const { record, notice } of S.recoverFromCoins({ coins: W.coins, sent, seen, hitch: hitchHeld() })) {
+    sent.push(record);
+    if (!first) carryOut([notice]);
+  }
   const added = WL.recordReceipts(ledger, W.coins, (t) => sent.some((s) => s.txid === t));
   const undone = WL.undoneReceipts(ledger, W.coins, W.height);
   for (const r of undone) ledger.delete(r.txid);
@@ -1818,29 +1809,21 @@ function walletMempool() {
   W.mpReady = true;
   const hh = hitchHeld();
   let added = false;
+  if (!IDLE) {
+    const found = S.recoverFromMempool({
+      txs: node.mempool.txs.filter((t) => ourTx(t).spendsOurs),
+      sent,
+      seen,
+      hitch: hh,
+      toUs: (t) => ourTx(t).toUs,
+      height: node.height,
+    });
+    sent.push(...found);
+    added = found.length > 0;
+  }
   for (const t of node.mempool.txs) {
     const { spendsOurs, toUs } = ourTx(t);
-    if (sent.some((x) => x.txid === t.txid)) continue;
-    if (spendsOurs && !IDLE) {
-      const known = t.inputs.filter((k) => seen.has(k));
-      const inSum = known.reduce((a, k) => a + seen.get(k), 0);
-      sent.push({
-        txid: t.txid,
-        to: t.inputs.some((k2) => hh.has(k2)) ? '(a channel funding by Hitch)' : '(seen in the mempool)',
-        sats: Math.max(0, inSum - toUs),
-        fee: 0,
-        change: toUs,
-        partial: known.length < t.inputs.length,
-        at: Date.now(),
-        pending: true,
-        height: null,
-        inputs: t.inputs,
-        tip: node.height,
-        recovered: true,
-      });
-      added = true;
-      continue;
-    }
+    if (spendsOurs || sent.some((x) => x.txid === t.txid)) continue;
     if (toUs && !mpSeen.has(t.txid)) {
       mpSeen.add(t.txid);
       if (mpSeen.size > 500) mpSeen.delete(mpSeen.values().next().value);
@@ -3063,7 +3046,7 @@ async function copyDiagnostics() {
   }
 }
 // ---- a newer Reef: checked every hour, offered, never forced
-// "2026-10-01.13" → comparable: a stale copy at the web host never offers an older version as newer
+// "2026-10-01.14" → comparable: a stale copy at the web host never offers an older version as newer
 const versionKey = (v) => {
   const m = /^(\d{4})-(\d{2})-(\d{2})\.(\d+)$/.exec(String(v ?? ''));
   return m ? [+m[1], +m[2], +m[3], +m[4]] : null;

@@ -620,6 +620,36 @@ t(
     eng = src.match(/schema@([0-9a-f]{40})/)?.[1];
   const csp = html.match(/Content-Security-Policy" content="([^"]+)"/)?.[1] ?? '';
   {
+    // the engine's rule files: the hashes in reef.js are those of the files at the pinned commit
+    const { execSync } = await import('node:child_process');
+    const { createHash } = await import('node:crypto');
+    const { homedir } = await import('node:os');
+    const dir = process.env.SCHEMA ?? homedir() + '/bitcoin-desktop/schema';
+    const want = Object.fromEntries([...src.matchAll(/'(schema\/[a-z0-9/-]+\.jsonld)': '([0-9a-f]{64})'/g)].map((m) => [m[1], m[2]]));
+    const bad = Object.entries(want).filter(([f, h]) => {
+      try {
+        return (
+          createHash('sha256')
+            .update(execSync(`git -C ${dir} show ${eng}:${f}`, { stdio: ['ignore', 'pipe', 'ignore'] }))
+            .digest('hex') !== h
+        );
+      } catch {
+        return true;
+      }
+    });
+    const fetched = [...src.matchAll(/j\(['`](schema\/[^'`$]+)['`]\)/g)].map((m) => m[1]);
+    t(
+      'every rule file the page fetches by name has a pinned hash',
+      fetched.length >= 1 && fetched.every((f) => want[f]),
+      fetched.join(', '),
+    );
+    t(
+      'the six rule files are pinned by hash, and the hashes are those at the pinned engine commit',
+      Object.keys(want).length === 6 && !bad.length,
+      bad.map(([f]) => f).join(', '),
+    );
+  }
+  {
     const { execSync } = await import('node:child_process');
     const { homedir } = await import('node:os');
     let w = '';
@@ -738,6 +768,48 @@ t(
   S.hide(mine, h);
   const m = S.mergeSent(mine, [pay({ pending: false, replaced: tx('9'), vAt: 5 })]);
   t('a hidden row stays hidden when merged with an older copy from another tab', m[0].hidden === true);
+}
+{
+  // payments found rather than made here
+  const seen = new Map([
+    [inA, 10000],
+    [inB, 5000],
+  ]);
+  const T = tx('7');
+  const coins = [
+    { key: T + ':1', value: 3000, height: 152100, inputs: [inA, inB] },
+    { key: T + ':2', value: 1000, height: 152100, inputs: [inA, inB] },
+  ];
+  const r = S.recoverFromCoins({ coins, sent: [], seen });
+  t(
+    'a transaction found spending our coins is one record, whatever comes back counted once',
+    r.length === 1 && r[0].record.sats === 15000 - 4000 && r[0].record.change === 4000 && !r[0].record.partial,
+    JSON.stringify(r[0]?.record),
+  );
+  const p = S.recoverFromCoins({ coins: [{ key: T + ':0', value: 100, height: 1, inputs: [inA, tx('z') + ':0'] }], sent: [], seen });
+  t('with an input this wallet never saw, the amount is "at least"', p[0].record.partial && /^at least/.test(p[0].notice.body));
+  const h = S.recoverFromCoins({ coins, sent: [], seen, hitch: new Set([inB]) });
+  t('a coin Hitch held makes it a channel funding', /Hitch/.test(h[0].record.to) && h[0].notice.notice === 'Channel funding confirmed');
+  t(
+    'nothing is recovered for a payment already recorded, a mined coin, or coins never seen',
+    S.recoverFromCoins({ coins, sent: [{ txid: T }], seen }).length === 0 &&
+      S.recoverFromCoins({ coins: [{ ...coins[0], coinbase: true }], sent: [], seen }).length === 0 &&
+      S.recoverFromCoins({ coins, sent: [], seen: new Map() }).length === 0,
+  );
+  const m = S.recoverFromMempool({
+    txs: [
+      { txid: T, inputs: [inA] },
+      { txid: T, inputs: [inA] },
+    ],
+    sent: [],
+    seen,
+    toUs: () => 2000,
+    height: 5,
+  });
+  t(
+    'one in the mempool is waiting, change counted, not doubled',
+    m.length === 1 && m[0].pending && m[0].sats === 8000 && m[0].change === 2000 && m[0].tip === 5,
+  );
 }
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);
