@@ -1144,7 +1144,9 @@ t(
   const f = pay({ pending: false, failed: tx('w') });
   t(
     'did not happen, while the winner is shallow: wait before paying again',
-    /wait for 6 confirmations \(now 2\)/.test(S.stateOf(f, { inMempool: () => false, height: 152101, now: 0, sent: [f, w] })),
+    /confirming 2 of 6: wait for 6 before paying again/.test(
+      S.stateOf(f, { inMempool: () => false, height: 152101, now: 0, sent: [f, w] }),
+    ),
   );
   t(
     '...and once it is deep: pay again',

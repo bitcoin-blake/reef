@@ -4,7 +4,7 @@
 // tested against the kernel; this file is the host: storage, the node, the relays, the window. Every string that comes
 // from outside (relays, the mempool, the chain, links, options) reaches the page as text, never as markup.
 const $ = (id) => document.getElementById(id);
-export const VERSION = '2026-10-01.24';
+export const VERSION = '2026-10-01.25';
 const SCHEMA = 2; // the storage layout this version writes
 const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@c03bf56404e986bf633a44d8a7bbb530ec282cb5';
 const LIB = 'https://cdn.jsdelivr.net/gh/sidestr/spec@fe689e9c723f9bf43393d2dd5b6f924a701c8a18/siding/lib',
@@ -151,15 +151,28 @@ function sayOnce(text, urgent = false) {
   setTimeout(() => m.remove(), 15e3);
 }
 function banner(id, cls, text, actions = []) {
-  if (dismissed.has(id + '|' + cls + text)) return;
+  // put away by kind and level, not by words: a notice whose figures change every block stays put away until it gets worse
+  if (dismissed.has(id + '|' + cls)) return;
   let el = document.querySelector(`#banners [data-b="${id}"]`);
   if (el && el.dataset.text === cls + text) return;
+  const labels = actions.map(([l]) => l).join('|');
+  if (el && el.dataset.cls === cls && el.dataset.labels === labels) {
+    // the same notice with new figures: the words change in place (a focused button keeps its focus) and are not said again
+    el.dataset.text = cls + text;
+    const t = el.querySelector('span.bt');
+    t.textContent = text;
+    t.style.whiteSpace = text.includes('\n') ? 'pre-line' : '';
+    el.querySelectorAll('button.act').forEach((b, i) => (b.onclick = actions[i][1]));
+    return;
+  }
   if (!el) {
     el = document.createElement('div');
     el.dataset.b = id;
     $('banners').appendChild(el);
   }
   el.dataset.text = cls + text;
+  el.dataset.cls = cls;
+  el.dataset.labels = labels;
   el.className = 'banner ' + cls;
   el.onclick = null;
   // the notices themselves are not live regions (a region created and filled at once is often not read, and its buttons
@@ -168,12 +181,13 @@ function banner(id, cls, text, actions = []) {
   sayOnce(text, STICKY.has(id) && cls === 'bad');
   el.textContent = '';
   const t = document.createElement('span');
+  t.className = 'bt';
   t.textContent = text;
   if (text.includes('\n')) t.style.whiteSpace = 'pre-line';
   el.appendChild(t);
   for (const [label, fn] of actions) {
     const b = document.createElement('button');
-    b.className = 'q';
+    b.className = 'q act';
     b.type = 'button';
     b.textContent = label;
     b.onclick = fn;
@@ -201,7 +215,7 @@ function banner(id, cls, text, actions = []) {
     if (cls !== 'bad') x.setAttribute('aria-label', 'Hide this notice for now');
     else x.title = id === 'backup' ? 'until Reef is opened again' : 'hide this notice for now';
     x.onclick = () => {
-      dismissed.add(id + '|' + cls + text);
+      dismissed.add(id + '|' + cls);
       el.remove();
     };
     el.appendChild(x);
@@ -211,14 +225,15 @@ function banner(id, cls, text, actions = []) {
   all.sort((a, b) => rank(a) - rank(b)).forEach((b) => $('banners').appendChild(b));
 }
 const unbanner = (id) => document.querySelector(`#banners [data-b="${id}"]`)?.remove();
+let fatalShown = false;
 function showFatal(text) {
+  fatalShown = true; // the error handler does not raise a second notice after this one
   $('syncmsg').textContent = text;
   banner('fatal', 'bad', text, [['Reload', () => location.reload()]]);
 }
 
 // errors nobody caught: said, and kept (the last 20) for Copy diagnostics, instead of a page silently stuck
 const pageErrors = [];
-let fatalShown = false;
 const caught = (what) => {
   if (fatalShown) return; // a fatal notice already says what happened
   const text = String(what?.message ?? what ?? 'unknown error').slice(0, 300);
@@ -240,10 +255,14 @@ addEventListener('unhandledrejection', (e) => caught(e.reason));
   const mixKey = 'reef:mixed:' + decodeURIComponent(asked ?? '') + '>' + VERSION; // once per pair of versions, not once per tab
   if (asked && decodeURIComponent(asked) !== VERSION && !SS.get(mixKey)) {
     // a session that cannot remember the reload (storage blocked) never reloads: it would loop
-    if (SS.set(mixKey, '1') !== false && SS.get(mixKey)) {
-      // the page asked for another version of this script: refresh the cached copy of what it asked for, then reload
+    SS.set(mixKey, '1');
+    if (SS.get(mixKey)) {
+      // the page asked for another version of this script: refresh the cached copy of what it asked for, then reload with
+      // the same address (source proposals, frame flags, #hash) plus a fresh r= so no cache serves the old page again
       await fetch(document.querySelector('script[src*="reef.js"]').src, { cache: 'reload' }).catch(() => {});
-      location.replace(location.pathname + (keepQuery() ? keepQuery() + '&' : '?') + 'r=' + Date.now());
+      const u = new URL(location.href);
+      u.searchParams.set('r', String(Date.now()));
+      location.replace(u.href);
       await new Promise(() => {}); // nothing more runs in a page being replaced (no lock, no worker, no import)
     }
   }
@@ -261,12 +280,14 @@ async function loadTabnode() {
   return import(URL.createObjectURL(new Blob([bytes], { type: 'text/javascript' })));
 }
 let createTabNode, mib, secs, n, WL, S, V, T;
+let loadingOwn = false; // past the CDN: a failure now is this site's own files
 try {
   // a CDN that hangs rather than fails would leave "starting" for ever: twenty seconds, then said
   ({ createTabNode, mib, secs, n } = await Promise.race([
     loadTabnode(),
     new Promise((_, no) => setTimeout(() => no(new Error('no answer in 20 seconds')), 20e3)),
   ]));
+  loadingOwn = true;
   WL = await import(`./lib/wallet.mjs?v=${VERSION}`);
   S = await import(`./lib/state.mjs?v=${VERSION}`);
   V = await import(`./lib/view.mjs?v=${VERSION}`);
@@ -275,9 +296,10 @@ try {
   showFatal(
     /not the pinned file/.test(e.message)
       ? `Reef refused its node code: ${e.message}. Nothing was run. Reload later; if it persists, report it.`
-      : `Reef could not load its node code (${e.message}). The CDN (cdn.jsdelivr.net) may be unreachable: check the connection and reload.`,
+      : loadingOwn
+        ? `Reef could not load its own files (${e.message}). The site (${location.host}) may be unreachable or mid-release: check the connection and reload.`
+        : `Reef could not load its node code (${e.message}). The CDN (cdn.jsdelivr.net) may be unreachable: check the connection and reload.`,
   );
-  fatalShown = true; // the error handler does not raise a second notice for this
   throw e;
 }
 const T0 = Date.now();
@@ -295,6 +317,7 @@ for (const k of ['snapshot', 'blocks'])
           'Use it for this visit',
           () => {
             SS.set('reef:accept:' + k, proposed[k]);
+            LS.del('reef:vouched'); // what a tip vouched for was another source's blocks
             location.reload();
           },
         ],
@@ -400,9 +423,23 @@ const trust = () =>
   );
 let srcErrSince = null;
 let switchingKey = false;
+let firstBeat = null;
+let clockSkew = null; // this tab's clock minus the server's (ms), once a response has said its time
+// a laptop waking: the clock jumps past the timers; noticed by a tick that comes far later than it was due
+let wokeAt = 0;
+{
+  let last = Date.now();
+  setInterval(() => {
+    const now = Date.now();
+    if (now - last > 60e3) wokeAt = now;
+    last = now;
+  }, 5e3);
+}
 let lastVouched = Number(LS.get('reef:vouched')) || null;
 const SNAPSHOT_BASE = 150307;
 const vouched = () => T.vouchedHeight(node.nostr, lastVouched, SNAPSHOT_BASE);
+// no signed chain tip, or none newer than half an hour: money above the vouched height may wait longer than a block
+const tipStale = () => !node.nostr?.created_at || Date.now() / 1000 - node.nostr.created_at > 1800;
 // after the tab is up to date, only errors of the network pass by themselves (the node retries every 30 s); anything else —
 // a file, a rule, a disagreement with the signed tip — stops and is said as such
 const NETWORK =
@@ -429,9 +466,13 @@ function renderStatus() {
   else unbanner('trust');
   // the node that broadcasts payments is judged by its heartbeat (the mirror's mempool file, rewritten every pass), not by
   // how many transactions it relays: a quiet chain is not a dead broadcaster
-  // feedFileAt is this tab's own clock reading of a change it saw (after the first beat), so no skew correction applies
-  const beat = node.mempool?.feedFileAt;
-  if (node.synced && beat && Date.now() - beat > 10 * 60e3)
+  // feedFileAt is this tab's own clock reading of a change it saw, except the first beat: the file's own time, by the
+  // server's clock, put on this tab's clock with the measured skew. Just after a wake the old reading is not a silence
+  // of the broadcaster: no warning until the heartbeat has had two minutes to answer
+  const raw = node.mempool?.feedFileAt;
+  firstBeat ??= raw ?? null;
+  const beat = raw != null && raw === firstBeat && clockSkew != null ? raw + clockSkew : raw;
+  if (node.synced && beat && Date.now() - beat > 10 * 60e3 && Date.now() - wokeAt > 120e3)
     banner(
       'feed',
       'warn',
@@ -1066,6 +1107,7 @@ $('m-backup').onclick = () => openBackup();
 $('m-diag').onclick = () => copyDiagnostics();
 // ---- the tray: closing or minimizing the window keeps the node running while the tab is open, and leaves a small card to come back through; inside Glass the host is told and keeps its dock
 let unseen = 0;
+let nwReopen = false; // the node window was open when the window went to the tray
 function hideWindow() {
   if (embedded) {
     try {
@@ -1073,6 +1115,9 @@ function hideWindow() {
     } catch {}
     return;
   }
+  // the node window goes away with the window (its inert layers too) and comes back with it
+  nwReopen = $('nw').classList.contains('open');
+  closeNode();
   win.style.display = 'none';
   document.querySelector('.skip')?.setAttribute('hidden', '');
   unseen = 0;
@@ -1089,7 +1134,10 @@ function showWindow() {
   unseen = 0;
   $('tray-badge').hidden = true;
   $('tray-new').textContent = '';
-  document.querySelector('.tool button.on')?.focus();
+  if (nwReopen) {
+    nwReopen = false;
+    openNode(); // focus goes to its selected tab
+  } else document.querySelector('.tool button.on')?.focus();
 }
 function trayRefresh() {
   $('tray').title = IDLE
@@ -1191,6 +1239,7 @@ async function wipeAsk() {
     setSync('wiping the snapshot…', null);
     try {
       const r = await tn.wipe();
+      LS.del('reef:vouched'); // the blocks it vouched for are gone with the files
       if (r?.failed?.length)
         notify(
           'Not all removed',
@@ -1512,6 +1561,7 @@ $('o-ok').onclick = async () => {
     else LS.set('reef:snapshot', snap);
     if (blocks === DEFAULT_BLOCKS) LS.del('reef:blocks');
     else LS.set('reef:blocks', blocks);
+    LS.del('reef:vouched'); // what a tip vouched for was the old source's blocks
   }
   $('options').close();
   if (urlsChanged) {
@@ -1915,8 +1965,12 @@ function wireWalletPage(address) {
     updatePreview();
   };
   $('sendgo').onclick = () => {
-    if ($('sendgo').getAttribute('aria-disabled') === 'true')
-      return sayOnce($('sendout').textContent || 'Sending is not possible in this tab.'); // said, the standing note kept
+    if (IDLE) return notHere();
+    if ($('sendgo').getAttribute('aria-disabled') === 'true') {
+      // said, and the standing note that says why is shown again: a click is never answered by nothing
+      sayOnce($('sendout').textContent || 'Sending is not possible in this tab.');
+      return flash('sendout');
+    }
     sendFlow().catch((e) => sendError(e.message));
   };
   $('sendpaste').onclick = async () => {
@@ -1956,7 +2010,7 @@ function wireWalletPage(address) {
     lastUnit = $('sendunit').value;
     updatePreview();
   });
-  $('feechoose').onclick = () => (IDLE ? sayOnce('The fee rate is set in the tab that runs the wallet.') : feeFlow());
+  $('feechoose').onclick = () => (IDLE ? notHere() : feeFlow());
   applyDisplay();
   renderWallet();
   if (LS.get('reef:keynew') && !ledger.size) setTimeout(() => backupNudge(), 1500);
@@ -2178,7 +2232,8 @@ function renderWalletInner() {
     sent,
     idle: IDLE,
     canAct: canAct(),
-    signedHeight: vouched(),
+    vouched: vouched(),
+    tipStale: tipStale(),
   };
   const views = new Map(rows.map((r) => [r, V.viewRow(r, vctx)]));
   const recOf = (r) => (r.kind === 'out' ? sent.find((x) => x.txid === r.txid) : null);
@@ -2274,7 +2329,7 @@ function renderWalletInner() {
 for (const id of ['txtype', 'txsearch']) $(id).addEventListener('input', () => renderWallet());
 $('txexport').onclick = () => {
   if (!W) return;
-  if (IDLE) return notify('Not here', 'the history is exported from the tab that runs the node', false);
+  if (IDLE) return notHere();
   const rows = WL.history({
     coins: W.coins,
     sent: sent.filter((s) => !s.hidden),
@@ -2283,7 +2338,7 @@ $('txexport').onclick = () => {
     address: W.address,
     ledger,
   });
-  const vctx = { inMempool, height: W.height, now: Date.now(), sent, idle: IDLE, signedHeight: vouched() }; // as the lists
+  const vctx = { inMempool, height: W.height, now: Date.now(), sent, idle: IDLE, vouched: vouched(), tipStale: tipStale() }; // as the lists
   const csv = [V.EXPORT_HEAD, ...rows.map((r) => V.exportRow(r, vctx))].join('\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
@@ -2480,7 +2535,13 @@ async function feeFlow() {
   inp.value = Math.max(1, Math.round(Number(OPT.feeRate) || 1));
   const note = document.createElement('p');
   note.id = 'feeflow-note';
-  note.setAttribute('role', 'status');
+  // the note is the field's description, not a live region: rebuilt on every key it would be read again on every key.
+  // What is said is short, and only after a pause in typing, or at once when the rate turns valid or invalid
+  const say = document.createElement('p');
+  say.className = 'sr';
+  say.setAttribute('role', 'status');
+  let sayT,
+    wasOk = null;
   const typical = (r) => Math.ceil(r * WL.estimateVsize(1, ['5120' + '00'.repeat(32), '5120' + '00'.repeat(32)]));
   const paint = () => {
     const r = Number(inp.value);
@@ -2497,6 +2558,13 @@ async function feeFlow() {
         draftAt(r)
       : `A whole number from 1 to ${WL.MAX_RATE}.`;
     inp.setAttribute('aria-invalid', String(!okRate));
+    const short = okRate
+      ? `About ${exact(typical(r))} for a typical payment${r >= 10 && !(sug && r <= sug) ? `; much more than blocks need today` : ''}.`
+      : `A whole number from 1 to ${WL.MAX_RATE}.`;
+    clearTimeout(sayT);
+    if (wasOk !== null && wasOk !== okRate) say.textContent = short;
+    else if (wasOk !== null) sayT = setTimeout(() => (say.textContent = short), 900);
+    wasOk = okRate;
   };
   inp.oninput = paint;
   // the rate field has the focus, and Enter applies a valid rate
@@ -2507,7 +2575,7 @@ async function feeFlow() {
     }
   };
   setTimeout(() => inp.focus(), 0);
-  box.append(field, note);
+  box.append(field, note, say);
   setTimeout(paint, 0);
   if (!(await ask('Fee rate', [box], 'Use this rate', false, 'Cancel'))) return;
   const r = Number(inp.value);
@@ -2523,7 +2591,6 @@ async function sendFlow() {
   if (trust().level === 'bad') throw new Error('the block source disagrees with the signed chain tip: sending waits until that clears');
   const r = readSend();
   const { p } = r;
-  if (trust().level === 'bad') throw new Error('the block source disagrees with the signed chain tip: sending waits until that clears');
   const waitingSame = S.waitingTo(sent, r.dec.script, (a) => W.addr.decodeAddress(a)?.script);
   const lines = V.confirmLines({
     to: r.to,
@@ -3010,8 +3077,8 @@ function renderOldKeys() {
 // ---- notices: a toast in the page and, if allowed, a browser notification
 function notify(title, body, bad = /not |did not|failed|stopped/i.test(title)) {
   cprint(`· ${title}: ${body}`, 'log');
-  // behind an open dialog the toasts are inert and silent: the words are said from inside the dialog too
-  if (document.querySelector('dialog[open]')) sayOnce(`${title}: ${body}`, bad);
+  // behind an open dialog or the (modal) node window the toasts are inert and silent: the words are said from inside it too
+  if (document.querySelector('dialog[open]') || $('nw').classList.contains('open')) sayOnce(`${title}: ${body}`, bad);
   if (!$('tray').hidden) {
     unseen++;
     $('tray-badge').textContent = unseen;
@@ -3239,9 +3306,19 @@ const ANS = {
       : err(-28, 'the mempool is followed once the tab is up to date'),
   getmempoolentry: (a) => {
     const t = node.mempool?.txs.find((x) => x.txid === String(a[0] ?? '').toLowerCase());
-    return t
-      ? { txid: t.txid, vsize: t.vsize, fees: { base: t.fee / 1e8 }, time: t.at, feerate: t.feeRate, inputs: t.inputs, outputs: t.outputs }
-      : err(-5, 'Transaction not in mempool');
+    if (!t) return err(-5, 'Transaction not in mempool');
+    // the wallet's own payment: its amounts are the person's, masked like getbalance (a stranger's are public anyway)
+    const r = W ? ourTx(t) : null;
+    const own = r && (r.spendsOurs || r.toUs > 0);
+    return {
+      txid: t.txid,
+      vsize: t.vsize,
+      fees: { base: own ? hide(t.fee / 1e8) : t.fee / 1e8 },
+      time: t.at,
+      feerate: t.feeRate,
+      inputs: t.inputs,
+      outputs: own ? t.outputs.map((o) => ({ ...o, value: hide(o.value) })) : t.outputs,
+    };
   },
   getnostrtip: () =>
     node.nostr
@@ -3332,7 +3409,7 @@ const ANS = {
   'help-console': () =>
     "Type a command and press Enter; Up and Down recall earlier ones; Ctrl+L clears the window. Answers come from this tab's own node and wallet; nothing typed here sends money.",
   help: () =>
-    `== Blockchain ==\ngetbestblockhash\ngetblock "blockhash" | height\ngetblockchaininfo\ngetblockcount\ngetblockhash height\ngetsnapshotinfo\ngettxout "txid" n\ngettxoutsetinfo\n\n== Control ==\nhelp\nuptime\n\n== Mempool ==\ngetmempoolentry "txid"\ngetmempoolinfo\ngetrawmempool [true]\n\n== Network ==\ngetnetworkinfo\ngetnostrtip\ngetpeerinfo\n\n== Wallet ==\ngetaddressinfo "address"\ngetbalance\ngetnewaddress\ngetwalletinfo\nlistsent\nlistunspent`,
+    `== Blockchain ==\ngetbestblockhash\ngetblock "blockhash" | height\ngetblockchaininfo\ngetblockcount\ngetblockhash height\ngetsnapshotinfo\ngettxout "txid" n\ngettxoutsetinfo\n\n== Control ==\nhelp\nhelp-console\nuptime\n\n== Mempool ==\ngetmempoolentry "txid"\ngetmempoolinfo\ngetrawmempool [true]\n\n== Network ==\ngetnetworkinfo\ngetnostrtip\ngetpeerinfo\n\n== Wallet ==\ngetaddressinfo "address"\ngetbalance\ngetnewaddress\ngetwalletinfo\nlistsent\nlistunspent`,
 };
 cin.onkeydown = (e) => {
   if (e.key === 'ArrowUp') {
@@ -3515,7 +3592,6 @@ const newer = (a, b) => {
   for (let i = 0; i < 4; i++) if (x[i] !== y[i]) return x[i] > y[i];
   return false;
 };
-let clockSkew = null;
 async function checkVersion() {
   try {
     const r = await fetch('version.json', { cache: 'no-cache' });
@@ -3597,6 +3673,15 @@ if (embedded && document.hasStorageAccess)
     .catch(() => {});
 // the idle tab: one path, whether the probe or the loader found the node taken; it waits for the lock and offers to take over
 // a tab that does not run the wallet: what would change it stays focusable where it explains itself, and says why
+// one answer, seen and heard, for every control an idle tab keeps but cannot use
+const IDLE_DO = 'the wallet runs in another tab of this browser: do this there';
+const notHere = () => notify('Not here', IDLE_DO, false);
+function flash(id) {
+  const el = $(id);
+  el.classList.remove('flash');
+  void el.offsetWidth; // restart the animation
+  el.classList.add('flash');
+}
 function readOnlyPage() {
   for (const id of ['sendto', 'sendamt', 'sendunit', 'sendall', 'sendpaste']) $(id).disabled = true;
   for (const [id, why] of [
@@ -3606,12 +3691,12 @@ function readOnlyPage() {
   ]) {
     $(id).setAttribute('aria-disabled', 'true');
     if (why) $(id).setAttribute('aria-describedby', why);
-    $(id).title = 'the wallet runs in another tab: do this there';
+    $(id).title = IDLE_DO;
   }
   $('cin').disabled = true;
   $('cin').placeholder = 'the node runs in another tab: use its console';
   $('cin').setAttribute('aria-describedby', 'nwidle');
-  cprint('This tab is idle: the node and the wallet answer in the tab that runs them.', 'err');
+  cprint('This tab is idle: the node and the wallet answer in the tab that runs them.', 'log');
   for (const id of ['txsearch', 'txtype']) $(id).disabled = true; // no history here to search
 }
 function goIdle() {
@@ -3858,6 +3943,7 @@ async function begin() {
   }
   PROBING = false;
   if (!sole) return goIdle();
+  backupNudge(); // held while the probe ran: said now, whether the person starts the node or chooses Not now
   if (LS.get('reef:started') || RETURNING) {
     LS.set('reef:started', String(Date.now()));
     return startNode();

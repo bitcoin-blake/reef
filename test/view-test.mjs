@@ -316,8 +316,8 @@ t(
   const r = { kind: 'in', txid: tx('u'), label: 'Received', addr: 'me', sats: 5, pending: false, height: 152105, conf: 3 };
   t(
     'a receipt in a block above the signed chain tip is not counted as confirmed',
-    /has not reached it yet/.test(V.viewRow(r, { ...ctx([]), signedHeight: 152104 }).state) &&
-      /confirming/.test(V.viewRow(r, { ...ctx([]), signedHeight: 152105 }).state),
+    /has not reached it yet/.test(V.viewRow(r, { ...ctx([]), vouched: 152104 }).state) &&
+      /confirming/.test(V.viewRow(r, { ...ctx([]), vouched: 152105 }).state),
   );
 }
 {
@@ -334,7 +334,7 @@ t(
   const conf = { kind: 'in', txid: tx('v'), label: 'Received', addr: 'me', sats: 5, pending: false, height: 152100, conf: 2 };
   t(
     'with no signed tip (null), confirmations are shown as usual, not "not yet vouched for"',
-    /confirming/.test(V.viewRow(conf, { ...ctx([]), signedHeight: null }).state),
+    /confirming/.test(V.viewRow(conf, { ...ctx([]), vouched: null }).state),
   );
   const rn = pay({ refusedNote: 'x' }),
     rf = pay({ refused: 'y', replaces: tx('0') });
@@ -342,15 +342,17 @@ t(
     'short states: refused here, a higher fee not accepted',
     V.viewRow(row(rn), ctx([rn])).short === 'not accepted here' && V.viewRow(row(rf), ctx([rf])).short === 'higher fee not accepted',
   );
-  const above = V.viewRow(conf, { ...ctx([]), signedHeight: 152099 });
+  const above = V.viewRow(conf, { ...ctx([]), vouched: 152099 });
+  t('a block above the signed tip reads "in a block, being double-checked" in a list', above.short === 'in a block, being double-checked');
   t(
-    'a block above the signed tip reads "in a block, being double-checked" in a list, flagged',
-    above.short === 'in a block, being double-checked' && above.unvouched === true,
+    'above the signed tip: "usually within a block" only while the tip moves',
+    /usually within a block/.test(above.state) &&
+      /has not moved for a while/.test(V.viewRow(conf, { ...ctx([]), vouched: 152099, tipStale: true }).state),
   );
   const struck = pay({ pending: false, replaced: tx('e') });
   t(
     'a struck row keeps its own words even above the signed tip',
-    /^did not happen/.test(V.viewRow({ ...row(struck), height: 152101 }, { ...ctx([struck]), signedHeight: 152099 }).state),
+    /^did not happen/.test(V.viewRow({ ...row(struck), height: 152101 }, { ...ctx([struck]), vouched: 152099 }).state),
   );
   const rows = [{ kind: 'in', txid: tx('i'), label: 'Received', addr: 'a', sats: 1, pending: false }, row(pay())];
   t(
@@ -389,6 +391,10 @@ t(
   t(
     'nothing spendable names money in blocks still being double-checked, and does not blame a waiting payment for it',
     /double check|second check/.test(V.noCoinsWhy(b, { money })) && !/payment of yours/.test(V.noCoinsWhy(b, { money })),
+  );
+  t(
+    'nothing spendable while change is on its way back blames the waiting payment',
+    /payment of yours/.test(V.noCoinsWhy({ immature: 0, outgoing: 0, pending: 800, returning: 800, elsewhere: 0 }, { money })),
   );
   t('nothing at all: no coins yet', /No coins yet/.test(V.noCoinsWhy({ immature: 0, outgoing: 0, pending: 0, elsewhere: 0 }, { money })));
   t(
