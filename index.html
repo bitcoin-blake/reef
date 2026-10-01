@@ -105,6 +105,13 @@ body.idle #p-send .form, body.idle #sendgo { opacity:.6 }
 body.idle #st-conn { opacity:.4 } .banner button.more { display:none } .addr .why { display:block; font-size:11px; color:var(--mut); white-space:normal }
 @media (prefers-color-scheme: dark) { .tool button.on { border-bottom-color:#5aa9ec } [role=tab][aria-selected=true] { box-shadow:inset 0 -3px 0 #5aa9ec } }
 @media (max-width:760px) { .banner button.more { display:inline-block } #nwtabs { scrollbar-width:thin } #nwtabs div { padding:5px 9px } .form .lbl { text-align:left } }
+
+/* round six */
+#toastwrap { position:fixed; right:18px; bottom:18px; z-index:60; display:flex; flex-direction:column; gap:8px; max-width:380px } #toastwrap #toasts, #toastwrap #toasts-alert { position:static; display:flex; flex-direction:column; gap:8px }
+body.idle #st-conn { opacity:.62 } :root { --off:#6b6b6b } @media (prefers-color-scheme: dark) { :root { --off:#9a9da2 } }
+.dd [aria-disabled=true]:focus-visible::after { content:' — ' attr(title); font-size:11px; color:var(--mut); white-space:normal }
+.txl .r .addr { white-space:normal; overflow-wrap:anywhere }
+@media (max-width:760px) { #toastwrap { left:8px; right:8px; max-width:none } }
 </style>
 </head>
 <body>
@@ -185,7 +192,7 @@ The node answers from this tab's own validated state; wallet commands answer for
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js" integrity="sha384-8FWZA6BGMXhsfO+BLtrJK0We6gg5o1JyO8xQm6peWDEUs17ACA5ziE/NIAkl9z2k" crossorigin="anonymous"></script>
-<script type="module" src="reef.js?v=2026-10-01.7"></script>
+<script type="module" src="reef.js?v=2026-10-01.9"></script>
 <dialog id="about" aria-labelledby="about-title"><div class="t" id="about-title">About Reef</div><div class="b"><div><img src="og.png" alt="" style="width:64px;height:64px;object-fit:cover;border-radius:12px;border:1px solid var(--line2)"></div><div>
 <p><b>Reef 0.1</b> · a Bitcoin node in a browser tab, for txbt4, the BLAKE2b testnet4.</p>
 <p>It looks like Knots and runs a chain Knots defined, but it is not Knots. The tab fetches the fork-point UTXO snapshot, recomputes its hashes, validates every block since the fork and follows the chain tip. The wallet is one key kept in this tab.</p>
@@ -240,6 +247,6 @@ The node answers from this tab's own validated state; wallet commands answer for
 <p id="wl-space" class="tiny"></p>
 <p class="tiny mut">Nothing leaves the tab except requests for the chain and, when you pay, the signed payment. The wallet key is made here and stays in this browser: back it up before you receive coins.</p>
 </div><div class="f"><button id="wl-later" type="button">Not now</button><button id="wl-start" type="button" class="p">Start</button></div></dialog>
-<div id="toasts" role="status" aria-live="polite"></div><div id="toasts-alert" class="toasts2" role="alert" aria-live="assertive"></div>
+<div id="toastwrap"><div id="toasts-alert" role="alert" aria-live="assertive"></div><div id="toasts" role="status" aria-live="polite"></div></div>
 </body>
 </html>

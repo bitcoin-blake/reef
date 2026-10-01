@@ -110,7 +110,9 @@ t('an idle tab says the waiting is followed elsewhere', /followed in the tab tha
 { const sent = [pay()]; const held = sent[0]; const merged = S.mergeSent(sent, [pay({ lastPub: 9e12 })]); held.replacedBy = tx('2');
   t('a record held across a dialog is the same object after a save: what the flow writes is not lost', merged[0] === held && merged[0].replacedBy === tx('2')); }
 { const sent = [pay({ pending: false, replaced: tx('9'), vAt: 1 })]; const fx = S.onCoins({ sent, coins: [{ key: tx('1') + ':1', value: 6845, height: 152120 }], height: 152120 });
-  t('a payment marked as not having happened whose change appears is confirmed after all, with a warning about paying twice', !sent[0].pending && sent[0].height === 152120 && !sent[0].replaced && fx.some((e) => /paid twice/.test(e.body))); }
+  t('a payment marked as not having happened whose change appears is confirmed after all, said without an alarm when nothing was paid again', !sent[0].pending && sent[0].height === 152120 && !sent[0].replaced && fx.some((e) => e.notice === 'A payment was mined after all' && !/paid twice/.test(e.body)));
+  const sent2 = [pay({ pending: false, replaced: tx('9'), vAt: 1 }), pay({ txid: tx('5'), inputs: [inB], at: 5000 })]; const fx2 = S.onCoins({ sent: sent2, coins: [{ key: tx('1') + ':1', value: 6845, height: 152120 }], height: 152120 });
+  t('...and with the warning when the same address was paid again since with other coins', fx2.some((e) => /paid twice/.test(e.body) && e.bad)); }
 { const sent = [pay({ pending: false, height: 152000, vAt: 1 })]; const fx = S.onCoins({ sent, coins: [{ key: inA, value: 10000, height: 151990 }], height: 152120 });
   t('a confirmation undone by a reorganisation deeper than six blocks is noticed when its coins come back', sent[0].pending && sent[0].tip === 152120 && fx.some((e) => e.notice === 'A block was undone')); }
 { const a = [pay({ pending: false, height: 5, vAt: 10 })]; const stored = [pay({ abandoned: true, vAt: 5 })]; const m = S.mergeSent(a, stored);
@@ -118,6 +120,21 @@ t('an idle tab says the waiting is followed elsewhere', /followed in the tab tha
 { const own = '5120' + 'ee'.repeat(32); const check = () => ({ txid: tx('1'), inputs: [inA], outputs: [{ value: 3000, scriptPubKey: '5120' + 'dd'.repeat(32) }, { value: 6845, scriptPubKey: own }] }); const scriptOf = () => '5120' + 'dd'.repeat(32);
   t('a record must match its own transaction in change and kind too', S.validRecord(pay(), { check, scriptOf, ownScript: own }) && !S.validRecord(pay({ change: 9999 }), { check, scriptOf, ownScript: own }) && !S.validRecord(pay({ kind: 'cancel' }), { check, scriptOf, ownScript: own }));
   const selfCheck = () => ({ txid: tx('1'), inputs: [inA], outputs: [{ value: 3000, scriptPubKey: own }, { value: 6845, scriptPubKey: own }] }); const old = pay({ toScript: own, to: 'tb1pme', self: false }); t('an older record of a payment to oneself, not marked so, is corrected rather than rejected', S.validRecord(old, { check: selfCheck, scriptOf: () => own, ownScript: own }) && old.self === true); }
+// ---- round six: storage
+{ const rec = pay({ publishing: true, asked: true }); const out = S.forStorage([rec]); t('passing state (publishing, asked) is never written to storage', !('publishing' in out[0]) && !('asked' in out[0]) && rec.publishing === true); }
+{ const good = pay(), bad = pay({ txid: tx('7'), hex: undefined, inputs: ['ff'.repeat(32) + ':0'] }), wasBad = pay({ txid: tx('8'), quarantinedAt: 1 });
+  const r = S.sortStored({ sent: [good, bad], quarantine: [wasBad, bad], ok: () => true, seenHas: (k) => k === inA });
+  t('a record claiming coins this wallet never saw is set aside once; one set aside earlier that now passes comes back', r.keep.map((x) => x.txid).sort().join() === [tx('1'), tx('8')].sort().join() && r.quarantine.length === 1 && r.quarantine[0].txid === tx('7') && !('quarantinedAt' in r.keep.find((x) => x.txid === tx('8'))));
+  const again = S.sortStored({ sent: r.keep, quarantine: r.quarantine, ok: () => true, seenHas: (k) => k === inA }); t('sorting again changes nothing (no churn)', again.keep.length === 2 && again.quarantine.length === 1 && again.quarantine[0].quarantinedAt === r.quarantine[0].quarantinedAt); }
+// ---- round six (ux): what 'mined after all' means, and a forgotten winner undone
+{ const P = pay({ pending: false, replaced: tx('2'), vAt: 1, replacedBy: tx('2') }), C = pay({ txid: tx('2'), kind: 'cancel', self: true, sats: 0, change: 9600, replaces: tx('1'), pending: false, height: 152110, vAt: 1 });
+  const sent = [P, C]; S.confirm(sent, P, 152110); const fx = S.onCoins({ sent, coins: [{ key: tx('2') + ':0', value: 9600, height: 152111 }], height: 152112 });
+  t('a cancel marked too late whose output appears: the payment was cancelled after all, not paid twice', fx.some((e) => e.notice === 'Payment cancelled after all') && !fx.some((e) => /paid twice/.test(e.body ?? ''))); }
+{ const P = pay({ pending: false, replaced: tx('2'), vAt: 1, replacedBy: tx('2') }), R = pay({ txid: tx('2'), replaces: tx('1'), pending: false, height: 152110, vAt: 1 }); const sent = [P, R];
+  const fx = S.onCoins({ sent, coins: [{ key: tx('1') + ':1', value: 6845, height: 152111 }], height: 152112 }); t('an earlier version of a raised payment mined: made once, no alarm', fx.some((e) => e.notice === 'An earlier version was mined' && !e.bad)); }
+{ const A = pay({ txid: tx('a'), abandoned: true, inputs: [inA] }), B = pay({ txid: tx('b'), to: 'tb1py', inputs: [inA, inB], at: 3000 }); const sent = [A, B];
+  S.onCoins({ sent, coins: [{ key: tx('a') + ':1', value: 6845, height: 152110 }] }); S.onRecheck(sent, tx('a'), { found: false }, 152111);
+  t('a forgotten payment that won and was then undone is forgotten again (not published again)', A.pending && A.abandoned && S.republishDue(sent, 1e13).every((x) => x.txid !== tx('a'))); }
 // ---- the page's version and version.json agree (a release that forgets one shows a false update banner)
 { const { readFileSync } = await import('node:fs'); const src = readFileSync(new URL('../reef.js', import.meta.url), 'utf8'); const v = src.match(/export const VERSION = '([^']+)'/)?.[1]; const j = JSON.parse(readFileSync(new URL('../version.json', import.meta.url), 'utf8'));
   t('reef.js VERSION matches version.json', v && v === j.version, `${v} vs ${j.version}`);
