@@ -4,7 +4,7 @@
 // tested against the kernel; this file is the host: storage, the node, the relays, the window. Every string that comes
 // from outside (relays, the mempool, the chain, links, options) reaches the page as text, never as markup.
 const $ = (id) => document.getElementById(id);
-export const VERSION = '2026-10-01.26';
+export const VERSION = '2026-10-01.27';
 const SCHEMA = 2; // the storage layout this version writes
 const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@c03bf56404e986bf633a44d8a7bbb530ec282cb5';
 const LIB = 'https://cdn.jsdelivr.net/gh/sidestr/spec@fe689e9c723f9bf43393d2dd5b6f924a701c8a18/siding/lib',
@@ -1291,6 +1291,7 @@ function fillOptions(
   $('o-snapshot').value = urls.snapshot;
   $('o-blocks').value = urls.blocks;
   $('o-feerate').value = o.feeRate;
+  optRatePaint();
   $('o-notify').checked = !!o.notify;
   $('o-torrent').checked = !!o.torrent;
   const mr = suggestedRate();
@@ -1385,7 +1386,16 @@ $('o-reset').onclick = () => fillOptions(OPT_DEFAULTS, { snapshot: DEFAULT_SNAP,
 $('o-feeuse').onclick = () => {
   const r = suggestedRate();
   if (r != null) $('o-feerate').value = r;
+  optRatePaint();
 };
+// the fee rate in Options is the same setting as the fee dialog's, said the same way (no live region: it is the field's
+// description, read when the field is reached)
+function optRatePaint() {
+  const { ok, text } = rateNote($('o-feerate').value);
+  $('o-feenote').textContent = text;
+  $('o-feerate').setAttribute('aria-invalid', String(!ok));
+}
+$('o-feerate').addEventListener('input', optRatePaint);
 $('o-allow').onclick = () => {
   Notification.requestPermission().then(() => fillOptions());
 };
@@ -1472,6 +1482,36 @@ $('o-ok').onclick = async () => {
     $('o-err').textContent = `The fee rate must be a whole number from 1 to ${WL.MAX_RATE} sat/vB.`;
     return;
   }
+  const snap = $('o-snapshot').value.trim() || DEFAULT_SNAP,
+    blocks = $('o-blocks').value.trim() || DEFAULT_BLOCKS;
+  const urlsChanged = snap !== (LS.get('reef:snapshot') ?? DEFAULT_SNAP) || blocks !== (LS.get('reef:blocks') ?? DEFAULT_BLOCKS);
+  if (urlsChanged && (!/^https:\/\//.test(snap) || !/^https:\/\//.test(blocks))) {
+    optTab('main');
+    $('o-err').textContent = 'Only https:// addresses can be used for the snapshot and the blocks.';
+    return;
+  }
+  // everything else the dialog changed, stored the same way whether or not the key changes too (a key switch reloads)
+  const storeRest = () => {
+    OPT.feeRate = rate;
+    const turnedOn = !OPT.notify && $('o-notify').checked;
+    OPT.notify = $('o-notify').checked;
+    OPT.torrent = $('o-torrent').checked;
+    OPT.seed = $('o-seed').checked;
+    tn.setTorrent(OPT.torrent);
+    tn.setSeed(OPT.seed);
+    OPT.relays = relays.length ? relays : DEFAULT_RELAYS;
+    OPT.unit = $('o-unit').value;
+    OPT.mask = $('o-mask').checked;
+    saveOptions();
+    if (urlsChanged) {
+      if (snap === DEFAULT_SNAP) LS.del('reef:snapshot');
+      else LS.set('reef:snapshot', snap);
+      if (blocks === DEFAULT_BLOCKS) LS.del('reef:blocks');
+      else LS.set('reef:blocks', blocks);
+      LS.del('reef:vouched'); // what a tip vouched for was the old source's blocks
+    }
+    return turnedOn;
+  };
   if (key && key !== W.key) {
     const waiting = [
       ...sent.filter((s) => s.pending && !s.abandoned),
@@ -1505,8 +1545,11 @@ $('o-ok').onclick = async () => {
             ? 'The current key was made in this browser and has never been used.'
             : backedUp()
               ? 'The current key is backed up.'
-              : 'The current key is NOT backed up. Back it up first unless it is empty.',
-        'Coins sent to a key before the snapshot at block 150,307 are not shown by a tab.',
+              : b
+                ? `The current key is NOT backed up, and it holds ${exact(b)}: back it up first.`
+                : 'The current key is NOT backed up. Back it up first unless it is empty.',
+        // said once: the balance line above already says it when the key holds nothing this tab can see
+        ...(b ? ['Coins sent to a key before the snapshot at block 150,307 are not shown by a tab.'] : []),
         ...(forgotten.length
           ? [
               `${forgotten.length} forgotten payment(s) may still be mined, and after the switch nothing spends their coins first. To settle one, pay yourself from this key before switching.`,
@@ -1516,7 +1559,31 @@ $('o-ok').onclick = async () => {
       ],
       'Switch',
       !backedUp() && !(fresh && W.coinsKnown),
+      'Cancel',
+      false,
+      false,
+      backedUp() || fresh ? null : { label: 'Back up first…', value: 'backup', focus: !!b },
     );
+    if (ok === 'backup') {
+      // the other changes are stored now; once the backup dialog closes, Options comes back on the Wallet tab with the
+      // new key still in its field, so the switch is one OK away
+      storeRest();
+      applyDisplay();
+      const { generated, use } = $('o-importkey').dataset;
+      openBackup();
+      $('backup').addEventListener(
+        'close',
+        () => {
+          openOptions('wallet');
+          $('o-importkey').value = raw;
+          if (generated) $('o-importkey').dataset.generated = generated;
+          if (use) $('o-importkey').dataset.use = use;
+          $('o-importkey').focus();
+        },
+        { once: true },
+      );
+      return;
+    }
     if (!ok) return;
     const old = (() => {
       try {
@@ -1540,6 +1607,7 @@ $('o-ok').onclick = async () => {
     switchingKey = true; // from here the page leaves on purpose with a new key: nothing may write the old one back
     if (restoring) LS.set('reef:backup:' + W.signer.pubkeyOf(key).slice(0, 16), String(Date.now()));
     LS.del('reef:keynew');
+    storeRest(); // the dialog's other changes are not lost to the reload
     location.search = keepQuery();
     return;
   }
@@ -1557,35 +1625,10 @@ $('o-ok').onclick = async () => {
     applyDisplay();
     return;
   }
-  OPT.feeRate = rate;
-  const turnedOn = !OPT.notify && $('o-notify').checked;
-  OPT.notify = $('o-notify').checked;
-  OPT.torrent = $('o-torrent').checked;
-  OPT.seed = $('o-seed').checked;
-  tn.setTorrent(OPT.torrent);
-  tn.setSeed(OPT.seed);
-  OPT.relays = relays.length ? relays : DEFAULT_RELAYS;
-  OPT.unit = $('o-unit').value;
-  OPT.mask = $('o-mask').checked;
-  saveOptions();
+  const turnedOn = storeRest();
   if (turnedOn && 'Notification' in window && Notification.permission === 'default') {
     LS.set('reef:notifyasked', '1');
     Notification.requestPermission().catch(() => {});
-  }
-  const snap = $('o-snapshot').value.trim() || DEFAULT_SNAP,
-    blocks = $('o-blocks').value.trim() || DEFAULT_BLOCKS;
-  const urlsChanged = snap !== (LS.get('reef:snapshot') ?? DEFAULT_SNAP) || blocks !== (LS.get('reef:blocks') ?? DEFAULT_BLOCKS);
-  if (urlsChanged) {
-    if (!/^https:\/\//.test(snap) || !/^https:\/\//.test(blocks)) {
-      optTab('main');
-      $('o-err').textContent = 'Only https:// addresses can be used for the snapshot and the blocks.';
-      return;
-    }
-    if (snap === DEFAULT_SNAP) LS.del('reef:snapshot');
-    else LS.set('reef:snapshot', snap);
-    if (blocks === DEFAULT_BLOCKS) LS.del('reef:blocks');
-    else LS.set('reef:blocks', blocks);
-    LS.del('reef:vouched'); // what a tip vouched for was the old source's blocks
   }
   $('options').close();
   if (urlsChanged) {
@@ -1701,6 +1744,9 @@ const HIDDEN = '<span aria-hidden="true">•••••</span><span class="sr">
 const moneyHtml = (sats) => (OPT.mask ? HIDDEN : esc(WL.formatAmount(sats, OPT.unit)));
 const amtHtml = (sats) => (OPT.mask ? HIDDEN + ' ' + esc(unit().label) : esc(amt(sats)));
 const exact = (sats) => `${WL.formatAmount(sats, OPT.unit)} ${unit().label}`; // what a person confirms is never masked
+// the Send page speaks in the unit its amount field is set to: what is typed, previewed and confirmed is one unit
+const sendUnit = () => (WL.UNITS[$('sendunit').value] ? $('sendunit').value : OPT.unit);
+const exactSend = (sats) => `${WL.formatAmount(sats, sendUnit())} ${WL.UNITS[sendUnit()].label}`;
 // in the tab's mempool *from a node* (the estate's feed), not merely echoed back by a relay: only that says a node has it
 const inMempool = (txid) => !!node.mempool?.txs.some((t) => t.txid === txid && (t.fed ?? true));
 function applyDisplay() {
@@ -1719,9 +1765,7 @@ function applyDisplay() {
       : sug && sug > rate
         ? `Payments waiting now pay about ${sug} sat/vB; choose Change… to match, or keep ${rate} and wait longer.`
         : 'A block comes about every 20 minutes; the lowest rate, 1 sat/vB, is enough today.';
-  if (WL)
-    $('feerate').textContent =
-      `about ${exact(Math.ceil(rate * WL.estimateVsize(1, ['5120' + '00'.repeat(32), '5120' + '00'.repeat(32)])))} for a typical payment (${rate} sat/vB)`;
+  if (WL) feeLine();
   if (W) renderWallet();
 }
 // the wallet's code and the chain's rules: the sidestr library and the engine at their pinned commits, the rule files
@@ -2240,6 +2284,7 @@ function walletMempool() {
 }
 // the balance and the history; "…" until the node has answered, never a zero it does not know
 let lastAvail = null;
+let unhideT;
 function renderWallet() {
   if (!W) return;
   const fx = document.activeElement?.dataset?.tx
@@ -2302,7 +2347,7 @@ function renderWalletInner() {
     ? recent
         .map((r) => {
           const v = views.get(r);
-          return `<div class="r" role="listitem"><span aria-hidden="true">${v.icon}</span><span title="${v.block ? 'block ' + esc(n(v.block)) : ''}">${esc(say(v.short))}</span><span class="addr" title="${esc(r.addr)}">${txLink(r.txid, V.recentLabel(r))}</span><span class="amt ${r.pending ? 'pend' : r.kind === 'in' ? 'in' : 'out'}">${amtHtml(v.sats)}</span></div>`;
+          return `<div class="r" role="listitem"><span aria-hidden="true">${v.icon}</span><span title="${v.block ? 'block ' + esc(n(v.block)) : ''}">${esc(say(v.short))}</span><span class="addr" title="${esc(r.addr)}">${txLink(r.txid, V.recentLabel(r))}</span><span class="amt ${r.pending ? 'pend' : r.kind === 'in' ? 'in' : 'out'}">${amtHtml(v.sats)}${V.feeOnly(r, v) ? '<span class="mut"> (fee)</span>' : ''}</span></div>`;
         })
         .join('')
     : `<div class="r" role="listitem"><span></span><span class="mut" style="grid-column:2/5">${esc(V.recentEmpty({ known, idle: IDLE, any: rows.length > 0 }))}${known && !IDLE && !rows.length ? ': <a href="#" data-go2="receive">your address is on the Receive page</a>' : ''}</span></div>`;
@@ -2314,7 +2359,18 @@ function renderWalletInner() {
         showPage(a.dataset.go2);
       };
     });
-  const shown = V.filterRows(rows, { type: $('txtype').value, query: $('txsearch').value, sent });
+  const shown = V.filterRows(rows, {
+    type: $('txtype').value,
+    query: $('txsearch').value,
+    sent,
+    shown: (r) => {
+      const v = views.get(r);
+      const a = Math.abs(v.sats);
+      // amounts are searched only when they are shown (Mask values hides them from the search too)
+      const amt = OPT.mask ? '' : `${WL.formatAmount(a, OPT.unit, { grouping: false })} ${WL.formatAmount(a, OPT.unit)} ${a}`;
+      return `${say(v.short)} ${say(v.state)} ${v.tag} ${amt} ${V.feeOnly(r, v) ? 'fee' : ''}`;
+    },
+  });
   $('txrows').innerHTML = shown.length
     ? shown
         .map((r) => {
@@ -2337,9 +2393,9 @@ function renderWalletInner() {
                 `<button class="q sm" data-act="${k}" data-tx="${esc(s.txid)}" title="${esc(btn[k][2])}" aria-label="${esc(k === 'hide' ? `Hide ${who} from the list` : `${btn[k][1]} ${who}`)}">${btn[k][0]}</button>`,
             )
             .join('');
-          return `<tr><td class="when">${r.at ? esc(when(r.at)) : '—'}</td><td title="${esc(say(v.state))}"><span aria-hidden="true">${v.icon}</span><span class="state" aria-hidden="true">${esc(
+          return `<tr><td class="when">${r.at ? txLink(r.txid, when(r.at)) : txLink(r.txid, '—')}</td><td title="${esc(say(v.state))}"><span aria-hidden="true">${v.icon}</span><span class="state" aria-hidden="true">${esc(
             say(v.short),
-          )}</span><span class="sr">${esc(say(v.state))}</span></td><td>${v.block ? esc(n(v.block)) : '—'}</td><td>${esc(r.label)}</td><td class="addr" title="${esc(r.addr)}">${txLink(r.txid, r.kind === 'in' || r.label === 'Payment to yourself' ? 'your address' : V.shortAddr(r.addr))}</td><td class="amt ${r.kind === 'in' ? 'in' : 'out'}${v.struck ? ' struck' : ''}">${moneyHtml(v.sats)}<span class="cardunit"> ${esc(unit().label)}</span>${r.label === 'Payment to yourself' && !v.struck ? '<span class="mut"> (fee)</span>' : ''}<span class="sr">${v.tag ? esc(` (${v.tag})`) : ''}</span></td><td class="acts">${acts}</td></tr>`;
+          )}</span><span class="sr">${esc(say(v.state))}</span></td><td>${v.block ? esc(n(v.block)) : '—'}</td><td>${esc(r.label)}</td><td class="addr" title="${esc(r.addr)}">${esc(r.kind === 'in' || r.label === 'Payment to yourself' ? 'your address' : V.shortAddr(r.addr))}</td><td class="amt ${r.kind === 'in' ? 'in' : 'out'}${v.struck ? ' struck' : ''}">${moneyHtml(v.sats)}<span class="cardunit"> ${esc(unit().label)}</span>${V.feeOnly(r, v) ? '<span class="mut"> (fee)</span>' : ''}<span class="sr">${v.tag ? esc(` (${v.tag})`) : ''}</span></td><td class="acts">${acts}</td></tr>`;
         })
         .join('')
     : `<tr><td colspan="7" class="mut">${IDLE ? 'shown in the tab that runs the node' : known ? (rows.length ? 'nothing matches' : 'no transactions since the snapshot') : 'waiting for the node'}</td></tr>`;
@@ -2362,6 +2418,27 @@ function renderWalletInner() {
                     S.hide(sent, s);
                     saveSent();
                     renderWallet();
+                    // hiding is undone from a notice, for a while, with the focus on its Undo
+                    const undo = () => {
+                      unbanner('unhide');
+                      S.unhide(sent, s);
+                      saveSent();
+                      renderWallet();
+                      $('txsearch').focus();
+                    };
+                    dismissed.delete('unhide|info'); // each hide is its own notice
+                    banner(
+                      'unhide',
+                      'info',
+                      `Hidden from the list: ${b
+                        .getAttribute('aria-label')
+                        .replace(/^Hide /, '')
+                        .replace(/ from the list$/, '')}.`,
+                      [['Undo', undo]],
+                    );
+                    document.querySelector('#banners [data-b=unhide] button.act')?.focus();
+                    clearTimeout(unhideT);
+                    unhideT = setTimeout(() => unbanner('unhide'), 30e3);
                   })
         ).catch((e) => notify('Not done', e.message, true));
       };
@@ -2484,9 +2561,18 @@ function allAmountTo(destSpk) {
 }
 // a leftover under dust that goes to the fee, in sat (0 when there is none)
 const leftoverOf = (r) => (!r.all && !r.p.change ? Math.max(0, r.p.fee - Math.ceil(r.rate * r.p.vsize)) : 0);
+// the Transaction Fee line: what a typical payment costs, or, once a payment is drafted, what this one costs (one figure on
+// the page, never two different fees side by side)
+function feeLine(r = null) {
+  const rate = Math.max(1, Math.round(Number(OPT.feeRate) || 1));
+  $('feerate').textContent = r
+    ? `${exactSend(r.p.fee - leftoverOf(r))} for this payment (${r.p.vsize} vB at ${r.rate} sat/vB)`
+    : `about ${exact(Math.ceil(rate * WL.estimateVsize(1, ['5120' + '00'.repeat(32), '5120' + '00'.repeat(32)])))} for a typical payment (${rate} sat/vB)`;
+}
 function updatePreview() {
   const el = $('sendpreview');
   if (!W) return;
+  feeLine();
   if (IDLE) {
     el.textContent = '';
     return;
@@ -2503,14 +2589,15 @@ function updatePreview() {
   try {
     const r = readSend();
     const fg = reuseNote(r.p);
+    if (!r.self) feeLine(r);
     el.className = 'tiny';
     el.textContent = r.self
-      ? `${fg ? fg + ' ' : ''}To yourself: only the fee leaves the wallet (${exact(r.p.fee)}). Nothing else changes.`
-      : `${fg ? fg + ' ' : ''}${r.all ? 'Everything: ' : ''}${exact(r.p.amount)} to the address, ${exact(r.p.fee)} fee, ${exact(r.p.amount + r.p.fee)} in all${r.p.change ? `; ${exact(r.p.change)} comes back as change` : ''}.` +
+      ? `${fg ? fg + ' ' : ''}To yourself: only the fee leaves the wallet (${exactSend(r.p.fee)}). Nothing else changes.`
+      : `${fg ? fg + ' ' : ''}${r.all ? 'Everything: ' : ''}${exactSend(r.p.amount)} to the address, ${exactSend(r.p.fee)} fee, ${exactSend(r.p.amount + r.p.fee)} in all${r.p.change ? `; ${exactSend(r.p.change)} comes back as change` : ''}.` +
         (leftoverOf(r)
-          ? ` ${exact(leftoverOf(r))} of the fee is a leftover too small to come back as change` +
+          ? ` ${exactSend(leftoverOf(r))} of the fee is a leftover too small to come back as change` +
             (emptiesWallet(r)
-              ? `: this empties the wallet, and Send everything would pay the recipient ${exact(allAmountTo(r.dec.script) ?? r.p.amount)} instead.`
+              ? `: this empties the wallet, and Send everything would pay the recipient ${exactSend(allAmountTo(r.dec.script) ?? r.p.amount)} instead.`
               : '.')
           : '');
     if (r.all) {
@@ -2534,7 +2621,7 @@ function updatePreview() {
           changeSpk: W.script,
           all: true,
         });
-        most = ` To send all you can, press Send everything (${exact(all.amount)} after the fee).`;
+        most = ` To send all you can, press Send everything (${exactSend(all.amount)} after the fee).`;
       } catch {}
     el.textContent = m.charAt(0).toUpperCase() + m.slice(1) + (/[.?!]$/.test(m) ? '' : '.') + most;
   }
@@ -2575,7 +2662,11 @@ function draftAt(rate) {
     const coins = WL.spendable(W.coins, W.height, wallBal().held, WL.reuseFirst(sent, quarantineStored()));
     try {
       const p = WL.plan({ coins, amount, rate, destSpk: dec.script, changeSpk: W.script, all });
-      return ` Your payment above would cost ${exact(p.fee)} in fees at this rate.`;
+      // a leftover too small for change goes to the fee too, but it is not what the rate costs: said apart, as in the preview
+      const left = leftoverOf({ all, p, rate });
+      return left
+        ? ` Your payment above would cost ${exact(p.fee - left)} in fees at this rate, plus ${exact(left)} left over (too small to come back as change).`
+        : ` Your payment above would cost ${exact(p.fee)} in fees at this rate.`;
     } catch (e) {
       if (!e.short) return '';
       const most = WL.plan({ coins, amount: null, rate, destSpk: dec.script, changeSpk: W.script, all: true }).amount;
@@ -2584,6 +2675,25 @@ function draftAt(rate) {
   } catch {
     return '';
   }
+}
+// what a fee rate means, in the same words wherever it is chosen (the fee dialog, Options): → { ok, text, short }
+function rateNote(v) {
+  const r = Number(v);
+  const ok = Number.isInteger(r) && r >= 1 && r <= WL.MAX_RATE;
+  if (!ok) return { ok, text: `A whole number from 1 to ${WL.MAX_RATE}.`, short: `A whole number from 1 to ${WL.MAX_RATE}.` };
+  const typical = Math.ceil(r * WL.estimateVsize(1, ['5120' + '00'.repeat(32), '5120' + '00'.repeat(32)]));
+  const sug = node.mempool ? suggestedRate() : null;
+  const avail = W?.coinsKnown ? wallBal().available : null;
+  const high = r >= 10 && !(sug && r <= sug);
+  return {
+    ok,
+    text:
+      `About ${exact(typical)} for a typical payment. ${sug ? `Payments waiting now pay about ${sug} sat/vB.` : 'A block comes about every 20 minutes; 1 sat/vB is enough today.'}` +
+      (high ? ` ${r} sat/vB is much more than blocks need today, and it stays for every payment until changed.` : '') +
+      (avail != null && typical > avail ? ' At this rate the fee alone is more than you can spend.' : '') +
+      draftAt(r),
+    short: `About ${exact(typical)} for a typical payment${high ? '; much more than blocks need today' : ''}.`,
+  };
 }
 async function feeFlow() {
   const box = document.createElement('div');
@@ -2601,25 +2711,11 @@ async function feeFlow() {
   say.setAttribute('role', 'status');
   let sayT,
     wasOk = null;
-  const typical = (r) => Math.ceil(r * WL.estimateVsize(1, ['5120' + '00'.repeat(32), '5120' + '00'.repeat(32)]));
   const paint = () => {
-    const r = Number(inp.value);
-    const okRate = Number.isInteger(r) && r >= 1 && r <= WL.MAX_RATE;
+    const { ok: okRate, text, short } = rateNote(inp.value);
     $('ask-ok').disabled = !okRate;
-    const sug = node.mempool ? suggestedRate() : null;
-    const avail = W?.coinsKnown ? wallBal().available : null;
-    note.textContent = okRate
-      ? `About ${exact(typical(r))} for a typical payment. ${sug ? `Payments waiting now pay about ${sug} sat/vB.` : 'A block comes about every 20 minutes; 1 sat/vB is enough today.'}` +
-        (r >= 10 && !(sug && r <= sug)
-          ? ` ${r} sat/vB is much more than blocks need today, and it stays for every payment until changed.`
-          : '') +
-        (avail != null && typical(r) > avail ? ' At this rate the fee alone is more than you can spend.' : '') +
-        draftAt(r)
-      : `A whole number from 1 to ${WL.MAX_RATE}.`;
+    note.textContent = text;
     inp.setAttribute('aria-invalid', String(!okRate));
-    const short = okRate
-      ? `About ${exact(typical(r))} for a typical payment${r >= 10 && !(sug && r <= sug) ? `; much more than blocks need today` : ''}.`
-      : `A whole number from 1 to ${WL.MAX_RATE}.`;
     clearTimeout(sayT);
     if (wasOk !== null && wasOk !== okRate) say.textContent = short;
     else if (wasOk !== null) sayT = setTimeout(() => (say.textContent = short), 900);
@@ -2657,7 +2753,7 @@ async function sendFlow() {
     all: r.all,
     rate: r.rate,
     p,
-    money: exact,
+    money: exactSend,
     trustWarn: trust().level === 'warn' ? trust().text : null,
     reuse: reuseNote(p),
     waitingSame,
@@ -2821,24 +2917,35 @@ async function replaceFlow(s, cancel) {
   let pr = WL.planReplace(s, { cancel, rate: rate0, ownSpk: W.script });
   const box = document.createElement('div');
   const text = document.createElement('div');
+  text.id = 'replace-note';
   const field = document.createElement('label');
   field.className = 'row';
-  field.innerHTML = `<span>Fee rate:</span><input type="number" min="1" max="${WL.MAX_RATE}" step="1" style="width:90px;flex:none"><span>sat/vB</span>`;
+  const was = Math.round(WL.rateOf(s, W.script) * 10) / 10;
+  field.innerHTML = `<span>Fee rate:</span><input type="number" min="1" max="${WL.MAX_RATE}" step="1" style="width:90px;flex:none" aria-describedby="replace-note"><span>sat/vB (now ${was})</span>`;
   const inp = field.querySelector('input');
   inp.value = rate0;
+  // as in the fee dialog: the figures are the field's description, said briefly after a pause, not on every key
+  const sayEl = document.createElement('p');
+  sayEl.className = 'sr';
+  sayEl.setAttribute('role', 'status');
+  let sayT;
   const paint = () => {
     text.textContent = '';
-    let lines;
+    let lines, short;
     try {
       const r = Number(inp.value);
       if (!(Number.isInteger(r) && r >= 1 && r <= WL.MAX_RATE)) throw new Error(`a whole number from 1 to ${WL.MAX_RATE}`);
       pr = WL.planReplace(s, { cancel, rate: r, ownSpk: W.script });
       rate0 = r;
       lines = linesFor(pr);
-      if (pr.fee > 100000) lines.push('The new fee is high: check the rate.');
+      const sug = node.mempool ? suggestedRate() : null;
+      if (r >= 10 && !(sug && r <= sug)) lines.push(`${r} sat/vB is much more than blocks need today: check the rate.`);
+      else if (pr.fee > 100000) lines.push('The new fee is high: check the rate.');
+      short = `${r} sat/vB, fee ${exact(pr.fee)}${r >= 10 && !(sug && r <= sug) ? ', much more than blocks need' : ''}.`;
       $('ask-ok').disabled = false;
     } catch (e) {
       lines = [say(e.message)];
+      short = lines[0];
       $('ask-ok').disabled = true;
     }
     for (const l of lines) {
@@ -2846,6 +2953,8 @@ async function replaceFlow(s, cancel) {
       p.textContent = l;
       text.appendChild(p);
     }
+    clearTimeout(sayT);
+    sayT = setTimeout(() => (sayEl.textContent = short), 900);
   };
   inp.oninput = paint;
   inp.onkeydown = (e) => {
@@ -2855,8 +2964,9 @@ async function replaceFlow(s, cancel) {
     }
   };
   setTimeout(() => inp.focus(), 0);
-  box.append(field, text); // the rate first, as in the fee dialog
+  box.append(field, text, sayEl); // the rate first, as in the fee dialog
   paint();
+  clearTimeout(sayT); // the opening figures are read with the dialog
   if (
     !(await ask(
       s.kind === 'cancel' ? 'Raise the fee of the cancel' : cancel ? 'Cancel the payment' : 'Raise the fee',
@@ -2982,7 +3092,22 @@ function openBackup() {
   $('bk-done').disabled = !backedUp();
   $('bk-note').textContent = backedUp()
     ? ''
-    : 'Copy the key or save it as a file, then tick the box. (To write it down by hand, Show it, copy it into your notes, and tick.)';
+    : 'Copy the key or save it as a file, then tick the box. To write it down by hand, choose Show, write it, and type its last four characters back.';
+  $('bk-hand').hidden = true;
+  $('bk-last4').value = '';
+  $('bk-last4').removeAttribute('aria-invalid');
+  // a copy on paper is a backup too: the last four characters typed back from it show it was written, not just seen
+  $('bk-last4').oninput = () => {
+    const v = $('bk-last4').value.trim();
+    const ok = v === wif.slice(-4);
+    $('bk-last4').setAttribute('aria-invalid', String(v.length === 4 && !ok));
+    if (ok) {
+      arm();
+      $('bk-done').checked = true;
+      $('bk-note').textContent = 'that matches: keep the paper somewhere safe, away from this computer';
+    } else if (v.length === 4)
+      $('bk-note').textContent = 'that does not match the key: check what you wrote, letter by letter (case matters)';
+  };
   $('bk-show').onclick = () => {
     const shown = !$('bk-wif').value.startsWith('•');
     $('bk-wif').value = shown ? '•'.repeat(52) : wif;
@@ -2991,7 +3116,8 @@ function openBackup() {
     $('bk-show').setAttribute('aria-pressed', String(!shown));
     $('bk-wif').setAttribute('aria-label', shown ? 'Key, hidden: choose Show' : 'Key (WIF)');
     $('bk-desc').setAttribute('aria-label', shown ? 'Descriptor, hidden: choose Show' : 'Descriptor');
-    // seeing the key is not saving it: the box is ticked only after Copy or Save
+    // seeing the key is not saving it: the box is ticked only after Copy, Save, or the last four characters typed back
+    if (!shown) $('bk-hand').hidden = false;
   };
   $('bk-copy').onclick = async () => {
     try {

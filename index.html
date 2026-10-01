@@ -173,6 +173,8 @@ button[aria-disabled=true]:not([role]) { opacity:.6; cursor:not-allowed }
 #tray .badge { position:static; letter-spacing:0; text-transform:none }
 fieldset { min-inline-size:0 }
 #nwclose { min-height:24px }
+/* the amount locked by Send everything looks locked, as the disabled fields do */
+#p-send input:read-only { background:var(--panel); color:var(--mut); cursor:not-allowed; border-style:dashed }
 /* every Options tab the same height (the tab strip stays put), the longer ones scroll inside */
 .op { min-height:0; height:min(440px, calc(100vh - 200px)); overflow:auto }
 </style>
@@ -224,7 +226,7 @@ fieldset { min-inline-size:0 }
     <fieldset><legend>Coins held</legend><div class="tiny" id="rcvincoming" role="status" style="margin-bottom:6px"></div><table><caption class="sr">Coins held by this wallet</caption><thead><tr><th scope="col">Block</th><th scope="col">Outpoint</th><th scope="col">Confirmations</th><th scope="col">Amount (<span class="unit">tBTC</span>)</th></tr></thead><tbody id="rcvrows"><tr><td colspan="4" class="mut">nothing received since the snapshot</td></tr></tbody></table></fieldset>
   </div>
   <div class="page" id="p-tx" role="region" aria-labelledby="h-tx"><h2 class="sr" id="h-tx">Transactions</h2>
-    <div class="row wrap" style="margin-bottom:8px"><select id="txtype" aria-label="Show" style="width:auto"><option value="all">All</option><option value="in">Received</option><option value="out">Sent</option><option value="mined">Mined</option><option value="pending">Waiting</option></select><input id="txsearch" aria-label="Search" placeholder="search an address or a transaction id"><button class="q" id="txexport" type="button">Export CSV…</button></div>
+    <div class="row wrap" style="margin-bottom:8px"><select id="txtype" aria-label="Show" style="width:auto"><option value="all">All</option><option value="in">Received</option><option value="out">Sent</option><option value="mined">Mined</option><option value="pending">Waiting</option></select><input id="txsearch" aria-label="Search" placeholder="search: address, amount, status or transaction"><button class="q" id="txexport" type="button">Export CSV…</button></div>
     <table><caption class="sr">Transactions</caption><thead><tr><th scope="col">Date</th><th scope="col">Status</th><th scope="col">Block</th><th scope="col">Type</th><th scope="col">Address</th><th scope="col">Amount (<span class="unit">tBTC</span>)</th><th scope="col"><span class="sr">Actions</span></th></tr></thead><tbody id="txrows"></tbody></table>
       </div>
   <div class="status"><span class="bar"><span id="syncmsg">Starting…</span><span id="announce" class="sr" role="status"></span><span class="pb" id="pb" hidden role="progressbar" aria-label="Sync progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="pbi" style="width:0%"></i></span><span id="synceta" class="mono"></span></span><span class="fill"></span><span class="tnbadge" title="BLAKE2b testnet4, alias txbt4">TESTNET4 · BLAKE2b</span>
@@ -255,7 +257,7 @@ The node answers from this tab's own validated state; wallet commands answer for
   </div>
 </div>
 <script defer src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js" integrity="sha384-8FWZA6BGMXhsfO+BLtrJK0We6gg5o1JyO8xQm6peWDEUs17ACA5ziE/NIAkl9z2k" crossorigin="anonymous"></script>
-<script type="module" src="reef.js?v=2026-10-01.26"></script>
+<script type="module" src="reef.js?v=2026-10-01.27"></script>
 <dialog id="about" aria-labelledby="about-title"><div class="t" id="about-title">About Reef</div><div class="b"><div><img src="og.png" alt="" style="width:64px;height:64px;object-fit:cover;border-radius:12px;border:1px solid var(--line2)"></div><div>
 <p><b>Reef</b> · a Bitcoin node in a browser tab, for txbt4, the BLAKE2b testnet4.</p>
 <p>It looks like Knots and runs a chain Knots defined, but it is not Knots. The tab fetches the fork-point UTXO snapshot, recomputes its hashes, validates every block since the fork and follows the chain tip. The wallet is one key kept in this tab.</p>
@@ -273,7 +275,7 @@ The node answers from this tab's own validated state; wallet commands answer for
   <span></span><div class="row"><button id="o-wipe" type="button">Wipe the snapshot from this tab…</button></div>
 </div></div>
 <div class="op" id="o-wallet"><div class="form">
-  <label for="o-feerate">Fee rate (sat/vB):</label><div><div class="row"><input id="o-feerate" type="number" min="1" step="1" style="width:90px;flex:none" aria-describedby="o-feesugg"><span>sat/vB</span><button id="o-feeuse" style="display:none">Use the mempool's rate</button></div><div class="note" id="o-feesugg">Knots shows this as tBTC/kvB; 1 sat/vB is what txbt4 blocks take today</div></div>
+  <label for="o-feerate">Fee rate (sat/vB):</label><div><div class="row"><input id="o-feerate" type="number" min="1" step="1" style="width:90px;flex:none" aria-describedby="o-feenote o-feesugg"><span>sat/vB</span><button id="o-feeuse" style="display:none">Use the mempool's rate</button></div><div class="note" id="o-feenote"></div><div class="note" id="o-feesugg">Knots shows this as tBTC/kvB; 1 sat/vB is what txbt4 blocks take today</div></div>
   <label>Notifications:</label><div><label class="row"><input id="o-notify" type="checkbox" style="width:auto"> a browser notification when a coin arrives or a send confirms</label><div class="row" style="margin-top:4px"><span class="note" id="o-perm">…</span><button id="o-allow" style="display:none">Allow…</button></div><div class="note">the notice in the page and the console line are always shown</div></div>
   <label>Address:</label><div><input id="o-address" class="mono" readonly></div>
   <span class="lbl">Key:</span><div><div class="row"><button id="o-backup" type="button">Back up the key…</button><span class="note" id="o-backedup">…</span></div><div class="note">the key is the wallet: whoever has it can spend the coins. It lives only in this browser until you back it up.</div></div>
@@ -302,6 +304,7 @@ The node answers from this tab's own validated state; wallet commands answer for
 <label for="bk-desc">Descriptor:</label><input id="bk-desc" class="mono" readonly></div>
 <details class="tiny mut"><summary>For other wallet software</summary>Import the descriptor (rawtr). The address is the key's own output, not a BIP 86 tr() address, so importing the WIF as tr() shows a different, empty address.</details>
 <div class="row wrap"><button id="bk-copy" type="button">Copy the key</button><button id="bk-file" type="button">Save as a file…</button></div><p class="tiny" id="bk-note" role="status"></p>
+<div class="row wrap tiny" id="bk-hand" hidden><label for="bk-last4">Wrote it down by hand? Type the key's last four characters from your copy:</label><input id="bk-last4" class="mono" maxlength="4" autocomplete="off" spellcheck="false" style="width:6em;flex:none"></div>
 <p class="tiny">To restore: open Reef in any browser (Not now at the welcome is fine), then Settings → Options → Wallet → Use another key, and paste this key. The balance shows once the node runs and has checked the chain (a few minutes); coins received before block 150,307 are not shown by a tab.</p><label class="row"><input type="checkbox" id="bk-done" style="width:auto"> I have saved the key somewhere safe, outside this browser</label>
 </div><div class="f"><button id="bk-cancel" type="button">Not now</button><button id="bk-ok" type="button" class="p">Done</button></div></dialog>
 <dialog id="welcome" aria-labelledby="wl-t" aria-describedby="wl-d"><div class="t" id="wl-t">Welcome to Reef</div><div class="b1" id="wl-d">

@@ -102,6 +102,13 @@ t(
   ];
   const sent = [pay(), pay({ txid: tx('4'), abandoned: true })];
   t(
+    'search reaches what the page shows for a row (its amount, its status), through shown(r)',
+    V.filterRows(rows, { query: '0.000697', sent, shown: (r) => (r === rows[0] ? 'confirming (2 of 6) 0.00069700 69700' : '') }).length ===
+      1 &&
+      V.filterRows(rows, { query: 'confirming', sent, shown: (r) => (r === rows[0] ? 'confirming (2 of 6)' : '') }).length === 1 &&
+      V.filterRows(rows, { query: '0.000697', sent }).length === 0,
+  );
+  t(
     'the filter: waiting leaves out forgotten ones; mined, received and search work',
     V.filterRows(rows, { type: 'pending', sent }).length === 1 &&
       V.filterRows(rows, { type: 'mined', sent }).length === 1 &&

@@ -613,6 +613,29 @@ for (const withIdle of [false, true]) {
     conf.slice(0, 200),
   );
   await a.click('#ask-cancel');
+  // a key written down by hand can be marked backed up: Show, then its last four characters typed back
+  await a.click('#banners [data-b=backup] button.act');
+  await a.waitForSelector('#backup[open]', { timeout: 5000 });
+  const before = await a.evaluate(() => ({
+    done: document.getElementById('bk-done').disabled,
+    hand: document.getElementById('bk-hand').hidden,
+  }));
+  await a.click('#bk-show');
+  const wif = await a.inputValue('#bk-wif');
+  await a.fill('#bk-last4', 'zzzz');
+  const wrong = await a.evaluate(() => document.getElementById('bk-done').disabled);
+  await a.fill('#bk-last4', wif.slice(-4));
+  const after = await a.evaluate(() => ({
+    disabled: document.getElementById('bk-done').disabled,
+    checked: document.getElementById('bk-done').checked,
+  }));
+  await a.click('#bk-ok');
+  const stored = await a.evaluate(() => Object.keys(localStorage).some((k) => k.startsWith('reef:backup:')));
+  t(
+    'a key written by hand: after Show, its last four characters typed back mark it backed up (a wrong four do not)',
+    before.done && before.hand && wrong && !after.disabled && after.checked && stored,
+    JSON.stringify({ before, wrong, after, stored }),
+  );
   t('no page errors in the sending edges', !p.errors.length, p.errors.join(' | '));
   await p.ctx.close();
 }

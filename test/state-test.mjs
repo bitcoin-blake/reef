@@ -829,6 +829,10 @@ t(
   S.hide(mine, h);
   const m = S.mergeSent(mine, [pay({ pending: false, replaced: tx('9'), vAt: 5 })]);
   t('a hidden row stays hidden when merged with an older copy from another tab', m[0].hidden === true);
+  const hidden = JSON.parse(JSON.stringify(m[0]));
+  S.unhide(m, m[0]);
+  const m2 = S.mergeSent(m, [hidden]);
+  t('undoing a hide wins over another tab still holding the hidden copy', m2[0].hidden === false && m2[0].vAt > hidden.vAt);
 }
 {
   // payments found rather than made here
