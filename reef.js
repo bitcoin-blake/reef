@@ -4,7 +4,7 @@
 // tested against the kernel; this file is the host: storage, the node, the relays, the window. Every string that comes
 // from outside (relays, the mempool, the chain, links, options) reaches the page as text, never as markup.
 const $ = (id) => document.getElementById(id);
-export const VERSION = '2026-10-01.32';
+export const VERSION = '2026-10-01.33';
 const SCHEMA = 2; // the storage layout this version writes
 const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@3037bb4c7ea414e75332632677ac2ffee191b704';
 const LIB = 'https://cdn.jsdelivr.net/gh/sidestr/spec@fe689e9c723f9bf43393d2dd5b6f924a701c8a18/siding/lib',
@@ -171,6 +171,14 @@ function sayOnce(text, urgent = false) {
   }, 50);
   setTimeout(() => m.remove(), 15e3);
 }
+// a notice's button label and, on a phone, a shorter one in its place (the name a screen reader hears stays the long one)
+const SHORT_LABEL = { 'Back up now…': 'Back up…', 'Remind me later': 'Later' };
+function labelButton(b, label) {
+  const short = SHORT_LABEL[label];
+  if (!short) return void (b.textContent = label);
+  b.setAttribute('aria-label', label);
+  b.innerHTML = `<span class="lg">${esc(label)}</span><span class="sh" aria-hidden="true">${esc(short)}</span>`;
+}
 function banner(id, cls, text, actions = []) {
   // put away by kind and level, not by words: a notice whose figures change every block stays put away until it gets worse
   let el = document.querySelector(`#banners [data-b="${id}"]`);
@@ -195,37 +203,41 @@ function banner(id, cls, text, actions = []) {
     el.dataset.b = id;
     $('banners').appendChild(el);
   }
+  // rebuilt for a new level: an expanded notice stays expanded, and a focused button's focus goes to the button in the same
+  // place of the new one (matched by its role, not its words: "Less" has no match in a collapsed notice), never to <body>
+  const wasFull = el.classList.contains('full');
+  const focused = el.contains(document.activeElement) ? (document.activeElement.dataset?.role ?? '') : null;
   el.dataset.text = cls + text;
   el.dataset.cls = cls;
   el.dataset.labels = labels;
-  el.className = 'banner ' + cls;
+  el.className = 'banner ' + cls + (wasFull ? ' full' : '');
   el.onclick = null;
   // the notices themselves are not live regions (a region created and filled at once is often not read, and its buttons
   // would be read with it): the words are said once, an alert only for the ones that stop the tab
   el.removeAttribute('role');
   sayOnce(text, STICKY.has(id) && cls === 'bad');
-  // rebuilt for a new level: a focused button's focus goes to the button of the same name in the new one (never to <body>)
-  const focused = el.contains(document.activeElement) ? document.activeElement.textContent : null;
   el.textContent = '';
   const t = document.createElement('span');
   t.className = 'bt';
   t.textContent = text;
   if (text.includes('\n')) t.style.whiteSpace = 'pre-line';
   el.appendChild(t);
-  for (const [label, fn] of actions) {
+  actions.forEach(([label, fn], i) => {
     const b = document.createElement('button');
     b.className = 'q act';
     b.type = 'button';
-    b.textContent = label;
+    b.dataset.role = 'act' + i;
+    labelButton(b, label);
     b.onclick = fn;
     el.appendChild(b);
-  }
+  });
   {
     const more = document.createElement('button');
     more.type = 'button';
     more.className = 'q more';
-    more.textContent = 'More';
-    more.setAttribute('aria-expanded', 'false');
+    more.dataset.role = 'more';
+    more.textContent = wasFull ? 'Less' : 'More';
+    more.setAttribute('aria-expanded', String(wasFull));
     more.onclick = () => {
       const f = el.classList.toggle('full');
       more.setAttribute('aria-expanded', String(f));
@@ -238,7 +250,8 @@ function banner(id, cls, text, actions = []) {
     const x = document.createElement('button');
     x.className = cls === 'bad' ? 'q' : 'q x';
     x.type = 'button';
-    x.textContent = cls !== 'bad' ? '×' : id === 'backup' ? 'Remind me later' : 'Got it';
+    x.dataset.role = 'x';
+    labelButton(x, cls !== 'bad' ? '×' : id === 'backup' ? 'Remind me later' : 'Got it');
     if (cls !== 'bad') x.setAttribute('aria-label', 'Hide this notice for now');
     else x.title = id === 'backup' ? 'until Reef is opened again' : 'hide this notice for now';
     x.onclick = () => {
@@ -256,7 +269,7 @@ function banner(id, cls, text, actions = []) {
     sorted.forEach((b) => $('banners').appendChild(b));
     if (had && $('banners').contains(had)) had.focus();
   }
-  if (focused != null) ([...el.querySelectorAll('button')].find((b) => b.textContent === focused) ?? el.querySelector('button'))?.focus();
+  if (focused != null) (el.querySelector(`button[data-role="${focused}"]`) ?? el.querySelector('button'))?.focus();
 }
 // a notice that goes while it holds the focus hands it on: to the next notice's button, else the page's toolbar
 function dropBanner(el) {
@@ -495,6 +508,7 @@ const loadVouched = () => {
     return null;
   }
 };
+let listCount = null; // what the transactions list shows of how many, for the search's spoken count
 let lastVouched = loadVouched();
 const SNAPSHOT_BASE = 150307; // the UTXO snapshot's height; the first BLAKE2b block is the next (S.FIRST_BLAKE_HEIGHT)
 const vouched = () => T.vouchedHeight(node.nostr, lastVouched, SNAPSHOT_BASE);
@@ -987,6 +1001,18 @@ tabs(
   },
   't-',
 );
+// a table that scrolls sideways (on a phone) can be reached and scrolled from the keyboard: its labelled region takes focus,
+// but only while there is something to scroll (no extra tab stop on a wide screen)
+{
+  const regions = [...document.querySelectorAll('.tscroll')];
+  const mark = () =>
+    regions.forEach((w) => (w.scrollWidth > w.clientWidth + 1 ? w.setAttribute('tabindex', '0') : w.removeAttribute('tabindex')));
+  if (typeof ResizeObserver === 'function') {
+    const ro = new ResizeObserver(mark);
+    regions.forEach((w) => (ro.observe(w), w.firstElementChild && ro.observe(w.firstElementChild)));
+  }
+  mark();
+}
 const optTab = tabs(
   'otabs',
   (t) => document.querySelectorAll('.op').forEach((p) => p.classList.toggle('on', p.id === 'o-' + t.dataset.o)),
@@ -1242,8 +1268,9 @@ document.addEventListener('keydown', (e) => {
   if (e.altKey && e.shiftKey && !e.ctrlKey && !typing && (e.code === 'KeyM' || k === 'm')) {
     e.preventDefault();
     $('m-mask').onclick();
-  } else if (e.ctrlKey && !e.shiftKey && k === 'm') {
-    // one key, both ways: to the tray when the window shows, back from it when it does not
+  } else if (e.ctrlKey && !e.shiftKey && !e.altKey && k === 'm') {
+    // one key, both ways: to the tray when the window shows, back from it when it does not (not Ctrl+Alt: on some layouts
+    // AltGr+M types µ, which arrives as Ctrl+Alt+M, and typing must never hide the window)
     e.preventDefault();
     win.style.display === 'none' ? showWindow() : hideWindow();
   } else if (e.altKey && e.shiftKey && !e.ctrlKey && !typing && (e.code === 'KeyN' || k === 'n')) {
@@ -1443,7 +1470,7 @@ $('o-feeuse').onclick = () => {
 // the fee rate in Options is the same setting as the fee dialog's, said the same way (no live region: it is the field's
 // description, read when the field is reached)
 function optRatePaint() {
-  const { ok, text } = rateNote($('o-feerate').value, 'The payment typed on the Send page');
+  const { ok, text } = rateNote($('o-feerate').value, 'The payment typed on the Send page', exact);
   $('o-feenote').textContent = text;
   $('o-feerate').setAttribute('aria-invalid', String(!ok));
 }
@@ -1824,6 +1851,7 @@ function applyDisplay() {
         : 'A block comes about every 20 minutes; the lowest rate, 1 sat/vB, is enough today.';
   if (WL) feeLine();
   if (W) renderWallet();
+  if (node?.mempool && $('nw').classList.contains('open')) renderMempool(); // its own fees follow Mask values at once
 }
 // the wallet's code and the chain's rules: the sidestr library and the engine at their pinned commits, the rule files
 // checked by hash before use
@@ -2362,11 +2390,13 @@ function renderWalletInner() {
       $(id).textContent = IDLE ? (id === 'total' ? '— (other tab)' : '—') : '…';
     $('ovtrust').textContent = IDLE
       ? IDLE_TEXT
-      : node.notStarted
-        ? 'the node is not started: the balance is known once it is up to date'
-        : node.error
-          ? 'the node stopped: see the notice above'
-          : `balance known once the tab is up to date (${node.synced ? 'reading the coins' : ({ fetch: 'fetching the snapshot', hash: 'checking the snapshot', verify: 'verifying the snapshot', sync: 'validating the blocks since' }[node.phase] ?? 'starting') + ($('synceta').textContent ? ', ' + $('synceta').textContent : '')})`;
+      : PROBING
+        ? 'checking whether another tab runs the node…'
+        : node.notStarted
+          ? 'the node is not started: the balance is known once it is up to date'
+          : node.error
+            ? 'the node stopped: see the notice above'
+            : `balance known once the tab is up to date (${node.synced ? 'reading the coins' : ({ fetch: 'fetching the snapshot', hash: 'checking the snapshot', verify: 'verifying the snapshot', sync: 'validating the blocks since' }[node.phase] ?? 'starting') + ($('synceta').textContent ? ', ' + $('synceta').textContent : '')})`;
   } else {
     const b = wallBal();
     if (lastAvail != null && lastAvail !== b.available && !OPT.mask) sayOnce(`Available: ${amtSay(b.available)}`);
@@ -2442,6 +2472,7 @@ function renderWalletInner() {
       return `${say(v.short)} ${say(v.state)} ${v.tag} ${amt} ${V.feeOnly(r, v) ? 'fee' : ''} ${r.pending && !recOf(r)?.abandoned ? 'waiting' : ''}`;
     },
   });
+  listCount = { shown: shown.length, of: rows.length };
   $('txrows').innerHTML = shown.length
     ? shown
         .map((r) => {
@@ -2476,7 +2507,10 @@ function renderWalletInner() {
     .forEach((b) => {
       b.onclick = () => {
         const s = sent.find((x) => x.txid === b.dataset.tx);
-        if (!s || !canAct()) return;
+        if (!s) return;
+        // a stopped node is said, never answered by nothing (raise, cancel, publish again and forget all need it)
+        if (nodeStopped()) return notify('Not done', 'the node is stopped: reload the page first', false);
+        if (!canAct()) return;
         const a = b.dataset.act;
         (a === 'bump'
           ? replaceFlow(s, s.kind === 'cancel')
@@ -2540,7 +2574,18 @@ function renderWalletInner() {
         .join('')
     : `<tr><td colspan="4" class="mut">${known ? 'nothing received since the snapshot' : IDLE ? 'shown in the tab that runs the node' : 'waiting for the node'}</td></tr>`;
 }
-for (const id of ['txtype', 'txsearch']) $(id).addEventListener('input', () => renderWallet());
+// what the search and the filter leave in the list is said, once typing pauses (the list itself changes silently)
+let listSayTimer = 0;
+for (const id of ['txtype', 'txsearch'])
+  $(id).addEventListener('input', () => {
+    renderWallet();
+    clearTimeout(listSayTimer);
+    listSayTimer = setTimeout(() => {
+      if (!listCount) return;
+      const { shown, of } = listCount;
+      sayOnce(shown ? `${n(shown)} of ${n(of)} transaction${of === 1 ? '' : 's'} shown` : 'No transaction matches');
+    }, 500);
+  });
 $('txexport').onclick = () => {
   if (!W) return;
   if (IDLE) return notHere();
@@ -2578,6 +2623,8 @@ function sendInfo(m, cls = '', action = null) {
     a.onclick = action[1];
     out.append(' ', a);
   }
+  // the outcome of a payment is never left below the fold (on a phone the page ends at the status bar)
+  if (cls && m) out.scrollIntoView?.({ block: 'nearest' });
 }
 // a payment that spends a coin of a forgotten one says so: only one of the two can happen
 function reuseNote(p) {
@@ -2651,7 +2698,7 @@ function feeLine(r = null) {
   const rate = Math.max(1, Math.round(Number(OPT.feeRate) || 1));
   $('feerate').textContent = r
     ? `${exactSend(r.p.fee - leftoverOf(r))} for this payment (${r.p.vsize} vB at ${r.rate} sat/vB)`
-    : `about ${exact(Math.ceil(rate * WL.estimateVsize(1, ['5120' + '00'.repeat(32), '5120' + '00'.repeat(32)])))} for a typical payment (${rate} sat/vB)`;
+    : `about ${exactSend(Math.ceil(rate * WL.estimateVsize(1, ['5120' + '00'.repeat(32), '5120' + '00'.repeat(32)])))} for a typical payment (${rate} sat/vB)`;
 }
 function updatePreview() {
   const el = $('sendpreview');
@@ -2743,7 +2790,8 @@ async function publishHex(hex) {
 // the fee rate from the Send page: one number, the figures follow; kept in Options (the same setting)
 // the payment typed on the Send page, at another rate: what it would cost, or that it no longer fits ('' when none is typed)
 // lead: how the payment is named where the note is shown (on Send it is above the note; in Options it is on another page)
-function draftAt(rate, lead = 'Your payment above') {
+// fmt: the unit the figures are said in (the fee dialog on Send: the Send page's unit; Options: the display unit)
+function draftAt(rate, lead = 'Your payment above', fmt = exactSend) {
   try {
     const dec = W.addr.decodeAddress($('sendto').value.trim());
     if (!dec || WL.checkDestination(dec, { ownScript: W.script }).error) return '';
@@ -2755,19 +2803,19 @@ function draftAt(rate, lead = 'Your payment above') {
       // a leftover too small for change goes to the fee too, but it is not what the rate costs: said apart, as in the preview
       const left = leftoverOf({ all, p, rate });
       return left
-        ? ` ${lead} would cost ${exact(p.fee - left)} in fees at this rate, plus ${exact(left)} left over (too small to come back as change).`
-        : ` ${lead} would cost ${exact(p.fee)} in fees at this rate.`;
+        ? ` ${lead} would cost ${fmt(p.fee - left)} in fees at this rate, plus ${fmt(left)} left over (too small to come back as change).`
+        : ` ${lead} would cost ${fmt(p.fee)} in fees at this rate.`;
     } catch (e) {
       if (!e.short) return '';
       const most = WL.plan({ coins, amount: null, rate, destSpk: dec.script, changeSpk: W.script, all: true }).amount;
-      return ` ${lead} would no longer fit at this rate; up to ${exact(most)} can be sent.`;
+      return ` ${lead} would no longer fit at this rate; up to ${fmt(most)} can be sent.`;
     }
   } catch {
     return '';
   }
 }
 // what a fee rate means, in the same words wherever it is chosen (the fee dialog, Options): → { ok, text, short }
-function rateNote(v, lead) {
+function rateNote(v, lead, fmt = exactSend) {
   const r = Number(v);
   const ok = Number.isInteger(r) && r >= 1 && r <= WL.MAX_RATE;
   if (!ok) return { ok, text: `A whole number from 1 to ${WL.MAX_RATE}.`, short: `A whole number from 1 to ${WL.MAX_RATE}.` };
@@ -2778,11 +2826,11 @@ function rateNote(v, lead) {
   return {
     ok,
     text:
-      `About ${exact(typical)} for a typical payment. ${sug ? `Payments waiting now pay about ${sug} sat/vB.` : 'A block comes about every 20 minutes; 1 sat/vB is enough today.'}` +
+      `About ${fmt(typical)} for a typical payment. ${sug ? `Payments waiting now pay about ${sug} sat/vB.` : 'A block comes about every 20 minutes; 1 sat/vB is enough today.'}` +
       (high ? ` ${r} sat/vB is much more than blocks need today, and it stays for every payment until changed.` : '') +
       (avail != null && typical > avail ? ' At this rate the fee alone is more than you can spend.' : '') +
-      draftAt(r, lead),
-    short: `About ${exact(typical)} for a typical payment${high ? '; much more than blocks need today' : ''}.`,
+      draftAt(r, lead, fmt),
+    short: `About ${fmt(typical)} for a typical payment${high ? '; much more than blocks need today' : ''}.`,
   };
 }
 async function feeFlow() {
@@ -2862,6 +2910,10 @@ async function sendFlow() {
     throw new Error('the payment changed while it was being confirmed (' + e.message + '); nothing was sent');
   }
   if (trust().level === 'bad') throw new Error('the block source disagrees with the signed chain tip; nothing was sent');
+  // and the tab may still act: the node did not stop, the tab did not go idle, the coins are still known (the dialog is modal,
+  // but a wipe or a stop can still arrive from the node while it is open)
+  if (nodeStopped()) throw new Error('the node stopped while the payment was being confirmed; nothing was sent: reload the page');
+  if (!canAct()) throw new Error('this tab can no longer send (the wallet is not ready here); nothing was sent');
   if (
     again.p.fee !== p.fee ||
     again.p.amount !== p.amount ||
@@ -2912,7 +2964,7 @@ async function sendFlow() {
       sendInfo(
         r.self
           ? `Sent to yourself. It shows as confirmed when a block includes it, usually within 20 minutes.`
-          : `Sent. ${exact(p.amount)} to ${V.shortAddr(r.to)} is on its way and shows as confirmed when a block includes it, usually within 20 minutes.`,
+          : `Sent. ${exactSend(p.amount)} to ${V.shortAddr(r.to)} is on its way and shows as confirmed when a block includes it, usually within 20 minutes.`,
         'good',
         ['See it on the Transactions page', () => showPage('tx')],
       );
@@ -3413,14 +3465,23 @@ function renderMempool() {
   if (!m) return;
   const now = Math.floor(Date.now() / 1000);
   const med = mempoolRate();
+  // with Mask values on, the wallet's own transactions show no fee or rate, and neither do the totals that include them (with
+  // one transaction waiting, the total and the median would be its fee and rate)
+  const mine = W
+    ? m.txs.filter((t) => {
+        const o = ourTx(t);
+        return o.spendsOurs || o.toUs > 0;
+      })
+    : [];
+  const masked = OPT.mask && mine.length > 0;
   $('mp-sum').textContent =
-    `${n(m.count)} transaction${m.count === 1 ? '' : 's'} · ${n(m.bytes)} vB · ${n(m.fees)} sat in fees${med != null ? ` · median ${med} sat/vB` : ''} · at height ${n(m.height ?? 0)}`;
+    `${n(m.count)} transaction${m.count === 1 ? '' : 's'} · ${n(m.bytes)} vB · ${masked ? 'fees hidden (they include yours)' : `${n(m.fees)} sat in fees${med != null ? ` · median ${med} sat/vB` : ''}`} · at height ${n(m.height ?? 0)}`;
   $('mprows').innerHTML = m.txs.length
     ? m.txs
         .map((t) => {
           const o = W ? ourTx(t) : { spendsOurs: false, toUs: 0 };
           const age = Math.max(0, now - t.at);
-          return `<tr><td class="mono">${txLink(t.txid, t.txid.slice(0, 16) + '…')}</td><td>${age < 60 ? age + ' s' : age < 3600 ? Math.round(age / 60) + ' min' : (age / 3600).toFixed(1) + ' h'}</td><td class="amt">${esc(n(t.vsize))}</td><td class="amt">${esc(n(t.fee))}</td><td class="amt">${Number(t.feeRate).toFixed(1)}</td><td>${o.spendsOurs ? 'from you' : o.toUs ? 'to you: ' + amtHtml(o.toUs) : ''}</td></tr>`;
+          return `<tr><td class="mono">${txLink(t.txid, t.txid.slice(0, 16) + '…')}</td><td>${age < 60 ? age + ' s' : age < 3600 ? Math.round(age / 60) + ' min' : (age / 3600).toFixed(1) + ' h'}</td><td class="amt">${esc(n(t.vsize))}</td><td class="amt">${OPT.mask && (o.spendsOurs || o.toUs) ? HIDDEN : esc(n(t.fee))}</td><td class="amt">${OPT.mask && (o.spendsOurs || o.toUs) ? HIDDEN : Number(t.feeRate).toFixed(1)}</td><td>${o.spendsOurs ? 'from you' : o.toUs ? 'to you: ' + amtHtml(o.toUs) : ''}</td></tr>`;
         })
         .join('')
     : '<tr><td colspan="6" class="mut">empty</td></tr>';
@@ -3574,7 +3635,7 @@ const ANS = {
           size: node.mempool.count,
           bytes: node.mempool.bytes,
           usage: node.mempool.bytes,
-          total_fee: node.mempool.fees / 1e8,
+          total_fee: node.mempool.txs.some(ownTx) ? hide(node.mempool.fees / 1e8) : node.mempool.fees / 1e8, // it includes the wallet's own
           mempoolminfee: 0.00001,
           minrelaytxfee: 0.00001,
           refused: node.mempool.stats.refused,
@@ -4026,15 +4087,18 @@ function goIdle() {
   // and told through storage to look for the update now rather than at its next hourly check
   const holder = runningHolder();
   if (holder) LS.set('reef:newest', VERSION);
-  const older = holder && newer(VERSION, holder.version);
+  const older = holder && newer(VERSION, holder.version),
+    newerThere = holder && newer(holder.version, VERSION);
   banner(
     'twotabs',
     'warn',
     (older
       ? `An older Reef (${holder.version}) runs the node in another tab of this browser: reload that tab to update it.`
-      : holder
-        ? 'Reef is already open in another tab of this browser.'
-        : 'Reef is already open in another tab of this browser, or Bight, Winch or Hitch runs the node there.') +
+      : newerThere
+        ? `A newer Reef (${holder.version}) runs the node in another tab of this browser: this tab is ${VERSION}; reload it to update it.`
+        : holder
+          ? `Reef ${holder.version} already runs the node in another tab of this browser.`
+          : 'Reef is already open in another tab of this browser, or Bight, Winch or Hitch runs the node there.') +
       " This tab stays idle and changes nothing: two tabs would fight over the node's files and could spend the same coins twice. It takes over as soon as the other tab closes.",
     [['Check again', () => location.reload()]],
   );
@@ -4264,6 +4328,8 @@ async function begin() {
   // a reload of this same tab can find the lock still held by the page it replaces for a moment: wait up to three seconds for it
   let sole = true,
     lockErr = null;
+  // never "Starting…" in a tab that is about to go idle: say what is being checked while the lock is asked for
+  setSync('checking whether another tab runs the node…', null);
   if (navigator.locks) {
     sole = await navigator.locks
       .request('bitcoin-blake:node', { signal: timeoutSignal(3000) }, () => true)
