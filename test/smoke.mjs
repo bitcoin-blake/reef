@@ -123,6 +123,7 @@ const returning = (extra = {}) => ({
   'reef:key': KEY,
   ['reef:sent:' + TAG]: JSON.stringify([BAD]),
   ['reef:seen:' + TAG]: JSON.stringify([[BAD.inputs[0], 5000]]),
+  'reef:vouched': '152100', // a returning user's last signed tip: with none, coins above the snapshot base wait as pending
   ...extra,
 });
 const coins = (page) =>
@@ -250,7 +251,7 @@ for (const [name, opts] of [
 }
 // 6: a payment end to end: typed, confirmed, signed, recorded, published; then its coins spent by another transaction
 {
-  const p = await profile({ seed: { 'reef:started': '1', 'reef:key': KEY } });
+  const p = await profile({ seed: { 'reef:started': '1', 'reef:key': KEY, 'reef:vouched': '152100' } });
   const a = await p.open();
   await a.waitForFunction(() => /^tb1p/.test(document.getElementById('rcvaddr').value), null, { timeout: 30000 });
   const COIN = 'cd'.repeat(32) + ':0';
@@ -423,6 +424,28 @@ for (const withIdle of [false, true]) {
   );
   if (b) t('the idle tab says the key was changed elsewhere', !!(await b.$('#banners [data-b=keychanged]')));
   t(`no page errors in the key switch${withIdle ? ' with an idle tab' : ''}`, !p.errors.length, p.errors.join(' | '));
+  await p.ctx.close();
+}
+// 7b: with no signed tip yet and no record of one, money above the snapshot base waits as pending
+{
+  const p = await profile({ seed: { 'reef:started': '1', 'reef:key': KEY } });
+  const a = await p.open();
+  await a.waitForFunction(() => /^tb1p/.test(document.getElementById('rcvaddr').value), null, { timeout: 30000 });
+  await a.evaluate(
+    ({ script }) => {
+      window.__fake.emit('message', { type: 'synced', height: 152100, applied: true });
+      window.__fake.emit('message', {
+        type: 'coins',
+        script,
+        height: 152100,
+        coins: [{ key: 'cd'.repeat(32) + ':0', value: 50000, height: 152000 }],
+      });
+    },
+    { script: SCRIPT },
+  );
+  await a.waitForTimeout(1500);
+  const avail = await a.textContent('#avail');
+  t('with no signed tip at all, a coin above the snapshot base is not spendable', /0\.00000000/.test(avail), avail);
   await p.ctx.close();
 }
 // 8: money in a block above the signed tip is said as being double-checked; a silent broadcaster is warned about

@@ -1155,5 +1155,20 @@ t(
     S.shallow(152100, 152104) && !S.shallow(152100, 152105) && !S.shallow(null, 152100) && !S.shallow(152100, null),
   );
 }
+{
+  const r = pay({ pending: false, height: 152100 });
+  const fx = S.onRecheck([r], r.txid, { found: true, txid: 'ee'.repeat(32), height: 152103 }, 152103, 152101);
+  t(
+    'a stranger spending our coins in a block above the vouched height changes nothing yet',
+    fx.length === 0 && !r.pending && !r.replaced && r.height === 152100 && r.checkedAt == null,
+  );
+  const moved = pay({ pending: false, height: 152100 });
+  S.onRecheck([moved], moved.txid, { found: true, txid: moved.txid, height: 152103 }, 152103, 152101);
+  t('...nor does our own payment found again above it', moved.height === 152100);
+  const f = pay({ txid: tx('f'), pending: false, failed: tx('w') });
+  const w = pay({ txid: tx('w'), pending: false, height: 152100, inputs: [inA], to: 'x' });
+  S.onCoins({ sent: [f, w], coins: [{ key: tx('f') + ':1', value: 6845, height: 152105 }], height: 152105, vouched: 152102 });
+  t('a "did not happen" payment whose change shows above the vouched height is not turned into made yet', !!f.failed && f.height == null);
+}
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

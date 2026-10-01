@@ -73,7 +73,10 @@ t(
   T.vouchedHeight(tip({ agree: 0 }), 152090, 150307) === 152090 && T.vouchedHeight(tip({ agree: 0 }), null, 150307) === 150307,
 );
 t('vouched: a disagreeing tip holds to the last vouched height', T.vouchedHeight(tip({ diverged: true }), 152090, 150307) === 152090);
-t('vouched: no tip at all is no limit (said as a warning elsewhere)', T.vouchedHeight(null, 152090, 150307) === null);
+t(
+  'vouched: no tip at all holds to the last vouched height, else the snapshot (never no limit)',
+  T.vouchedHeight(null, 152090, 150307) === 152090 && T.vouchedHeight(null, null, 150307) === 150307,
+);
 t('vouched: a lower agreeing tip does not lower the bar', T.vouchedHeight(tip({ height: 152080 }), 152090, 150307) === 152090);
 // round 11: the boundaries the mutants slipped past
 t(
@@ -105,5 +108,6 @@ t(
     T.vouchedHeight(tip({ vouchedTo: 152101, diverged: true }), 152090, 150307) === 152101,
 );
 t("vouched: without vouchedTo the page's record is the fallback", T.vouchedHeight(tip({ agree: 0 }), 152090, 150307) === 152090);
+t('vouched: an agreeing tip above the last record wins', T.vouchedHeight(tip({ height: 152100 }), 152090, 150307) === 152100);
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

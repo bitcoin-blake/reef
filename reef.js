@@ -4,7 +4,7 @@
 // tested against the kernel; this file is the host: storage, the node, the relays, the window. Every string that comes
 // from outside (relays, the mempool, the chain, links, options) reaches the page as text, never as markup.
 const $ = (id) => document.getElementById(id);
-export const VERSION = '2026-10-01.23';
+export const VERSION = '2026-10-01.24';
 const SCHEMA = 2; // the storage layout this version writes
 const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@c03bf56404e986bf633a44d8a7bbb530ec282cb5';
 const LIB = 'https://cdn.jsdelivr.net/gh/sidestr/spec@fe689e9c723f9bf43393d2dd5b6f924a701c8a18/siding/lib',
@@ -2347,6 +2347,11 @@ function readSend() {
   const p = WL.plan({ coins, amount, rate, destSpk: dec.script, changeSpk: W.script, all });
   return { to, dec, self: chk.self, all, rate, p };
 }
+// does this payment use every coin that can be spent? (a leftover only "empties the wallet" when nothing else remains)
+function emptiesWallet(r) {
+  const coins = WL.spendable(W.coins, W.height, wallBal().held, WL.reuseFirst(sent, quarantineStored()));
+  return r.p.picked.length === coins.length;
+}
 // what Send everything would pay to this destination at the current rate, or null when it cannot be planned
 function allAmountTo(destSpk) {
   try {
@@ -2389,7 +2394,10 @@ function updatePreview() {
       ? `${fg ? fg + ' ' : ''}To yourself: only the fee leaves the wallet (${exact(r.p.fee)}). Nothing else changes.`
       : `${fg ? fg + ' ' : ''}${r.all ? 'Everything: ' : ''}${exact(r.p.amount)} to the address, ${exact(r.p.fee)} fee, ${exact(r.p.amount + r.p.fee)} in all${r.p.change ? `; ${exact(r.p.change)} comes back as change` : ''}.` +
         (leftoverOf(r)
-          ? ` ${exact(leftoverOf(r))} of the fee is a leftover too small to come back as change: this empties the wallet, and Send everything would pay the recipient ${exact(allAmountTo(r.dec.script) ?? r.p.amount)} instead.`
+          ? ` ${exact(leftoverOf(r))} of the fee is a leftover too small to come back as change` +
+            (emptiesWallet(r)
+              ? `: this empties the wallet, and Send everything would pay the recipient ${exact(allAmountTo(r.dec.script) ?? r.p.amount)} instead.`
+              : '.')
           : '');
     if (r.all) {
       $('sendamt').value = WL.formatAmount(r.p.amount, $('sendunit').value, { grouping: false });
@@ -2529,7 +2537,7 @@ async function sendFlow() {
     waitingSame,
     settlingSame: S.settlingTo(sent, r.dec.script, W.height, (a) => W.addr.decodeAddress(a)?.script),
     suggested: node.mempool ? suggestedRate() : null,
-    allAmount: leftoverOf(r) ? allAmountTo(r.dec.script) : null,
+    allAmount: leftoverOf(r) && emptiesWallet(r) ? allAmountTo(r.dec.script) : null,
   });
   if (!(await ask('Confirm the payment', lines, 'Send', false, 'Back'))) return;
   // the world may have moved while the dialog was open: the same coins and the same figures, or nothing is sent
