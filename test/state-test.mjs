@@ -650,6 +650,48 @@ t(
     );
   }
   {
+    // the wallet's code is checked by sha256 in the page: each hash is that of the file at the pinned commit, and the table
+    // covers every file the entries import (the page refuses a file it has no hash for, so a gap would stop the wallet)
+    const { execSync } = await import('node:child_process');
+    const { createHash } = await import('node:crypto');
+    const { homedir } = await import('node:os');
+    const specDir = (process.env.SIDESTR_LIB ?? homedir() + '/remote/github.com/sidestr/spec/siding/lib').replace(/\/siding\/lib\/?$/, '');
+    const engDir = process.env.SCHEMA ?? homedir() + '/bitcoin-desktop/schema';
+    const want = Object.fromEntries([...src.matchAll(/'((?:siding|codec)\/[a-z0-9/.-]+)': '([0-9a-f]{64})'/g)].map((m) => [m[1], m[2]]));
+    const show = (f) =>
+      execSync(`git -C ${f.startsWith('siding/') ? specDir : engDir} show ${f.startsWith('siding/') ? lib : eng}:${f}`, {
+        stdio: ['ignore', 'pipe', 'ignore'],
+        maxBuffer: 1 << 26,
+      });
+    const RE = new RegExp(src.match(/const IMPORT_RE = \/(.+)\/g;/)[1], 'g');
+    const bad = [],
+      missing = [];
+    const walk = (f, seen = new Set()) => {
+      if (seen.has(f)) return;
+      seen.add(f);
+      if (!want[f]) return missing.push(f);
+      let body;
+      try {
+        body = show(f);
+      } catch {
+        return bad.push(f);
+      }
+      if (createHash('sha256').update(body).digest('hex') !== want[f]) bad.push(f);
+      for (const m of String(body).matchAll(RE)) {
+        const u = new URL(m[3], 'https://x/' + f);
+        walk(u.pathname.slice(1) + u.search, seen);
+      }
+    };
+    const entries = [...src.matchAll(/(?:spec|engine)\('((?:siding|codec)\/[^']+)'\)/g)].map((m) => m[1]);
+    const seen = new Set();
+    entries.forEach((f) => walk(f, seen));
+    t(
+      "every file of the wallet's code is pinned by hash at the pinned commits, the whole import graph included",
+      entries.length === 8 && !bad.length && !missing.length && seen.size === Object.keys(want).length,
+      `entries ${entries.length}, bad ${bad.join(', ')}, missing ${missing.join(', ')}, ${seen.size} walked vs ${Object.keys(want).length} pinned`,
+    );
+  }
+  {
     // the node's loader is checked by sha256 in the page: the hash is that of the file at the pinned node commit
     const { execSync } = await import('node:child_process');
     const { createHash } = await import('node:crypto');

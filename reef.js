@@ -4,7 +4,7 @@
 // tested against the kernel; this file is the host: storage, the node, the relays, the window. Every string that comes
 // from outside (relays, the mempool, the chain, links, options) reaches the page as text, never as markup.
 const $ = (id) => document.getElementById(id);
-export const VERSION = '2026-10-01.25';
+export const VERSION = '2026-10-01.26';
 const SCHEMA = 2; // the storage layout this version writes
 const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@c03bf56404e986bf633a44d8a7bbb530ec282cb5';
 const LIB = 'https://cdn.jsdelivr.net/gh/sidestr/spec@fe689e9c723f9bf43393d2dd5b6f924a701c8a18/siding/lib',
@@ -18,6 +18,27 @@ export const RULES_SHA256 = {
   'schema/chain.jsonld': 'ccbdb40f9ffd72c0686c6303ab8899f79f6c651735bdfcef431af6c23efec821',
   'schema/validate.jsonld': '4eb6792d4330397631d14dc4a8734ddb28fdd2459a3f98fc2bf822596a95bfb0',
   'schema/overlays/knots-blake2b.jsonld': 'b5b76b03a8b1159b4dd304a9b3b65b9a5891204f81fa0b26e4b42692d0a2022e',
+};
+// the wallet's own code (it holds the key): every file of the sidestr library and the engine the page imports, by content
+// as well as by commit, run from the checked text with its imports rewritten to the checked copies (never fetched again by
+// the import). The release test checks the hashes against the pinned commits and that the table covers every import
+export const CODE_SHA256 = {
+  'siding/lib/schnorr.mjs': '898b907460f0a6e35b657307eac92e842a4e46d9f98580bf617b2b93afc4b943',
+  'siding/lib/txsign.mjs': '5f2af06056e30e6c0997c917ba05bfcce305b947a80df1c242a6b04931039875',
+  'siding/lib/address.mjs': '586655b4a37ac29eeccf17ba78adfc3b4e1d432b7657669b7a5eef6010259507',
+  'siding/lib/relay.mjs': 'ba4b3c18ee40e88b2093b177aaee8288046bd3299cf2bdc5b5a1edba5266a8b5',
+  'codec/secp256k1.js': 'bd3a6b034024978f9dd8923685567ce2834ed9631119f0d3b410e6d2efb41e14',
+  'codec/hash.js': '79af401550a274dbe49a32530595feaf0c43b830587fab2034f3afb1fe09420f',
+  'codec/kernel.js': '632bb850628e095b289def04642a85fa98007f99e6ebf50d43fb24bcd46fbac8',
+  'codec/codec.js': '4c6ecc0cc159e9e16134391e68cef9ab6d3fc5ab8fa59ca5c9004ff6786efdf8',
+  'codec/script.js': 'df05394e0fc765b647d2b1b9dbf091809926125cbbe5ba84f607b84e5dc4644b',
+  'codec/interpreter.js': '445149e7f3b972844fe33b9d3f60adb8387f220351dbd3394f0a79a8dd73aba0',
+  'codec/headers.js': '68898ce77a8a8abb6fda73d82c42eb462959a321298e6b7716cb6ac5e19ac431',
+  'codec/blocks.js': 'ec8e943cf27bdf34a9c97c6d742a2a6ecddf07121c65d433031560422a487649',
+  'codec/overlay.js': '3e09ea8aa80a2ec8641f0cb06f693c7624b54a9943c2222ebf658e75cc53dd59',
+  'codec/overlays/knots-blake2b.js': '7036bece208c01db6b102d2fc04d74c113a487d904b3678df493fae6653be57a',
+  'codec/pow/knots-header-v2.js': '669086796668ac1018abef6aba961ded316a4d55270cf5280d4c89d15360a033',
+  'codec/pow/blake2b.js': '154583b7b6a9d8a604a5d7e83a2ab82d32b9009fa7be478e5143d56c34abd06b',
 };
 const EXPLORER = 'https://mempool.guide/testnet4',
   REPO = 'https://github.com/bitcoin-blake/reef';
@@ -271,11 +292,14 @@ addEventListener('unhandledrejection', (e) => caught(e.reason));
 // the node's loader is the anchor of the node's own hash table, so it is checked here by its sha256 (the release test
 // recomputes it from the pinned commit) and run from that checked text, never fetched again by the import
 const TABNODE_SHA256 = '4027b05fc85f5a5603025f0c2849d4b0e6a4c12785a184209a0692b2c5b76d7b';
+async function sha256hex(bytes) {
+  return [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
 async function loadTabnode() {
   const r = await fetch(`${NODE}/browser/tabnode.js`);
   if (!r.ok) throw new Error(`the loader answered ${r.status}`);
   const bytes = new Uint8Array(await r.arrayBuffer());
-  const got = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((b) => b.toString(16).padStart(2, '0')).join('');
+  const got = await sha256hex(bytes);
   if (got !== TABNODE_SHA256) throw new Error(`the node's loader from the CDN is not the pinned file (sha256 ${got.slice(0, 12)}…)`);
   return import(URL.createObjectURL(new Blob([bytes], { type: 'text/javascript' })));
 }
@@ -1702,22 +1726,57 @@ function applyDisplay() {
 }
 // the wallet's code and the chain's rules: the sidestr library and the engine at their pinned commits, the rule files
 // checked by hash before use
+// static and dynamic relative imports: './x.js', "../y.js", import('./z.js')
+const IMPORT_RE = /\b(from\s*|import\s*\(?\s*)(['"`])(\.{1,2}\/[^'"`]+)\2/g;
+// one module graph under root, every file checked against CODE_SHA256 before it runs; a file once checked is one blob, so a
+// module imported from two places is one instance, as with ordinary imports (the graphs have no cycles)
+function checkedImporter(root, what) {
+  const urls = new Map();
+  const load = (path) => {
+    if (!urls.has(path))
+      urls.set(
+        path,
+        (async () => {
+          if (!CODE_SHA256[path]) throw new Error(`${what}'s ${path} has no pinned hash; nothing was loaded`);
+          const r = await fetch(`${root}/${path}`);
+          if (!r.ok) throw new Error(`${what}'s ${path} could not be fetched (${r.status})`);
+          const bytes = new Uint8Array(await r.arrayBuffer());
+          const got = await sha256hex(bytes);
+          if (got !== CODE_SHA256[path])
+            throw new Error(`${what}'s ${path} from the CDN is not the pinned file (sha256 ${got.slice(0, 12)}…); nothing was loaded`);
+          const src = new TextDecoder().decode(bytes);
+          const deps = [...new Set([...src.matchAll(IMPORT_RE)].map((m) => m[3]))];
+          const at = (d) => {
+            const u = new URL(d, 'https://x/' + path);
+            return u.pathname.slice(1) + u.search;
+          };
+          const blobOf = new Map(await Promise.all(deps.map(async (d) => [d, await load(at(d))])));
+          const out = src.replace(IMPORT_RE, (_, kw, q, d) => kw + q + blobOf.get(d) + q);
+          return URL.createObjectURL(new Blob([out], { type: 'text/javascript' }));
+        })(),
+      );
+    return urls.get(path);
+  };
+  return async (path) => import(await load(path));
+}
 async function loadKernel() {
+  const spec = checkedImporter(LIB.replace(/\/siding\/lib$/, ''), 'the wallet library'),
+    engine = checkedImporter(CDN, 'the engine');
   const [{ makeSigner }, txsign, addr, relay, secp, hash, { createKernel }, { knotsBlake2b }] = await Promise.all([
-    import(`${LIB}/schnorr.mjs`),
-    import(`${LIB}/txsign.mjs`),
-    import(`${LIB}/address.mjs`),
-    import(`${LIB}/relay.mjs`),
-    import(`${CDN}/codec/secp256k1.js`),
-    import(`${CDN}/codec/hash.js`),
-    import(`${CDN}/codec/kernel.js`),
-    import(`${CDN}/codec/overlays/knots-blake2b.js`),
+    spec('siding/lib/schnorr.mjs'),
+    spec('siding/lib/txsign.mjs'),
+    spec('siding/lib/address.mjs'),
+    spec('siding/lib/relay.mjs'),
+    engine('codec/secp256k1.js'),
+    engine('codec/hash.js'),
+    engine('codec/kernel.js'),
+    engine('codec/overlays/knots-blake2b.js'),
   ]);
   const j = async (p) => {
     const r = await fetch(`${CDN}/${p}`);
     if (!r.ok) throw new Error(`the engine's ${p} could not be fetched (${r.status})`);
     const bytes = new Uint8Array(await r.arrayBuffer());
-    const got = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((b) => b.toString(16).padStart(2, '0')).join('');
+    const got = await sha256hex(bytes);
     if (got !== RULES_SHA256[p])
       throw new Error(`the engine's ${p} from the CDN is not the pinned file (sha256 ${got.slice(0, 12)}…); nothing was loaded`);
     return JSON.parse(new TextDecoder().decode(bytes));

@@ -38,12 +38,28 @@ const MAP = [
 const FAKE_SHA = createHash('sha256')
   .update(readFileSync(`${ROOT}test/fake/tabnode.js`))
   .digest('hex');
+// the page checks every file of its wallet code by sha256: the fake relay's hash stands in for relay.mjs, and the real one
+// it re-exports (?real) is added under its own name with the real file's hash (that file is served as is)
+const FAKE_RELAY_SHA = createHash('sha256')
+  .update(readFileSync(`${ROOT}test/fake/relay.mjs`))
+  .digest('hex');
+const forSmoke = (src) => {
+  const real = src.match(/'siding\/lib\/relay\.mjs': '([0-9a-f]{64})'/)[1];
+  return src
+    .replace(/const TABNODE_SHA256 = '[0-9a-f]{64}'/, `const TABNODE_SHA256 = '${FAKE_SHA}'`)
+    .replace(
+      /'siding\/lib\/relay\.mjs': '[0-9a-f]{64}'/,
+      `'siding/lib/relay.mjs': '${FAKE_RELAY_SHA}', 'siding/lib/relay.mjs?real': '${real}'`,
+    );
+};
 const type = (p) =>
   p.endsWith('.html') ? 'text/html' : /\.json(ld)?$/.test(p) ? 'application/json' : p.endsWith('.css') ? 'text/css' : 'text/javascript';
 const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {});
 
 // one browser profile: seed its storage, then open Reef in one or more pages
-async function profile({ libDelay = 0, startMs = 50, seed = {} } = {}) {
+// tamper: the loader served with a byte changed (its hash no longer matches); oldV: index.html asks for another reef.js
+// version (a cached page of an older release); noSession: sessionStorage throws, as when site data is blocked
+async function profile({ libDelay = 0, startMs = 50, seed = {}, tamper = false, oldV = null, noSession = false } = {}) {
   const ctx = await browser.newContext();
   await ctx.route('**/*', async (route) => {
     const u = route.request().url();
@@ -63,8 +79,10 @@ async function profile({ libDelay = 0, startMs = 50, seed = {} } = {}) {
       if (body == null) return route.fulfill({ status: 404, body: '' });
       // the page checks its node loader by sha256: the fake loader's hash stands in for the pinned one (the real pin is
       // checked against the commit by the release test)
-      if (typeof p === 'string' && p.endsWith('/reef.js'))
-        body = String(body).replace(/const TABNODE_SHA256 = '[0-9a-f]{64}'/, `const TABNODE_SHA256 = '${FAKE_SHA}'`);
+      if (typeof p === 'string' && p.endsWith('/reef.js')) body = forSmoke(String(body));
+      if (tamper && typeof p === 'string' && p.endsWith('/fake/tabnode.js')) body = String(body) + '\n// changed\n';
+      if (oldV && typeof p === 'string' && p.endsWith('/index.html'))
+        body = String(body).replace(/reef\.js\?v=[^"]+"/, `reef.js?v=${oldV}"`);
       if (libDelay && !u.startsWith('http://localhost:8799')) await new Promise((r) => setTimeout(r, libDelay));
       const name = typeof p === 'object' ? p.path : p;
       return route.fulfill({ status: 200, contentType: type(name), body, headers: { 'access-control-allow-origin': '*' } });
@@ -73,6 +91,14 @@ async function profile({ libDelay = 0, startMs = 50, seed = {} } = {}) {
     return route.fulfill({ status: 404, body: '' }); // the mirror over http: nothing leaves the test (relays are faked above)
   });
   await ctx.addInitScript((ms) => (window.__START_MS = ms), startMs);
+  if (noSession)
+    await ctx.addInitScript(() =>
+      Object.defineProperty(window, 'sessionStorage', {
+        get() {
+          throw new DOMException('blocked', 'SecurityError');
+        },
+      }),
+    );
   const s = await ctx.newPage();
   await s.goto('http://localhost:8799/seed');
   await s.evaluate((seed) => {
@@ -81,7 +107,7 @@ async function profile({ libDelay = 0, startMs = 50, seed = {} } = {}) {
   }, seed);
   await s.close();
   const errors = [];
-  const open = async () => {
+  const open = async ({ ready = true } = {}) => {
     const page = await ctx.newPage();
     page.on('pageerror', (e) => errors.push(e.message));
     page.on(
@@ -89,7 +115,7 @@ async function profile({ libDelay = 0, startMs = 50, seed = {} } = {}) {
       (m) => m.type() === 'error' && !/Content Security Policy|WebSocket|ERR_|404/.test(m.text()) && errors.push(m.text()),
     );
     await page.goto('http://localhost:8799/index.html');
-    await page.waitForFunction(() => window.__fake, null, { timeout: 30000 });
+    if (ready) await page.waitForFunction(() => window.__fake, null, { timeout: 30000 });
     return page;
   };
   return { ctx, open, errors };
@@ -161,7 +187,9 @@ for (const [name, opts] of [
     JSON.stringify({ q, stored }),
   );
   await coins(page);
-  await page.waitForFunction(() => /\d/.test(document.getElementById('avail').textContent), null, { timeout: 5000 });
+  await page
+    .waitForFunction(() => /0\.0002000/.test(document.getElementById('avail').textContent), null, { timeout: 5000 })
+    .catch(() => {}); // the assertion below says what was found
   const avail = await page.textContent('#avail');
   t(`${name}: its coin is held (0.00020000 available, not 0.00025000)`, /0\.0002000\b|0\.00020000/.test(avail), avail);
   const q2 = JSON.parse((await ls(page, 'reef:quarantine:' + TAG)) ?? '[]');
@@ -348,8 +376,10 @@ for (const [name, opts] of [
     },
     { script: SCRIPT, key: rec[0].txid + ':1', value: changeSats },
   );
-  await a.waitForFunction(() => /\d/.test(document.getElementById('pending').textContent), null, { timeout: 5000 });
   const fmt = (x) => (x / 1e8).toFixed(8);
+  await a
+    .waitForFunction((want) => document.getElementById('pending').textContent.startsWith(want), fmt(changeSats), { timeout: 5000 })
+    .catch(() => {}); // the assertion below says what was found
   const pend = await a.textContent('#pending'),
     tot = await a.textContent('#total');
   t(
@@ -519,6 +549,166 @@ for (const withIdle of [false, true]) {
   await a.waitForFunction(() => !document.querySelector('#banners [data-b=feed]'), null, { timeout: 5000 }).catch(() => {});
   t('...and the warning goes when it reports again', !(await a.$('#banners [data-b=feed]')));
   t('no page errors in the double-check and heartbeat paths', !p.errors.length, p.errors.join(' | '));
+  await p.ctx.close();
+}
+// 9: sending, the edges: no coins at all, and a dust leftover while a second coin remains (not "empties the wallet")
+{
+  const WL = await import(`${ROOT}lib/wallet.mjs`);
+  const p = await profile({ seed: { 'reef:started': '1', 'reef:key': KEY, 'reef:vouched': '152100' } });
+  const a = await p.open();
+  await a.waitForFunction(() => /^tb1p/.test(document.getElementById('rcvaddr').value), null, { timeout: 30000 });
+  await a.evaluate(
+    ({ script }) => {
+      window.__fake.emit('message', { type: 'synced', height: 152100, applied: true });
+      window.__fake.emit('message', { type: 'coins', script, height: 152100, coins: [] });
+    },
+    { script: SCRIPT },
+  );
+  await a.waitForFunction(() => /^0\.00000000/.test(document.getElementById('avail').textContent), null, { timeout: 5000 });
+  await a.evaluate(() => document.querySelector('[data-p=send]').click());
+  const DEST = 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx';
+  await a.fill('#sendto', DEST);
+  await a.fill('#sendamt', '0.0001');
+  await a.click('#sendgo');
+  await a.waitForFunction(() => document.getElementById('senderr').textContent.length > 0, null, { timeout: 5000 }).catch(() => {});
+  const noCoins = await a.textContent('#senderr');
+  t('with no coins, Send says why in words and opens nothing', /No coins yet/.test(noCoins) && !(await a.$('#ask[open]')), noCoins);
+  // two coins of 20,000: a payment that leaves under 330 sat of the one it picks
+  const vs = WL.estimateVsize(1, ['0014751e76e8199196d454941c45d1b3a323f1433bd6', SCRIPT]);
+  const amount = 20000 - Math.ceil(vs) - 100;
+  await a.evaluate(
+    ({ script }) => {
+      window.__fake.emit('message', {
+        type: 'coins',
+        script,
+        height: 152100,
+        coins: [
+          { key: 'a1'.repeat(32) + ':0', value: 20000, height: 152000 },
+          { key: 'b2'.repeat(32) + ':0', value: 20000, height: 152000 },
+        ],
+      });
+    },
+    { script: SCRIPT },
+  );
+  await a.waitForFunction(() => /^0\.00040000/.test(document.getElementById('avail').textContent), null, { timeout: 5000 });
+  await a.click('#sendclear');
+  await a.evaluate(() => (document.getElementById('senderr').textContent = ''));
+  await a.fill('#sendto', DEST);
+  await a.fill('#sendamt', (amount / 1e8).toFixed(8));
+  await a
+    .waitForFunction(() => /leftover/.test(document.getElementById('sendpreview').textContent), null, { timeout: 5000 })
+    .catch(() => {});
+  const prev = await a.textContent('#sendpreview');
+  t(
+    'a dust leftover with a second coin left: said as a leftover, not as emptying the wallet',
+    /leftover too small/.test(prev) && !/empties/.test(prev),
+    prev,
+  );
+  await a.click('#sendgo');
+  await a.waitForSelector('#ask[open]', { timeout: 5000 });
+  const conf = await a.textContent('#ask-b');
+  t(
+    '...and the confirmation does not say it empties the wallet either',
+    /leftover/.test(conf) && !/empties/.test(conf),
+    conf.slice(0, 200),
+  );
+  await a.click('#ask-cancel');
+  t('no page errors in the sending edges', !p.errors.length, p.errors.join(' | '));
+  await p.ctx.close();
+}
+// 10: a payment's change in a block above the signed tip; the tip then reaches that block: confirmed, the change spendable
+{
+  const p = await profile({ seed: { 'reef:started': '1', 'reef:key': KEY, 'reef:vouched': '152100' } });
+  const a = await p.open();
+  await a.waitForFunction(() => /^tb1p/.test(document.getElementById('rcvaddr').value), null, { timeout: 30000 });
+  const COIN = 'cd'.repeat(32) + ':0';
+  const tip = (height) =>
+    a.evaluate((height) => {
+      window.__fake.emit('message', {
+        type: 'nostr',
+        height,
+        hash: 'ab'.repeat(32),
+        agree: 3,
+        diverged: false,
+        live: true,
+        created_at: Math.floor(Date.now() / 1000),
+      });
+    }, height);
+  await a.evaluate(
+    ({ script, COIN }) => {
+      window.__fake.emit('message', { type: 'synced', height: 152100, applied: true });
+      window.__fake.emit('message', { type: 'coins', script, height: 152100, coins: [{ key: COIN, value: 50000, height: 152000 }] });
+    },
+    { script: SCRIPT, COIN },
+  );
+  await tip(152100);
+  await a.waitForFunction(() => /0\.00050000/.test(document.getElementById('avail').textContent), null, { timeout: 5000 });
+  await a.evaluate(() => document.querySelector('[data-p=send]').click());
+  await a.fill('#sendto', 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx');
+  await a.fill('#sendamt', '0.0001');
+  await a.click('#sendgo');
+  await a.waitForSelector('#ask[open]', { timeout: 5000 });
+  await a.click('#ask-ok');
+  await a.waitForFunction(() => (window.__relay ?? []).length === 1, null, { timeout: 15000 });
+  const rec = JSON.parse((await ls(a, 'reef:sent:' + TAG)) ?? '[]')[0];
+  const fmt = (x) => (x / 1e8).toFixed(8);
+  await a.evaluate(
+    ({ script, key, value }) => {
+      window.__fake.emit('message', { type: 'synced', height: 152102, applied: true });
+      window.__fake.emit('message', { type: 'coins', script, height: 152102, coins: [{ key, value, height: 152102 }] });
+    },
+    { script: SCRIPT, key: rec.txid + ':1', value: rec.change },
+  );
+  await a
+    .waitForFunction((want) => document.getElementById('pending').textContent.startsWith(want), fmt(rec.change), { timeout: 5000 })
+    .catch(() => {});
+  const before = { avail: await a.textContent('#avail'), pending: JSON.parse(await ls(a, 'reef:sent:' + TAG))[0].pending };
+  await tip(152102);
+  await a
+    .waitForFunction((want) => document.getElementById('avail').textContent.startsWith(want), fmt(rec.change), { timeout: 5000 })
+    .catch(() => {});
+  const after = { avail: await a.textContent('#avail'), pending: JSON.parse(await ls(a, 'reef:sent:' + TAG))[0].pending };
+  t(
+    'change above the signed tip waits; when the tip reaches its block the payment is confirmed and the change spendable',
+    /^0\.00000000/.test(before.avail) && before.pending === true && after.avail.startsWith(fmt(rec.change)) && after.pending === false,
+    JSON.stringify({ before, after }),
+  );
+  t('no page errors when the tip rises', !p.errors.length, p.errors.join(' | '));
+  await p.ctx.close();
+}
+// 11: a loader that is not the pinned file: one notice that says so, nothing run, no second "went wrong" banner
+{
+  const p = await profile({ seed: { 'reef:started': '1', 'reef:key': KEY }, tamper: true });
+  const a = await p.open({ ready: false });
+  await a.waitForSelector('#banners [data-b=fatal]', { timeout: 30000 }).catch(() => {});
+  await a.waitForTimeout(1500);
+  const bs = await a.evaluate(() => [...document.querySelectorAll('#banners [data-b]')].map((b) => b.dataset.b + ': ' + b.textContent));
+  t(
+    'a tampered node loader is refused: one notice, nothing run, no second banner',
+    bs.length === 1 && /^fatal: Reef refused its node code/.test(bs[0]) && !(await a.evaluate(() => !!window.__fake)),
+    bs.join(' | '),
+  );
+  await p.ctx.close();
+}
+// 12: a cached page of another release asks for another reef.js: one reload, then it runs; none when the session cannot
+// remember it (no loop)
+for (const noSession of [false, true]) {
+  const p = await profile({ seed: { 'reef:started': '1', 'reef:key': KEY }, oldV: '2026-01-01.1', noSession });
+  const page = await p.ctx.newPage();
+  let loads = 0;
+  page.on('load', () => loads++);
+  await page.goto('http://localhost:8799/index.html#t');
+  await page.waitForFunction(() => window.__fake, null, { timeout: 30000 }).catch(() => {});
+  await page.waitForTimeout(1500);
+  const url = page.url();
+  const want = noSession ? 1 : 2;
+  t(
+    noSession
+      ? 'a mixed release with session storage blocked: no reload (it could not remember it), and the page runs'
+      : 'a mixed release: one reload that keeps the #hash, then the page runs',
+    loads === want && (await page.evaluate(() => !!window.__fake)) && (noSession || (/[?&]r=\d/.test(url) && url.endsWith('#t'))),
+    `${loads} loads, ${url}`,
+  );
   await p.ctx.close();
 }
 await browser.close();
