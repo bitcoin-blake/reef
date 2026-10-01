@@ -24,9 +24,7 @@ jobs:
         id: pins
         run: |
           # an empty match would check out the dependency's default branch instead of the pin: fail instead
-          node=$(grep -o 'blaketestnode@[0-9a-f]\{40\}' reef.js | head -1 | cut -d@ -f2)
-          lib=$(grep -o 'sidestr/spec@[0-9a-f]\{40\}' reef.js | head -1 | cut -d@ -f2)
-          engine=$(grep -o 'schema@[0-9a-f]\{40\}' reef.js | head -1 | cut -d@ -f2)
+          eval "$(node tools/pins.mjs --of reef.js)" # node=, lib=, engine=: the same reading as the release test (pinsOf)
           [ -n "$node" ] && [ -n "$lib" ] && [ -n "$engine" ] || { echo "::error::a pin was not found in reef.js (node '$node', lib '$lib', engine '$engine')"; exit 1; }
           { echo "node=$node"; echo "lib=$lib"; echo "engine=$engine"; } >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
@@ -78,7 +76,7 @@ jobs:
       # pin another node than the ones they publish now is refused here, before it is served (README, Releasing)
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
-      # and every repository pin of the four apps is a whole commit (a tag can be moved); tools/pins.mjs lists them all
+      # and every CDN reference of the pages passes tools/pins.mjs (the rules are in its header)
       - name: the other apps already publish this node pin
         run: node tools/pins.mjs --local
       - uses: actions/download-artifact@v4

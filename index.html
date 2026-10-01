@@ -99,7 +99,7 @@ body.idle #p-send .form, body.idle #sendgo { opacity:.6 }
 #nwidle { margin:6px 8px 0; border:1px solid var(--infoln); border-radius:3px }
 @media (prefers-color-scheme: dark) { .tool .logo svg { filter:none } .dd [role^=menuitem]:focus-visible .k, .dd div:hover .k { color:#fff } }
 @media (max-width:760px) { .cardunit { display:inline; font-size:11px } #p-tx td { background:transparent !important } #p-tx td.when { grid-column:1 / -1; grid-row:3; font-size:11px; color:var(--mut) } #p-tx td:nth-child(4) { grid-column:1; grid-row:1; font-weight:600 } #p-tx td.amt { grid-row:1 } #p-tx td:nth-child(2) { grid-row:2 } #p-tx td:nth-child(3) { display:none }
-  .banner span { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden } .banner.full span { display:block } }
+  .banner:has(> .more) > span { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden } #banners > .banner ~ .banner:has(> .more):not(.full) > span { -webkit-line-clamp:1 } .banner.full > span { display:block } }
 
 /* round five */
 [role=tab][aria-selected=true] { box-shadow:inset 0 -3px 0 var(--sel) } #toasts-alert { position:fixed; right:18px; bottom:18px; display:flex; flex-direction:column; gap:8px; z-index:61 }
@@ -184,11 +184,11 @@ fieldset { min-inline-size:0 }
    disabled option's label is greyed; option rows are at least 24px tall; the tray's sync dot pulses a few times, then rests */
 #sendamt { min-width:11ch; flex:1 1 9rem }
 #rcvfull { word-break:normal !important; overflow-wrap:normal !important }
-#options label:has(input:disabled) { color:var(--mut) }
-#options label.row { min-height:24px; align-items:center }
+#options label:has(input:disabled), #options .op .form > :is(label,.lbl):has(+ div :disabled) { color:var(--mut) }
+#options label.row { min-height:24px; align-items:center } #options label.row input[type=checkbox] { margin:5px 6px 5px 0 }
 #tray i.sync { animation-iteration-count:4 }
 @media (max-width:760px) { #otabs { flex-wrap:wrap } #otabs div { flex:none } }
-@media (max-width:420px) { #rcvtbl th:nth-child(2), #rcvtbl td:nth-child(2) { display:none } }
+@media (max-width:420px) { #rcvtbl th:nth-child(2), #rcvtbl td:nth-child(2) { display:none } #rcvtbl td:nth-child(3) { white-space:normal } }
 .banner button .sh { display:none }
 @media (max-width:400px) { .banner button .lg { display:none } .banner button .sh { display:inline } }
 </style>
@@ -271,7 +271,7 @@ The node answers from this tab's own validated state; wallet commands answer for
   </div>
 </div>
 <script defer src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js" integrity="sha384-8FWZA6BGMXhsfO+BLtrJK0We6gg5o1JyO8xQm6peWDEUs17ACA5ziE/NIAkl9z2k" crossorigin="anonymous"></script>
-<script type="module" src="reef.js?v=2026-10-01.34"></script>
+<script type="module" src="reef.js?v=2026-10-01.35"></script>
 <dialog id="about" aria-labelledby="about-title"><div class="t" id="about-title">About Reef</div><div class="b"><div><img src="og.png" alt="" style="width:64px;height:64px;object-fit:cover;border-radius:12px;border:1px solid var(--line2)"></div><div>
 <p><b>Reef</b> · a Bitcoin node in a browser tab, for txbt4, the BLAKE2b testnet4.</p>
 <p>It looks like Knots and runs a chain Knots defined, but it is not Knots. The tab fetches the fork-point UTXO snapshot, recomputes its hashes, validates every block since the fork and follows the chain tip. The wallet is one key kept in this tab.</p>

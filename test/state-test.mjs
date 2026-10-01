@@ -273,6 +273,44 @@ t(
       !S.validRecord({ txid: 'x' }, { check, scriptOf }),
   );
 }
+// ---- the boundaries the merge and the verdicts sit on
+{
+  // the same stamp on both copies: the one that is settled wins over the one still waiting, whichever comes first
+  const waiting = pay({ vAt: 5 }),
+    settled = pay({ pending: false, height: 152101, vAt: 5 });
+  t(
+    'two copies with the same stamp: the settled one wins, in either order',
+    S.mergeOne(clone(waiting), clone(settled)).height === 152101 && S.mergeOne(clone(settled), clone(waiting)).height === 152101,
+  );
+  // a payment mined: a conflicting payment (same coin, its own chain of versions) did not happen, every version of it,
+  // including one already replaced by its own raise (not waiting any more, not yet failed)
+  const mine = pay({ txid: tx('7'), inputs: [inA] });
+  const v1 = pay({ txid: tx('8'), inputs: [inA], pending: false, replaced: tx('9'), replacedBy: tx('9') }),
+    v2 = pay({ txid: tx('9'), inputs: [inA], replaces: tx('8') });
+  const sent = [mine, v1, v2];
+  S.confirm(sent, mine, 152110);
+  t(
+    'confirming a payment fails every version of a conflicting one, the replaced version too',
+    v2.failed === tx('7') && v1.failed === tx('7') && !v2.pending,
+    JSON.stringify({ v1: v1.failed, v2: v2.failed }),
+  );
+  // a version that did not happen, with no change of its own among the coins: nothing to say, and no error
+  const gone = [
+    pay({ txid: tx('3'), pending: false, replaced: tx('4') }),
+    pay({ txid: tx('4'), replaces: tx('3'), pending: false, height: 152100 }),
+  ];
+  let fx;
+  try {
+    fx = S.onCoins({ sent: gone, coins: [], height: 152110 });
+  } catch (e) {
+    fx = e;
+  }
+  t(
+    'a replaced version with no change among the coins: no effect, and nothing thrown',
+    Array.isArray(fx) && !fx.some((e) => /after all/.test(e.body ?? '')),
+    String(fx),
+  );
+}
 // ---- a reorganisation: the verdict learnt last wins the merge
 {
   const P = pay({ replacedBy: tx('2') }),

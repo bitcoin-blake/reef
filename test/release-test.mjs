@@ -26,18 +26,24 @@ const t = (name, cond, detail = '') => {
   console.log(`  ${cond ? 'PASS' : 'FAIL'}  ${name}${cond || !detail ? '' : `\n        ${detail}`}`);
   cond ? ok++ : failed++;
 };
-// a policy as { directive: Set(tokens) }
-const parseCsp = (csp) =>
-  Object.fromEntries(
-    csp
-      .split(';')
-      .map((d) => d.trim().split(/\s+/))
-      .filter((d) => d[0])
-      .map(([k, ...v]) => [k, new Set(v)]),
-  );
+// a policy as { directive: Set(tokens) }, directive names in lower case as the browser reads them; a directive written twice
+// is listed in `repeated` (the browser enforces the first copy and ignores the second, so a checker must not read the last)
+const parseCsp = (csp) => {
+  const out = {},
+    repeated = [];
+  for (const [k0, ...v] of csp
+    .split(';')
+    .map((d) => d.trim().split(/\s+/))
+    .filter((d) => d[0])) {
+    const k = k0.toLowerCase();
+    if (out[k]) repeated.push(k);
+    else out[k] = new Set(v);
+  }
+  return Object.defineProperty(out, 'repeated', { value: repeated, enumerable: false });
+};
 const cspDiff = (csp, want) => {
   const got = parseCsp(csp),
-    out = [];
+    out = got.repeated.map((k) => `${k} repeated`);
   for (const k of new Set([...Object.keys(got), ...Object.keys(want)])) {
     const g = got[k] ?? new Set(),
       w = new Set(want[k] ?? []);
@@ -51,6 +57,15 @@ const cspDiff = (csp, want) => {
   return out.join('; ');
 };
 const cspMatches = (csp, want) => cspDiff(csp, want) === '';
+// the policy meta sits in <head>, before the first <script (a meta policy governs only what is parsed after it)
+const cspPlaced = (html) => {
+  const head = html.search(/<head[\s>]/i),
+    endHead = html.search(/<\/head>/i),
+    meta = html.search(/<meta[^>]+http-equiv="Content-Security-Policy"/i),
+    script = html.search(/<script[\s>]/i);
+  return head >= 0 && meta > head && (endHead < 0 || meta < endHead) && (script < 0 || meta < script);
+};
+const { pinsOf, judge, cdnRefs, offCdn, pageVerdict } = await import('../tools/pins.mjs');
 // ---- the page's version and version.json agree (a release that forgets one shows a false update banner)
 {
   const src = readFileSync(new URL('../reef.js', import.meta.url), 'utf8');
@@ -59,9 +74,15 @@ const cspMatches = (csp, want) => cspDiff(csp, want) === '';
   t('reef.js VERSION matches version.json', v && v === j.version, `${v} vs ${j.version}`);
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
   t('index.html loads reef.js?v= the same version', html.includes(`reef.js?v=${v}"`));
-  const node = src.match(/blaketestnode@([0-9a-f]{40})/)?.[1],
-    lib = src.match(/sidestr\/spec@([0-9a-f]{40})/)?.[1],
-    eng = src.match(/schema@([0-9a-f]{40})/)?.[1];
+  const pins = pinsOf(src); // as CI reads them (tools/pins.mjs --of)
+  const node = pins['bitcoin-blake/blaketestnode'],
+    lib = pins['sidestr/spec'],
+    eng = pins['bitcoin-desktop/schema'];
+  t('the node, library and engine pins are read from reef.js', !!node && !!lib && !!eng);
+  t(
+    'the security policy is the first thing in <head> that can matter: before any script (a policy only covers what comes after it)',
+    cspPlaced(html),
+  );
   const csp = html.match(/Content-Security-Policy" content="([^"]+)"/)?.[1] ?? '';
   {
     // the engine's rule files: the hashes in reef.js are those of the files at the pinned commit
@@ -181,19 +202,28 @@ const cspMatches = (csp, want) => cspDiff(csp, want) === '';
     (c) => c.replace('qrcode-generator@1.4.4', 'qrcode-generator@1.4.5'),
     (c) => c.replace('webtorrent@3.0.21', 'webtorrent@3.0.22'),
     (c) => c.replace("base-uri 'none'", "base-uri 'self'"),
+    (c) => "script-src * 'unsafe-inline' 'unsafe-eval'; " + c, // a second script-src in front: the browser enforces the first
+    (c) => c.replace('script-src', 'SCRIPT-SRC') + "; script-src 'self'", // the same, in another case
   ];
   t(
-    'the policy check refuses each drift (stale pin, bare prefix, unsafe-eval, wildcard, dropped directive, other versions)',
+    'the policy check refuses each drift (stale pin, bare prefix, unsafe-eval, wildcard, dropped directive, other versions, a directive written twice)',
     cspMatches(csp, want) && drifts.every((d) => !cspMatches(d(csp), want)),
     drifts
       .map((d, i) => (cspMatches(d(csp), want) ? `drift ${i} passed` : ''))
       .filter(Boolean)
       .join(', '),
   );
+  // and the policy's place: moved into <body>, or after a script, it is refused
+  const meta = html.match(/<meta[^>]+http-equiv="Content-Security-Policy"[^>]*>/)?.[0] ?? '';
+  const inBody = html.replace(meta, '').replace(/<body([^>]*)>/i, (m) => m + meta);
+  const afterScript = html.replace(meta, '').replace(/(<script[\s\S]*?<\/script>)/i, (m) => m + meta);
+  t(
+    'the placement check refuses a policy moved into <body> or after a script',
+    cspPlaced(html) && !cspPlaced(inBody) && !cspPlaced(afterScript),
+  );
 }
 {
   // tools/pins.mjs: every CDN reference is judged, not only owner/repo@ref, and only a whole commit or an exact version passes
-  const { judge } = await import('../tools/pins.mjs');
   const C = 'cdn.jsdelivr.net';
   const refused = [
     [C, '/gh/evil/x/a.js'],
@@ -204,6 +234,9 @@ const cspMatches = (csp, want) => cspDiff(csp, want) === '';
     [C, '/npm/evil/a.js'],
     [C, '/npm/evil@^1.2.3/a.js'],
     [C, '/combine/gh/a/b@1/x.js'],
+    [C, '/gh/a/b@' + 'ab'.repeat(20) + '/../../../npm/evil@latest/x.js'], // the browser resolves it to /npm/evil@latest
+    [C, '/gh/a/b@' + 'ab'.repeat(20) + '/%2e%2e/%2e%2e/%2e%2e/npm/evil@latest/x.js'],
+    [C, '/npm/x@1.2.3/../x@latest/a.js'],
     [C, ''],
     ['esm.sh', '/evil'],
     ['unpkg.com', '/evil@1.0.0/a.js'],
@@ -213,6 +246,49 @@ const cspMatches = (csp, want) => cspDiff(csp, want) === '';
     [C, '/npm/qrcode-generator@1.4.4/qrcode.js'],
     [C, '/npm/@scope/n@1.2.3-rc.1/x.js'],
   ];
+  // read from a page's text: any case of the host, \/ as in JSON, a user name before the host
+  const pinned = 'https://cdn.jsdelivr.net/gh/a/b@' + 'ab'.repeat(20) + '/x.js';
+  const texts = [
+    "import('https://CDN.jsdelivr.net/gh/evil/x@main/a.js')",
+    '{"u":"https:\\/\\/cdn.jsdelivr.net\\/gh\\/evil\\/x@main\\/a.js"}',
+    "import('https://user@cdn.jsdelivr.net/gh/a/b@" + 'ab'.repeat(20) + "/x.js')",
+  ];
+  t(
+    "the pins check reads a page's URLs as the browser does (host in any case, \\/ as /, a user name before the host)",
+    texts.every((x) => cdnRefs(x).some((r) => r.why)) && cdnRefs(`import('${pinned}')`).every((r) => !r.why),
+    texts.filter((x) => !cdnRefs(x).some((r) => r.why)).join(' | '),
+  );
+  t(
+    'on a page without a security policy, a script from any other host is found (raw GitHub, another github.io, a mirror)',
+    offCdn("import('https://raw.githubusercontent.com/a/b/main/x.js')").length === 1 &&
+      offCdn('<script src="https://evil.github.io/x.js"></script>').length === 1 &&
+      offCdn("new Worker('//fastly.jsdelivr.net/gh/a/b@main/w.js')").length === 1 &&
+      offCdn(`import('${pinned}'); import('https://bitcoin-blake.github.io/reef/x.js')`).length === 0,
+  );
+  t(
+    'pinsOf: the first pin of each repository, as CI reads them',
+    pinsOf(`'${pinned}'; 'https://cdn.jsdelivr.net/gh/a/b@${'cd'.repeat(20)}/y.js'`)['a/b'] === 'ab'.repeat(20),
+  );
+  {
+    // the demo page's two exceptions (its node URL built from Reef's pin, its policy's organisation prefix) hold on that page only
+    const demo = 'blaketestnode/browser/index.html';
+    const body =
+      '<meta http-equiv="Content-Security-Policy" content="script-src https://cdn.jsdelivr.net/gh/bitcoin-blake/">' +
+      '<script>const base = `https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@${pin}`;</script>';
+    const fails = (f, b) => pageVerdict(f, b, true).failures.length;
+    t(
+      "the demo page's run-time node URL and its organisation prefix pass there, and fail on any other page",
+      fails(demo, body) === 0 &&
+        fails('reef/index.html', body) === 2 &&
+        fails(demo, body.replace('bitcoin-blake/blaketestnode@', 'evil/x@')) === 1 &&
+        fails(demo, body.replace('gh/bitcoin-blake/">', 'gh/">')) === 1,
+      JSON.stringify([pageVerdict(demo, body, true).failures, pageVerdict('reef/index.html', body, true).failures]),
+    );
+  }
+  t(
+    'a commit filled in at run time is never taken as a pin',
+    cdnRefs('`https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@${pin}`').every((r) => r.runtime && !r.ref),
+  );
   t(
     'the pins check refuses every unpinned CDN reference and passes whole commits and exact versions',
     refused.every(([h, p]) => judge(h, p).why) && passed.every(([h, p]) => !judge(h, p).why),

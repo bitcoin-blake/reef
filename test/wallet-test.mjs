@@ -127,6 +127,77 @@ t(
     W.spendable(coins, height, new Set([coins[0].key])).length === 2 &&
     W.spendable(coins, 152180).length === 4,
 );
+{
+  // sendCoins: the one choice behind every payment
+  const keys = (cs) => cs.map((c) => c.key).join(',');
+  const all = W.sendCoins({ coins, height: 152180 });
+  t('sendCoins: every mature coin, largest first', keys(all) === keys([coins[3], coins[0], coins[1], coins[2]]), keys(all));
+  t(
+    'sendCoins: a coin held by a waiting payment is never offered',
+    !W.sendCoins({ coins, height, held: new Set([coins[0].key]) }).some((c) => c.key === coins[0].key),
+  );
+  t(
+    'sendCoins: a mined coin counts its maturity at the vouched height, not the source height',
+    W.sendCoins({ coins, height: 152180 }).some((c) => c.coinbase) &&
+      !W.sendCoins({ coins, height: 152180, vouched: 152100 }).some((c) => c.coinbase) &&
+      W.sendCoins({ coins, height: 152180, vouched: 152200 }).some((c) => c.coinbase),
+  );
+  const fp = W.sendCoins({ coins, height, first: new Set([coins[2].key]), prefer: new Set([coins[1].key]) });
+  t(
+    'sendCoins: preferred coins before first ones, first ones before the rest',
+    keys(fp.slice(0, 2)) === keys([coins[1], coins[2]]),
+    keys(fp),
+  );
+  t('sendCoins: nothing to send from', W.sendCoins({ coins: [], height }).length === 0);
+}
+{
+  // the boundaries a guard sits on: each side of it, so a guard moved by one is caught
+  const est = (n) => Math.ceil(1 * W.estimateVsize(n, [spkB, spkA]));
+  const one = (v, i = 7) => coin(i, v);
+  t(
+    'exactly 21 million coins is an amount; one satoshi more is not',
+    W.parseAmount('21000000') === 2100000000000000 && throws(() => W.parseAmount('21000000.00000001'), /21 million/),
+  );
+  t(
+    'a fee rate of exactly the cap plans; one more does not',
+    !!W.plan({ coins: [one(5000000)], amount: 10000, rate: 1000, destSpk: spkB, changeSpk: spkA }) &&
+      throws(() => W.plan({ coins: [one(5000000)], amount: 10000, rate: 1001, destSpk: spkB, changeSpk: spkA }), /between 1 and 1000/),
+  );
+  {
+    // a coin that covers the amount and the fee exactly is enough on its own: the next coin is not taken too
+    const amount = 10000,
+      fee = est(1);
+    const p = W.plan({ coins: [one(amount + fee + 330), one(9999, 8)], amount, rate: 1, destSpk: spkB, changeSpk: spkA });
+    t(
+      'a coin covering amount, fee and a change of exactly the dust limit: one coin, and the change kept as an output',
+      p.picked.length === 1 && p.outputs.length === 2 && p.change === 330,
+      JSON.stringify({ n: p.picked.length, out: p.outputs.length, change: p.change }),
+    );
+    const q = W.plan({ coins: [one(amount + fee), one(9999, 8)], amount, rate: 1, destSpk: spkB, changeSpk: spkA });
+    t('a coin covering amount and fee exactly: it alone is spent', q.picked.length === 1, String(q.picked.length));
+  }
+  {
+    // a raise needs a payment of at least the smallest relayed amount
+    const s0 = { inputs: [one(1).key], values: [100000], sats: 546, fee: 200, change: 99000, toScript: spkB, kind: 'payment' };
+    t(
+      'a payment of exactly the smallest amount can be raised; one satoshi less cannot',
+      !!W.planReplace(s0, { rate: 5, ownSpk: spkA }) &&
+        throws(() => W.planReplace({ ...s0, sats: 545 }, { rate: 5, ownSpk: spkA }), /cannot be raised/),
+    );
+  }
+  {
+    // a cancel says what it is in the history, in each of its states
+    const base = { to: 'tb1pdest', toScript: spkB, sats: 0, fee: 300, inputs: [one(1).key], kind: 'cancel', at: 1 };
+    const label = (o) => W.history({ coins: [], sent: [{ txid: 'c1'.repeat(32), ...base, ...o }], height, address: 'tb1pme' })[0]?.label;
+    t(
+      'the three cancel labels: waiting, done, and an attempt that was replaced',
+      label({ pending: true }) === 'Cancel (waiting)' &&
+        label({ pending: false, height: 152090 }) === 'Cancelled payment' &&
+        label({ pending: false, replaced: 'c2'.repeat(32) }) === 'Cancel attempt',
+      [label({ pending: true }), label({ pending: false, height: 152090 }), label({ pending: false, replaced: 'x' })].join(' / '),
+    );
+  }
+}
 function signAndCheck(p) {
   const tx = W.unsignedTx(p);
   const prevouts = p.picked.map((c) => ({ value: c.value, scriptPubKey: spkA }));

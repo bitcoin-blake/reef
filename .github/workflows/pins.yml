@@ -1,8 +1,7 @@
 # Reef, Bight, Winch and Hitch share one node (the same OPFS files and the lock 'bitcoin-blake:node' on one origin): two
-# node versions on the same files is the failure this guards against. Hourly (and before and after each Reef deploy, in
-# test.yml) the published pages are fetched: their node pins must agree, and every repository pin on the CDN must be a whole
-# commit (tools/pins.mjs, which also lists the library and engine pins). GitHub runs a schedule on a best-effort basis: a run
-# can be late or skipped, so the deploy-time checks are the ones a release relies on.
+# node versions on the same files is the failure this guards against. On a schedule (and before and after each Reef deploy, in
+# test.yml) the published pages are checked by tools/pins.mjs: the rules are in its header. GitHub runs a schedule on a
+# best-effort basis: a run can be late or skipped, so the deploy-time checks are the ones a release relies on.
 name: pins
 on:
   schedule: [{ cron: '17 * * * *' }]

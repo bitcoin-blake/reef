@@ -4,7 +4,7 @@
 // tested against the kernel; this file is the host: storage, the node, the relays, the window. Every string that comes
 // from outside (relays, the mempool, the chain, links, options) reaches the page as text, never as markup.
 const $ = (id) => document.getElementById(id);
-export const VERSION = '2026-10-01.34';
+export const VERSION = '2026-10-01.35';
 const SCHEMA = 2; // the storage layout this version writes
 const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@b54e498a5603771586dc8d9dcb963223014dfd8a';
 const LIB = 'https://cdn.jsdelivr.net/gh/sidestr/spec@fe689e9c723f9bf43393d2dd5b6f924a701c8a18/siding/lib',
@@ -285,7 +285,9 @@ let fatalShown = false;
 function showFatal(text) {
   fatalShown = true; // the error handler does not raise a second notice after this one
   $('syncmsg').textContent = text;
+  $('syncmsg').title = text;
   banner('fatal', 'bad', text, [['Reload', () => location.reload()]]);
+  unbanner('nodeerr'); // one notice for one stop
 }
 
 // errors nobody caught: said, and kept (the last 20) for Copy diagnostics, instead of a page silently stuck
@@ -338,11 +340,11 @@ async function loadTabnode() {
   if (got !== TABNODE_SHA256) throw new Error(`the node's loader from the CDN is not the pinned file (sha256 ${got.slice(0, 12)}…)`);
   return import(URL.createObjectURL(new Blob([bytes], { type: 'text/javascript' })));
 }
-let createTabNode, mib, secs, n, WL, S, V, T;
+let createTabNode, secs, n, WL, S, V, T;
 let loadingOwn = false; // past the CDN: a failure now is this site's own files
 try {
   // a CDN that hangs rather than fails would leave "starting" for ever: twenty seconds, then said
-  ({ createTabNode, mib, secs, n } = await Promise.race([
+  ({ createTabNode, secs, n } = await Promise.race([
     loadTabnode(),
     new Promise((_, no) => setTimeout(() => no(new Error('no answer in 20 seconds')), 20e3)),
   ]));
@@ -397,6 +399,7 @@ const post = (m) => tn.post(m);
 let lastPhase = null;
 function setSync(msg, pct, eta) {
   $('syncmsg').textContent = msg;
+  $('syncmsg').title = msg; // cut short on a phone: the whole line on hover or long-press
   const phase = node.error ? 'error' : node.synced ? 'synced' : node.phase;
   if (phase !== lastPhase) {
     lastPhase = phase;
@@ -432,19 +435,20 @@ function renderInfo() {
   const st = node.st;
   if (st) {
     $('i-datadir').textContent =
-      `origin private file system (OPFS), ${st.usage ? mib(st.usage) + ' used' : 'usage unknown'}${st.quota ? ' of ' + (st.quota / 1073741824).toFixed(1) + ' GiB' : ''}`;
+      `origin private file system (OPFS), ${st.usage ? bytesSay(st.usage) + ' used' : 'usage unknown'}${st.quota ? ' of ' + bytesSay(st.quota) : ''}`;
     $('i-snapdisk').textContent =
       st.dat < 0
         ? 'absent'
         : st.dat >= st.expect.bytes
-          ? `complete, ${mib(st.dat)}`
-          : `${mib(st.dat)} of ${mib(st.expect.bytes)}${st.partial ? ' (resumable)' : ''}`;
+          ? `complete, ${bytesSay(st.dat)}`
+          : `${bytesSay(st.dat)} of ${bytesSay(st.expect.bytes)}${st.partial ? ' (resumable)' : ''}`;
     $('i-sha').textContent = st.sha
       ? st.sha === st.expect.sha256
         ? st.sha + ' — matches the pinned value'
         : 'MISMATCH ' + st.sha
       : 'not checked yet';
-    if (st.idx > 0 && !node.hs) $('i-hs').textContent = `${st.expect.txoutsetHash} — verified on an earlier visit; index ${mib(st.idx)}`;
+    if (st.idx > 0 && !node.hs)
+      $('i-hs').textContent = `${st.expect.txoutsetHash} — verified on an earlier visit; index ${bytesSay(st.idx)}`;
     if (!node.coins) $('i-coins').textContent = `${n(st.expect.coins)} expected`;
   }
   if (node.hs) $('i-hs').textContent = `${node.hs} — recomputed from the file, ${node.hsOk ? 'matches' : 'MISMATCH'}`;
@@ -577,15 +581,31 @@ function renderStatus() {
       [['Reload', () => location.reload()]],
     );
   else unbanner('unresponsive');
-  if (node.error && !passing)
+  // once the fatal notice is up it says it all: the node's own error notice is not shown beside it
+  if (node.error && !passing && !fatalShown)
     banner('nodeerr', 'bad', plainError(node.error), [
       ['Retry', () => location.reload()],
       ['Wipe and fetch again…', () => wipeAsk()],
     ]);
   else unbanner('nodeerr');
+  // before the coins are known the line says why the balance waits (renderWalletInner writes it): left as it is here
+  if (!IDLE && W && !W.coinsKnown) return;
   $('ovtrust').textContent = IDLE ? IDLE_TEXT : W && W.coinsKnown && tr.level !== 'ok' && tr.level !== 'none' ? tr.text : '';
   $('ovtrust').classList.toggle('mut', tr.level === 'none');
   $('ovtrust').classList.toggle('warnt', tr.level !== 'none');
+}
+// the Information tab's mempool memory line: the fees total hidden under Mask values when it includes the wallet's own
+function renderMpMem() {
+  const m = node.mempool;
+  if (!m) return;
+  const masked = OPT.mask && (m.txs ?? []).some(ownTx);
+  $('i-mpmem').textContent = `${n(m.bytes)} vB, ${masked ? 'fees hidden (they include yours)' : `${n(m.fees)} sat in fees`}`;
+}
+// sizes in decimal units, as every notice says them (1.1 GB, 830 MB): never MiB beside GB
+function bytesSay(b) {
+  if (b >= 1e9) return (b >= 10e9 ? Math.round(b / 1e9) : (b / 1e9).toFixed(1)) + ' GB';
+  if (b >= 1e6) return (b >= 100e6 ? Math.round(b / 1e6) : (b / 1e6).toFixed(1)) + ' MB';
+  return (b >= 1e3 ? Math.round(b / 1e3) : b) + (b >= 1e3 ? ' kB' : ' bytes');
 }
 // node errors in words a person can act on
 function plainError(e) {
@@ -610,6 +630,12 @@ function onMessage(m) {
     LS.del('reef:vouched');
     showFatal(`The node stopped: ${m.text}. Nothing can be sent from this tab until it is reloaded.`);
     renderWallet();
+    updatePreview(); // the Send page says the stop, not "once the tab is up to date"
+    return;
+  }
+  // a spend question about one of our payments that failed (a busy or unreadable file): forgotten, so the next coins asks again
+  if (m.type === 'error' && typeof m.req === 'string' && m.req.startsWith('sent:')) {
+    asked.delete(m.req.slice(5));
     return;
   }
   if (m.type === 'status' || m.type === 'verified') renderInfo();
@@ -643,10 +669,10 @@ function onMessage(m) {
     else renderWallet();
   } else if (m.type === 'mempool') {
     $('i-mp').textContent = `${n(m.count)} (${m.stats.refused} refused, ${m.stats.dropped} dropped since the tab opened)`;
-    $('i-mpmem').textContent = `${n(m.bytes)} vB, ${n(m.fees)} sat in fees`;
+    renderMpMem();
     if (document.querySelector('#nwtabs [role=tab][aria-selected=true]')?.dataset.t === 'mempool') renderMempool();
     walletMempool();
-  } else if (m.type === 'coin') cprint(JSON.stringify(m, null, 2));
+  } else if (m.type === 'coin') cprint(JSON.stringify(gettxoutOf(m), null, 2));
   else if (m.type === 'coins') onCoins(m);
   else if (m.type === 'spend' && typeof m.req === 'string' && m.req.startsWith('sent:')) onSpendAnswer(m);
   else if (m.type === 'spend' && typeof m.req === 'string' && m.req.startsWith('recheck:')) {
@@ -1314,7 +1340,11 @@ function ask(title, lines, okLabel = 'OK', danger = false, cancelLabel = 'Cancel
     ok.onclick = () => done(true);
     $('ask-cancel').onclick = () => done(false);
     if (third) $('ask-third').onclick = () => done(third.value);
-    d.onclose = () => resolve(escNull ? null : false);
+    // the close event of a dialog closed just before (a question followed by another) arrives after this one has opened: it
+    // must not answer this one (it did: "Forget it…" and "Cancel the payment (safe)…" each answered "no" to the next question)
+    d.onclose = () => {
+      if (!d.open) resolve(escNull ? null : false);
+    };
     d.showModal();
     (third?.focus ? $('ask-third') : focusOk ? ok : $('ask-cancel')).focus();
   });
@@ -1387,7 +1417,7 @@ function fillOptions(
     })
     .catch(() => {});
   $('o-seednote').textContent = tn.seeding?.t
-    ? `seeding now: ${tn.seeding.t.wires.filter((w) => !w.destroyed).length} peer(s), ${mib(tn.seeding.t.uploaded)} uploaded`
+    ? `seeding now: ${tn.seeding.t.wires.filter((w) => !w.destroyed).length} peer(s), ${bytesSay(tn.seeding.t.uploaded)} uploaded`
     : fileReady()
       ? 'the snapshot is here; turn this on to serve it'
       : 'starts once the snapshot is here and checked';
@@ -1430,7 +1460,7 @@ function fillOptions(
   navigator.storage
     ?.estimate?.()
     .then((e) => {
-      $('o-storage').textContent = `${mib(e.usage ?? 0)} in use of ${mib(e.quota ?? 0)} the browser allows`;
+      $('o-storage').textContent = `${bytesSay(e.usage ?? 0)} in use of ${bytesSay(e.quota ?? 0)} the browser allows`;
     })
     .catch(() => {
       $('o-storage').textContent = 'unknown';
@@ -1852,6 +1882,7 @@ function applyDisplay() {
   if (WL) feeLine();
   if (W) renderWallet();
   if (node?.mempool && $('nw').classList.contains('open')) renderMempool(); // its own fees follow Mask values at once
+  renderMpMem();
 }
 // the wallet's code and the chain's rules: the sidestr library and the engine at their pinned commits, the rule files
 // checked by hash before use
@@ -2064,11 +2095,13 @@ async function walletInit() {
           banner(
             'quarantine',
             'warn',
-            `${held.length} stored payment record(s) could not be verified against their own transactions, so Reef set them aside (kept in this browser); the coins they spend are held so nothing is paid twice.`,
+            `${held.length === 1 ? 'A stored payment record' : `${held.length} stored payment records`} could not be verified against ${held.length === 1 ? 'its own transaction' : 'their own transactions'}, so Reef set ${held.length === 1 ? 'it' : 'them'} aside (kept in this browser); the coins ${held.length === 1 ? 'it spends are' : 'they spend are'} held so nothing is paid twice.`,
             [
               [
                 'Release their coins…',
                 async () => {
+                  // an idle tab changes nothing: said at once, never after a dialog that looks like it would act
+                  if (!writable()) return notify('Not here', 'release them in the tab that runs the node', false);
                   if (
                     await ask(
                       'Release held coins',
@@ -2388,6 +2421,8 @@ function renderWalletInner() {
   if (!known) {
     for (const id of ['avail', 'pending', 'immature', 'total', 'sendbal'])
       $(id).textContent = IDLE ? (id === 'total' ? '— (other tab)' : '—') : '…';
+    $('ovtrust').classList.add('mut'); // the reason the balance waits: plain words, not a warning
+    $('ovtrust').classList.remove('warnt');
     $('ovtrust').textContent = IDLE
       ? IDLE_TEXT
       : PROBING
@@ -2583,6 +2618,8 @@ for (const id of ['txtype', 'txsearch'])
     listSayTimer = setTimeout(() => {
       if (!listCount) return;
       const { shown, of } = listCount;
+      // a list that is empty for another reason (nothing yet, waiting for the node, an idle tab) says that reason, as its row does
+      if (!of) return sayOnce($('txrows').textContent.trim() || 'No transactions');
       sayOnce(shown ? `${n(shown)} of ${n(of)} transaction${of === 1 ? '' : 's'} shown` : 'No transaction matches');
     }, 500);
   });
@@ -2658,26 +2695,31 @@ function readSend() {
       .filter((s) => s.pending && s.abandoned && (s.toScript ?? W.addr.decodeAddress(s.to)?.script) === dec.script)
       .flatMap((s) => s.inputs ?? []),
   );
-  const coins = WL.spendable(
-    W.coins,
-    WL.maturityHeight(W.height, vouched()),
-    wallBal().held,
-    WL.reuseFirst(sent, quarantineStored()),
-    prefer,
-  );
+  const coins = sendCoins(prefer);
   if (!coins.length) throw new Error(noCoinsWhy());
   const p = WL.plan({ coins, amount, rate, destSpk: dec.script, changeSpk: W.script, all });
   return { to, dec, self: chk.self, all, rate, p };
 }
+// the coins a payment may use now (WL.sendCoins): held ones never, mined ones only once mature at the vouched height
+function sendCoins(prefer = new Set()) {
+  return WL.sendCoins({
+    coins: W.coins,
+    height: W.height,
+    vouched: vouched(),
+    held: wallBal().held,
+    first: WL.reuseFirst(sent, quarantineStored()),
+    prefer,
+  });
+}
 // does this payment use every coin that can be spent? (a leftover only "empties the wallet" when nothing else remains)
 function emptiesWallet(r) {
-  const coins = WL.spendable(W.coins, WL.maturityHeight(W.height, vouched()), wallBal().held, WL.reuseFirst(sent, quarantineStored()));
+  const coins = sendCoins();
   return r.p.picked.length === coins.length;
 }
 // what Send everything would pay to this destination at the current rate, or null when it cannot be planned
 function allAmountTo(destSpk) {
   try {
-    const coins = WL.spendable(W.coins, WL.maturityHeight(W.height, vouched()), wallBal().held, WL.reuseFirst(sent, quarantineStored()));
+    const coins = sendCoins();
     return WL.plan({
       coins,
       amount: null,
@@ -2706,6 +2748,11 @@ function updatePreview() {
   feeLine();
   if (IDLE) {
     el.textContent = '';
+    return;
+  }
+  if (nodeStopped()) {
+    el.className = 'tiny mut';
+    el.textContent = 'The node is stopped: nothing can be sent from this tab until it is reloaded.';
     return;
   }
   if (!W.coinsKnown) {
@@ -2743,12 +2790,7 @@ function updatePreview() {
     if (e.short)
       try {
         const dest = W.addr.decodeAddress($('sendto').value.trim());
-        const coins = WL.spendable(
-          W.coins,
-          WL.maturityHeight(W.height, vouched()),
-          wallBal().held,
-          WL.reuseFirst(sent, quarantineStored()),
-        );
+        const coins = sendCoins();
         const all = WL.plan({
           coins,
           amount: null,
@@ -2797,7 +2839,7 @@ function draftAt(rate, lead = 'Your payment above', fmt = exactSend) {
     if (!dec || WL.checkDestination(dec, { ownScript: W.script }).error) return '';
     const all = $('sendall').getAttribute('aria-pressed') === 'true';
     const amount = all ? null : WL.parseAmount($('sendamt').value, $('sendunit').value);
-    const coins = WL.spendable(W.coins, WL.maturityHeight(W.height, vouched()), wallBal().held, WL.reuseFirst(sent, quarantineStored()));
+    const coins = sendCoins();
     try {
       const p = WL.plan({ coins, amount, rate, destSpk: dec.script, changeSpk: W.script, all });
       // a leftover too small for change goes to the fee too, but it is not what the rate costs: said apart, as in the preview
@@ -2881,7 +2923,16 @@ async function feeFlow() {
 async function sendFlow() {
   // a stopped node is said (canAct is false then too, and a click must not be answered by nothing)
   if (nodeStopped()) throw new Error('the node is stopped: reload the page before sending');
-  if (sending || !canAct()) return;
+  if (sending) return;
+  // a click is never answered by nothing: why the wallet cannot send yet
+  if (!canAct())
+    throw new Error(
+      PROBING
+        ? 'checking whether another tab runs the node: sending is possible in a moment'
+        : node.notStarted
+          ? 'the node is not started: start it, and sending is possible once the tab is up to date'
+          : 'sending is possible once the tab is up to date and the balance is known',
+    );
   // a disagreeing chain tip is said first: nothing about this chain's coins can be trusted while it lasts
   if (trust().level === 'bad') throw new Error('the block source disagrees with the signed chain tip: sending waits until that clears');
   const r = readSend();
@@ -3203,6 +3254,9 @@ async function forgetFlow(s0) {
     ))
   )
     return;
+  // the node may have stopped (or the tab gone idle) while the dialog was open: nothing changes then
+  if (nodeStopped()) return notify('Not done', 'the node stopped while you were deciding: reload the page first', false);
+  if (!canAct()) return;
   S.forget(sent, s);
   saveSent();
   renderWallet();
@@ -3561,13 +3615,23 @@ const cout = $('cout'),
 const chist = [];
 let hi = 0;
 const err = (code, message) => ({ __err: { code, message } });
-// sizes said to a person in one unit, beside the "1.1 GB" and "830 MB" of the texts (not "10240.0 MiB")
-const gb = (b) => (b >= 10e9 ? Math.round(b / 1e9) : (b / 1e9).toFixed(1)) + ' GB';
 const hide = (x) => (OPT.mask ? 'amount hidden' : x); // Mask values covers the console too
 const ownTx = (t) => {
   const r = W ? ourTx(t) : null;
   return !!(r && (r.spendsOurs || r.toUs > 0));
 };
+// the node's answer to gettxout, in the shape Knots prints (null for a spent or unknown coin); the wallet's own value masked
+function gettxoutOf(m) {
+  if (!m.found) return null;
+  const own = !!W && m.scriptPubKey === W.script;
+  return {
+    bestblock: node.hash ?? null,
+    confirmations: m.height != null && node.height != null ? node.height - m.height + 1 : 0,
+    value: own ? hide(m.value / 1e8) : m.value / 1e8,
+    scriptPubKey: { hex: m.scriptPubKey, ...(m.address ? { address: m.address } : {}), type: m.scriptType },
+    coinbase: !!m.coinbase,
+  };
+}
 function cprint(s, cls) {
   const el = document.createElement('span');
   if (cls) el.className = cls;
@@ -4160,14 +4224,6 @@ addEventListener('storage', (e) => {
 // clearing site data from the browser's settings fires no event here: check whenever the page may be left or reloaded
 addEventListener('pagehide', () => guardKey());
 document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && guardKey());
-addEventListener('storage', (e) => {
-  if (!IDLE || !W || e.key !== sentKey()) return;
-  try {
-    const stored = JSON.parse(e.newValue ?? '[]').filter((x) => x && typeof x.txid === 'string');
-    sent = W.validRecord ? S.sortStored({ sent: stored, ok: W.validRecord, seenHas: (k) => seen.has(k) }).keep : stored;
-    renderWallet();
-  } catch {}
-});
 // the tab that runs the node says so (app, version, a heartbeat): an idle tab names it, a newer one can say it is older
 const RUNNING_KEY = 'reef:running';
 function runningHolder() {
@@ -4359,8 +4415,8 @@ async function begin() {
     free == null
       ? 'The browser does not say how much space it allows.'
       : free < 1.2e9
-        ? `The browser allows ${gb(free)} more for this site, less than the 1.1 GB needed: free disk space first, or the fetch will stop part-way.`
-        : `The browser allows ${gb(free)} for this site; 1.1 GB is needed.`;
+        ? `The browser allows ${bytesSay(free)} more for this site, less than the 1.1 GB needed: free disk space first, or the fetch will stop part-way.`
+        : `The browser allows ${bytesSay(free)} for this site; 1.1 GB is needed.`;
   $('wl-start').onclick = async () => {
     $('welcome').close();
     node.notStarted = false;

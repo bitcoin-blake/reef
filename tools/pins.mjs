@@ -1,11 +1,17 @@
-// The pins of the four apps that share this origin's node (Reef, Bight, Winch, Hitch), as GitHub Pages publishes them. Every
-// reference to a script CDN is checked, not only the repository form: on cdn.jsdelivr.net a /gh/ path must name a whole commit
-// (owner/repo@<40 hex>, since a tag or branch can be moved) and an /npm/ path an exact version (name@x.y.z); a /combine/ path,
-// a bare /gh/ or /npm/ prefix, a range (@^1, @latest) and every other script CDN host (unpkg, esm.sh, cdnjs, …) fail. Winch
-// and Hitch have no content security policy, so for them this is the only check. The four must also pin the same node (they
-// share its files and its lock). Only literal URLs are seen: a URL built from parts at run time is not.
-//   node tools/pins.mjs               the four as published (after a Reef deploy, and by pins.yml)
+// The pins of the pages that share this origin's node, as GitHub Pages publishes them: Reef, Bight, Winch and Hitch, and the
+// node's own demo page (blaketestnode/browser/). Every reference to a script CDN is checked, not only the repository form: on
+// cdn.jsdelivr.net a /gh/ path must name a whole commit (owner/repo@<40 hex>, since a tag or branch can be moved) and an /npm/
+// path an exact version (name@x.y.z); a /combine/ path, a bare /gh/ or /npm/ prefix, a range (@^1, @latest), a path with . or
+// .. segments (or their %2e forms: the browser resolves them to another package), a user name before the host, and every
+// other script CDN host (unpkg, esm.sh, cdnjs, …) fail. Hosts are matched in any case, and URLs written with \/ (as in JSON)
+// are read as the browser would. A page with no content security policy (Winch, Hitch) has only this check, so there every
+// absolute script URL (import, from, importScripts, new Worker, <script src>) off cdn.jsdelivr.net fails too. The four apps
+// must also pin the same node (they share its files and its lock); the demo page serves the node's own branch, so it has no
+// node pin to compare. Only literal URLs are seen: a URL built from parts at run time is not.
+//   node tools/pins.mjs               the pages as published (after a Reef deploy, and by pins.yml)
 //   node tools/pins.mjs --local       Reef from this checkout, the others as published (before a Reef deploy)
+//   node tools/pins.mjs --of reef.js  the node, library and engine pins of a file, as lines name=commit (for CI)
+import { readFileSync } from 'node:fs';
 const APPS = [
   'reef/reef.js',
   'reef/index.html',
@@ -15,21 +21,41 @@ const APPS = [
   'winch/index.html',
   'hitch/hitch.js',
   'hitch/index.html',
+  'blaketestnode/browser/index.html',
 ];
+const NODE_APPS = ['reef', 'bight', 'winch', 'hitch'];
+// the demo page runs the node the apps pin: it reads the commit from Reef's published page at run time, so its one node URL
+// is built from that commit (owner/repo@${pin}); anywhere else a URL filled in at run time fails
+const RUNTIME = { 'blaketestnode/browser/index.html': ['bitcoin-blake/blaketestnode'] };
+// and its policy admits that one URL by the organisation's prefix (a policy has no form for "any commit of one repository": a
+// source is a prefix only when it ends in /), so this exact token is allowed on this page and nowhere else
+const PREFIXES = { 'blaketestnode/browser/index.html': ['https://cdn.jsdelivr.net/gh/bitcoin-blake/'] };
 const main = import.meta.url === `file://${process.argv[1]}`;
 const local = process.argv.includes('--local');
-import { readFileSync } from 'node:fs';
 
-// any URL on a host that serves scripts from packages or repositories
-const CDN_URL =
-  /(?:https?:)?\/\/((?:cdn|fastly|gcore|testingcf)\.jsdelivr\.net|unpkg\.com|esm\.sh|esm\.run|cdnjs\.cloudflare\.com|cdn\.skypack\.dev|ga\.jspm\.io|jspm\.dev|cdn\.statically\.io|rawcdn\.githack\.com|raw\.githack\.com)(\/[^\s'"`;),]*)?/g;
+// any URL on a host that serves scripts from packages or repositories (with an optional user name before the host)
+const CDN_HOSTS =
+  '(?:cdn|fastly|gcore|testingcf)\\.jsdelivr\\.net|unpkg\\.com|esm\\.sh|esm\\.run|cdnjs\\.cloudflare\\.com|cdn\\.skypack\\.dev|ga\\.jspm\\.io|jspm\\.dev|cdn\\.statically\\.io|rawcdn\\.githack\\.com|raw\\.githack\\.com';
+const CDN_URL = new RegExp(`(?:https?:)?//([^\\s/'"\`@]+@)?(${CDN_HOSTS})(?![\\w.-])(/[^\\s'"\`;),]*)?`, 'gi');
 const GH = /^\/gh\/([\w.-]+\/[\w.-]+)@([0-9a-f]{40})(?:\/|$)/;
 const NPM = /^\/npm\/((?:@[\w.-]+\/)?[\w.-]+)@(\d+\.\d+\.\d+(?:-[\w.]+)?)(?:\/|$)/;
+// script URLs a page loads, whatever their host: what a page without a policy must keep on the pinned CDN
+const SCRIPT_URL =
+  /(?:\bimport\s*\(\s*|\bfrom\s*|\bimportScripts\s*\(\s*|\bnew\s+(?:Shared)?Worker\s*\(\s*|<script\b[^>]*?\bsrc\s*=\s*)(['"`])((?:https?:)?\/\/[^'"`]+)\1/gi;
+// a page's text as the browser reads its URLs: \/ (JSON, escaped strings) is /
+const unescape = (body) => body.replace(/\\\//g, '/');
 // a URL's verdict: { repo, ref } when it is pinned as the rules above say, else { why }
-export function judge(host, path = '') {
+export function judge(host, path = '', user = '') {
+  host = host.toLowerCase();
+  if (user) return { why: `a user name before the host (${user}): the URL is not what it seems` };
   if (host !== 'cdn.jsdelivr.net') return { why: `${host} is not an allowed script CDN (only cdn.jsdelivr.net with pinned paths)` };
+  if (/%2e|%2f|(?:^|\/)\.{1,2}(?:\/|$)/i.test(path))
+    return { why: 'a path with . or .. segments (or %2e, %2f): the browser resolves it to another package' };
   let m = path.match(GH);
   if (m) return { repo: m[1], ref: m[2] };
+  // a commit filled in at run time (owner/repo@${name}): not judged here; allowed only where RUNTIME says so
+  m = path.match(/^\/gh\/([\w.-]+\/[\w.-]+)@\$\{[A-Za-z_$][\w$]*\}(?:\/|$)/);
+  if (m) return { repo: m[1], runtime: true };
   m = path.match(NPM);
   if (m) return { repo: 'npm:' + m[1], ref: m[2] };
   if (path.startsWith('/gh/'))
@@ -37,17 +63,52 @@ export function judge(host, path = '') {
   if (path.startsWith('/npm/')) return { why: 'an /npm/ path not pinned to an exact version (name@x.y.z): a range or tag can move' };
   return { why: `${path || 'the bare host'}: only /gh/ and /npm/ paths can be pinned (combine and the like cannot)` };
 }
-if (main) {
+// every CDN reference of a page's text, judged: [{ url, repo, ref } | { url, why }]
+export function cdnRefs(body) {
+  return [...unescape(body).matchAll(CDN_URL)].map(([url, user, host, path]) => ({ url, ...judge(host, path ?? '', user ?? '') }));
+}
+// the absolute script URLs off cdn.jsdelivr.net (and off this origin) that a page loads: refused where no policy stops them
+export function offCdn(body) {
+  return [...unescape(body).matchAll(SCRIPT_URL)]
+    .map((m) => m[2])
+    .filter((u) => !/^(?:https?:)?\/\/(?:cdn\.jsdelivr\.net|bitcoin-blake\.github\.io)(?:\/|$)/i.test(u));
+}
+// the first pin of each repository in a file: { 'owner/repo': commit }
+export function pinsOf(src) {
+  const out = {};
+  for (const r of cdnRefs(src)) if (r.repo && !r.repo.startsWith('npm:')) out[r.repo] ??= r.ref;
+  return out;
+}
+// one page's text judged: its failures and its pins (the two exceptions above apply to their own page only)
+export function pageVerdict(f, body, policed) {
+  const failures = [],
+    pins = [];
+  for (const r of cdnRefs(body)) {
+    if (r.runtime) {
+      if (!(RUNTIME[f] ?? []).includes(r.repo)) failures.push(`${f}: ${r.url}: a commit filled in at run time cannot be checked here`);
+    } else if (r.why) {
+      if (!(PREFIXES[f] ?? []).includes(r.url)) failures.push(`${f}: ${r.url}: ${r.why}`);
+    } else pins.push(r);
+  }
+  if (!policed) for (const u of offCdn(body)) failures.push(`${f}: ${u}: a script off cdn.jsdelivr.net, on a page with no security policy`);
+  return { failures, pins };
+}
+if (main && process.argv.includes('--of')) {
+  const p = pinsOf(readFileSync(process.argv[process.argv.indexOf('--of') + 1], 'utf8'));
+  console.log(`node=${p['bitcoin-blake/blaketestnode'] ?? ''}`);
+  console.log(`lib=${p['sidestr/spec'] ?? ''}`);
+  console.log(`engine=${p['bitcoin-desktop/schema'] ?? ''}`);
+  process.exit(0);
+} else if (main) {
   let failed = 0;
   const fail = (m) => {
     console.log(`::error::${m}`);
     failed++;
   };
-  const byApp = {};
+  const bodies = {};
   for (const f of APPS) {
     const app = f.split('/')[0];
-    let body;
-    if (local && app === 'reef') body = readFileSync(new URL('../' + f.slice(5), import.meta.url), 'utf8');
+    if (local && app === 'reef') bodies[f] = readFileSync(new URL('../' + f.slice(5), import.meta.url), 'utf8');
     else {
       const r = await fetch(`https://bitcoin-blake.github.io/${f}?nocache=${Date.now()}`, { cache: 'no-store' }).catch((e) => ({
         ok: false,
@@ -57,20 +118,28 @@ if (main) {
         fail(`could not fetch ${f} from Pages (${r.status ?? ''} ${r.statusText}): the site, not the pins`);
         continue;
       }
-      body = await r.text();
+      bodies[f] = await r.text();
     }
+  }
+  // which pages carry a content security policy (in their index.html)
+  const policed = new Set(
+    Object.entries(bodies)
+      .filter(([f, b]) => f.endsWith('index.html') && /http-equiv="Content-Security-Policy"/i.test(b))
+      .map(([f]) => f.split('/')[0]),
+  );
+  const byApp = {};
+  for (const [f, body] of Object.entries(bodies)) {
+    const app = f.split('/')[0];
     const pins = (byApp[app] ??= new Map());
-    for (const [url, host, path] of body.matchAll(CDN_URL)) {
-      const v = judge(host, path);
-      if (v.why) fail(`${f}: ${url}: ${v.why}`);
-      else (pins.get(v.repo) ?? pins.set(v.repo, new Set()).get(v.repo)).add(v.ref);
-    }
+    const v = pageVerdict(f, body, policed.has(app));
+    v.failures.forEach(fail);
+    for (const r of v.pins) (pins.get(r.repo) ?? pins.set(r.repo, new Set()).get(r.repo)).add(r.ref);
   }
   for (const [app, pins] of Object.entries(byApp))
     console.log(
-      `${app}${local && app === 'reef' ? ' (this checkout)' : ''}: ${[...pins].map(([repo, refs]) => `${repo}@${[...refs].join(',')}`).join('  ') || 'no pins'}`,
+      `${app}${local && app === 'reef' ? ' (this checkout)' : ''}${policed.has(app) ? '' : ' (no security policy)'}: ${[...pins].map(([repo, refs]) => `${repo}@${[...refs].join(',')}`).join('  ') || 'no pins'}`,
     );
-  const nodes = Object.entries(byApp).map(([app, pins]) => [app, [...(pins.get('bitcoin-blake/blaketestnode') ?? [])]]);
+  const nodes = NODE_APPS.filter((a) => byApp[a]).map((app) => [app, [...(byApp[app].get('bitcoin-blake/blaketestnode') ?? [])]]);
   for (const [app, refs] of nodes) if (refs.length !== 1) fail(`${app} pins ${refs.length} node versions (${refs.join(', ') || 'none'})`);
   if (new Set(nodes.map(([, refs]) => refs.join())).size > 1)
     fail(

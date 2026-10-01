@@ -4,8 +4,8 @@
   "type": "module",
   "license": "AGPL-3.0-or-later",
   "scripts": {
-    "test": "node --input-type=module --check < reef.js && node test/view-test.mjs && node test/trust-test.mjs && node test/state-test.mjs && node test/wallet-test.mjs && node test/release-test.mjs",
-    "fmt": "npx --yes prettier@3.3.3 --write reef.js lib test tools",
-    "fmt:check": "npx --yes prettier@3.3.3 --check reef.js lib test tools"
+    "test": "node --input-type=module --check < reef.js && node --input-type=module --check < reef-app.js && node test/view-test.mjs && node test/trust-test.mjs && node test/state-test.mjs && node test/wallet-test.mjs && node test/release-test.mjs",
+    "fmt": "npx --yes prettier@3.3.3 --write reef.js reef-app.js lib test tools",
+    "fmt:check": "npx --yes prettier@3.3.3 --check reef.js reef-app.js lib test tools"
   }
 }

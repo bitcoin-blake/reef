@@ -478,6 +478,19 @@ for (const [name, opts] of [
     !!asked && asked.key === COIN,
     JSON.stringify(asked),
   );
+  // the question fails in the node (a busy or unreadable file): it is asked again with the next coins, not forgotten for good
+  await a.evaluate((txid) => {
+    window.__fake.posts.length = 0;
+    window.__fake.emit('message', { type: 'error', text: 'NoModificationAllowedError', req: 'sent:' + txid });
+  }, txid);
+  await a.evaluate(({ script }) => window.__fake.emit('message', { type: 'coins', script, height: 152102, coins: [] }), { script: SCRIPT });
+  const again = await a
+    .waitForFunction((txid) => window.__fake.posts.some((m) => m.type === 'spend' && m.req === 'sent:' + txid), txid, { timeout: 5000 })
+    .then(
+      () => true,
+      () => false,
+    );
+  t('a spend question that failed in the node is asked again with the next coins', again);
   await a.evaluate(
     (txid) => window.__fake.emit('message', { type: 'spend', req: 'sent:' + txid, found: true, txid: 'ee'.repeat(32), height: 152101 }),
     txid,
@@ -1006,6 +1019,321 @@ for (const noSession of [false, true]) {
     /[?&]keep=1/.test(url) && /[?&]v=\d+/.test(url) && url.endsWith('#h'),
     url,
   );
+  await p.ctx.close();
+}
+// 17: sending, the guards. A waiting payment's coins are never picked again; a world that moves while the confirm dialog is
+// open (a disagreeing tip, other coins, a stopped node) sends nothing; storage that refuses the record sends nothing; the same
+// payment made twice is refused; the raise and forget dialogs check the node again (and a question asked right after another is answered by its own buttons)
+const DEST = 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx';
+const CA = 'a1'.repeat(32) + ':0',
+  CB = 'b2'.repeat(32) + ':0',
+  CC = 'c3'.repeat(32) + ':0';
+async function wallet(coins, extra = {}) {
+  const p = await profile({ seed: { 'reef:started': '1', 'reef:key': KEY, 'reef:vouched': VOUCHED, ...extra } });
+  const a = await p.open();
+  await a.waitForFunction(() => /^tb1p/.test(document.getElementById('rcvaddr').value), null, { timeout: 30000 });
+  const feed = (coins, height = 152100) =>
+    a.evaluate(
+      ({ script, coins, height }) => {
+        window.__fake.emit('message', { type: 'synced', height, applied: true });
+        window.__fake.emit('message', { type: 'coins', script, height, coins });
+      },
+      { script: SCRIPT, coins, height },
+    );
+  await feed(coins);
+  await a.waitForFunction(() => !/^0\.00000000/.test(document.getElementById('avail').textContent), null, { timeout: 5000 });
+  await a.evaluate(() => document.querySelector('[data-p=send]').click());
+  // the confirm dialog for a payment of `amt` to DEST, open
+  const confirm = async (amt) => {
+    await a.evaluate(() => (document.getElementById('senderr').textContent = ''));
+    await a.fill('#sendto', DEST);
+    await a.fill('#sendamt', amt);
+    await a.click('#sendgo');
+    await a.waitForSelector('#ask[open]', { timeout: 5000 });
+  };
+  const said = () =>
+    a
+      .waitForFunction(() => document.getElementById('senderr').textContent.length > 0, null, { timeout: 5000 })
+      .then(() => a.textContent('#senderr'))
+      .catch(() => '');
+  const relays = () => a.evaluate(() => (window.__relay ?? []).length);
+  const records = async () => JSON.parse((await ls(a, 'reef:sent:' + TAG)) ?? '[]');
+  const tipAgrees = (height = 152100) =>
+    a.evaluate(
+      (height) =>
+        window.__fake.emit('message', {
+          type: 'nostr',
+          height,
+          hash: 'cd'.repeat(32),
+          agree: 3,
+          diverged: false,
+          live: true,
+          created_at: Math.floor(Date.now() / 1000),
+        }),
+      height,
+    );
+  const stop = () =>
+    a.evaluate(() => {
+      window.__fake.node.phase = 'error';
+      window.__fake.emit('message', { type: 'error', text: 'the node did not wipe in time and is stopped', fatal: true });
+    });
+  return { p, a, feed, confirm, said, relays, records, tipAgrees, stop };
+}
+{
+  const w = await wallet([
+    { key: CA, value: 50000, height: 152000 },
+    { key: CB, value: 40000, height: 152000 },
+  ]);
+  const { a } = w;
+  // a signed tip that disagrees arrives while the dialog is open
+  await w.confirm('0.0001');
+  await a.evaluate(() =>
+    window.__fake.emit('message', {
+      type: 'nostr',
+      height: 152102,
+      hash: 'ee'.repeat(32),
+      agree: 0,
+      diverged: true,
+      live: true,
+      created_at: Math.floor(Date.now() / 1000),
+    }),
+  );
+  await a.click('#ask-ok');
+  let e = await w.said();
+  t(
+    'a signed tip that disagrees while the confirm dialog is open: nothing is sent',
+    /nothing was sent/.test(e) && (await w.relays()) === 0,
+    e,
+  );
+  await w.tipAgrees();
+  // the coins change while it is open (the coin it would spend is gone)
+  await w.confirm('0.0001');
+  await w.feed([{ key: CB, value: 40000, height: 152000 }]);
+  await a.click('#ask-ok');
+  e = await w.said();
+  t('the coins change while the confirm dialog is open: nothing is sent', /nothing was sent/.test(e) && (await w.relays()) === 0, e);
+  await w.feed([
+    { key: CA, value: 50000, height: 152000 },
+    { key: CB, value: 40000, height: 152000 },
+  ]);
+  // the browser refuses to store the record: nothing leaves, nothing is kept, nothing is held
+  await w.confirm('0.0001');
+  await a.evaluate(() => {
+    const orig = Storage.prototype.setItem;
+    window.__setItem = orig;
+    Storage.prototype.setItem = function (k, v) {
+      if (String(k).startsWith('reef:sent:')) throw new DOMException('full', 'QuotaExceededError');
+      return orig.call(this, k, v);
+    };
+  });
+  await a.click('#ask-ok');
+  e = await w.said();
+  await a.evaluate(() => (Storage.prototype.setItem = window.__setItem));
+  const availAfter = await a.textContent('#avail');
+  t(
+    'storage that refuses the record: nothing is sent, no record is kept and no coin is held',
+    /could not be recorded/.test(e) && (await w.relays()) === 0 && (await w.records()).length === 0 && /^0\.00090000/.test(availAfter),
+    `${e} / ${availAfter}`,
+  );
+  // two payments in a row: the second never spends the coin the first one holds
+  await w.confirm('0.0001');
+  await a.click('#ask-ok');
+  await a.waitForFunction(() => (window.__relay ?? []).length === 1, null, { timeout: 15000 });
+  await a.waitForTimeout(300);
+  await w.confirm('0.0001');
+  await a.click('#ask-ok');
+  await a.waitForFunction(() => (window.__relay ?? []).length === 2, null, { timeout: 15000 }).catch(() => {});
+  const recs = await w.records();
+  const ins = recs.flatMap((r) => r.inputs);
+  t(
+    'a second payment while the first waits spends the other coin, never the one the first holds',
+    recs.length === 2 && ins.length === 2 && new Set(ins).size === 2 && ins.includes(CA) && ins.includes(CB),
+    JSON.stringify(recs.map((r) => r.inputs)),
+  );
+  // the node stops while the dialog is open (a third coin to spend)
+  await w.feed([
+    { key: CA, value: 50000, height: 152000 },
+    { key: CB, value: 40000, height: 152000 },
+    { key: CC, value: 30000, height: 152000 },
+  ]);
+  await a.waitForFunction(() => /^0\.00030000/.test(document.getElementById('avail').textContent), null, { timeout: 5000 });
+  await w.confirm('0.0001');
+  await w.stop();
+  await a.waitForTimeout(200);
+  if (await a.$('#ask[open]')) await a.click('#ask-ok');
+  e = await w.said();
+  t(
+    'the node stops while the confirm dialog is open: nothing is sent, and the page says why',
+    /stopped/.test(e) && /nothing was sent/.test(e) && (await w.relays()) === 2 && (await w.records()).length === 2,
+    e,
+  );
+  t('no page errors in the send guards', !w.p.errors.length, w.p.errors.join(' | '));
+  await w.p.ctx.close();
+}
+// the raise dialog: the node stops while it is open, and nothing is replaced or published
+{
+  const w = await wallet([{ key: CA, value: 50000, height: 152000 }]);
+  const { a } = w;
+  await w.confirm('0.0001');
+  await a.click('#ask-ok');
+  await a.waitForFunction(() => (window.__relay ?? []).length === 1, null, { timeout: 15000 });
+  await a.evaluate(() => document.querySelector('[data-p=tx]').click());
+  await a.waitForSelector('#txrows button[data-act=bump]', { timeout: 5000 });
+  await a.click('#txrows button[data-act=bump]');
+  await a.waitForSelector('#ask[open]', { timeout: 5000 });
+  await w.stop();
+  await a.waitForTimeout(200);
+  if (await a.$('#ask[open]')) await a.click('#ask-ok');
+  await a.waitForTimeout(800);
+  const recs = await w.records();
+  t(
+    'the node stops while the raise dialog is open: nothing is replaced and nothing more is published',
+    (await w.relays()) === 1 && recs.length === 1 && !recs[0].replacedBy,
+    JSON.stringify({ relays: await w.relays(), n: recs.length }),
+  );
+  await w.p.ctx.close();
+}
+// forget, then the same payment again (the same coin, the same figures: the same transaction) is refused as already made; a second
+// payment forgotten while the node stops in the dialog is not forgotten
+{
+  const w = await wallet([{ key: CA, value: 50000, height: 152000 }]);
+  const { a } = w;
+  await w.confirm('0.0001');
+  await a.click('#ask-ok');
+  await a.waitForFunction(() => (window.__relay ?? []).length === 1, null, { timeout: 15000 });
+  await w.feed([{ key: CA, value: 50000, height: 152000 }], 152110);
+  await w.tipAgrees(152110);
+  const forget = async () => {
+    await a.evaluate(() => document.querySelector('[data-p=tx]').click());
+    await a.waitForSelector('#txrows button[data-act=forget]', { timeout: 5000 });
+    await a.click('#txrows button[data-act=forget]');
+    await a.waitForSelector('#ask[open]', { timeout: 5000 });
+    if ((await a.textContent('#ask-t')) === 'This payment has not gone through') {
+      await a.click('#ask-cancel'); // "Forget it…"
+      await a.waitForFunction(() => document.getElementById('ask-t').textContent === 'Forget this payment', null, { timeout: 5000 });
+    }
+  };
+  await forget();
+  await a.click('#ask-ok');
+  await a.waitForFunction((tag) => JSON.parse(localStorage.getItem('reef:sent:' + tag) ?? '[]')[0]?.abandoned, TAG, { timeout: 5000 });
+  await a.evaluate(() => document.querySelector('[data-p=send]').click());
+  await w.confirm('0.0001');
+  await a.click('#ask-ok');
+  const e = await w.said();
+  t(
+    'the same payment made again after it was forgotten (the same transaction) is refused as already made',
+    /already made/.test(e) && (await w.relays()) === 1 && (await w.records()).length === 1,
+    e,
+  );
+  // a different amount: a new payment, which spends the forgotten one's coin
+  await w.confirm('0.0002');
+  await a.click('#ask-ok');
+  await a.waitForFunction(() => (window.__relay ?? []).length === 2, null, { timeout: 15000 });
+  await w.feed([{ key: CA, value: 50000, height: 152000 }], 152120);
+  await w.tipAgrees(152120);
+  await a.evaluate(() => document.querySelector('[data-p=tx]').click());
+  await a.waitForTimeout(300);
+  const n0 = (await w.records()).filter((r) => r.abandoned).length;
+  await forget();
+  await w.stop();
+  await a.waitForTimeout(200);
+  if (await a.$('#ask[open]')) await a.click('#ask-ok');
+  await a.waitForTimeout(500);
+  t(
+    'the node stops while the forget dialog is open: the payment is not forgotten',
+    (await w.records()).filter((r) => r.abandoned).length === n0,
+    JSON.stringify((await w.records()).map((r) => ({ a: !!r.abandoned, s: r.sats }))),
+  );
+  t('no page errors when forgetting', !w.p.errors.length, w.p.errors.join(' | '));
+  await w.p.ctx.close();
+}
+// 18: the waits and the masks say what they mean. Before the coins are known the Overview says why (a status message does not
+// clear it) and Send says why on a click; a stopped node's Send page says so; Mask values covers the Information tab's fees and
+// gettxout for the wallet's own coin (printed in Knots' shape)
+{
+  const p = await profile({ seed: { 'reef:started': '1', 'reef:key': KEY, 'reef:vouched': VOUCHED } });
+  const a = await p.open();
+  await a.waitForFunction(() => /^tb1p/.test(document.getElementById('rcvaddr').value), null, { timeout: 30000 });
+  await a.evaluate(() => window.__fake.emit('message', { type: 'status', phase: 'sync', text: 'validating' }));
+  await a.waitForTimeout(300);
+  const why = await a.textContent('#ovtrust');
+  t('before the coins are known the Overview says why the balance waits, also after a status message', /balance known once/.test(why), why);
+  await a.evaluate(() => document.querySelector('[data-p=send]').click());
+  await a.fill('#sendto', 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx');
+  await a.fill('#sendamt', '0.0001');
+  await a.click('#sendgo');
+  const said = await a
+    .waitForFunction(() => document.getElementById('senderr').textContent.length > 0, null, { timeout: 3000 })
+    .then(() => a.textContent('#senderr'))
+    .catch(() => '');
+  t('Send pressed before the balance is known says why, in the error line', /up to date|checking/.test(said), said);
+  // coins, one of ours in the mempool view, Mask values on
+  const COIN = 'cd'.repeat(32) + ':0';
+  await a.evaluate(
+    ({ script, COIN }) => {
+      window.__fake.emit('message', { type: 'synced', height: 152100, applied: true });
+      window.__fake.emit('message', { type: 'coins', script, height: 152100, coins: [{ key: COIN, value: 50000, height: 152000 }] });
+      window.__fake.emit('message', {
+        type: 'mempool',
+        count: 1,
+        bytes: 150,
+        fees: 300,
+        height: 152100,
+        stats: { refused: 0, dropped: 0 },
+        txs: [{ txid: 'ab'.repeat(32), vsize: 150, fee: 300, fed: true, inputs: [COIN], outputs: [] }],
+      });
+    },
+    { script: SCRIPT, COIN },
+  );
+  await a.waitForFunction(() => /^0\.000/.test(document.getElementById('total').textContent), null, { timeout: 5000 });
+  const plain = await a.textContent('#i-mpmem');
+  await a.evaluate(() => document.getElementById('m-mask').onclick());
+  await a.waitForTimeout(200);
+  const masked = await a.textContent('#i-mpmem');
+  t(
+    "Mask values hides the Information tab's mempool fees when the wallet's own transaction is among them, at once",
+    /300 sat in fees/.test(plain) && /fees hidden/.test(masked) && !/300/.test(masked),
+    `${plain} → ${masked}`,
+  );
+  await a.evaluate(
+    ({ script, COIN }) =>
+      window.__fake.emit('message', {
+        type: 'coin',
+        key: COIN,
+        found: true,
+        value: 50000,
+        height: 152000,
+        coinbase: false,
+        scriptType: 'p2tr',
+        address: 'tb1p…',
+        scriptPubKey: script,
+      }),
+    { script: SCRIPT, COIN },
+  );
+  await a.waitForTimeout(200);
+  const out = await a.textContent('#cout');
+  t(
+    "gettxout prints Knots' shape, the wallet's own value masked",
+    /"confirmations": 101/.test(out) && /"value": "amount hidden"/.test(out) && /"scriptPubKey"/.test(out) && !/"type": "coin"/.test(out),
+    out.slice(-300),
+  );
+  // the node stops: the Send page says so, and one notice says it
+  await a.evaluate(() => {
+    window.__fake.node.phase = 'error';
+    window.__fake.node.error = 'the node did not wipe in time and is stopped';
+    window.__fake.emit('message', { type: 'error', text: 'the node did not wipe in time and is stopped', fatal: true });
+  });
+  await a.waitForTimeout(300);
+  const pv = await a.textContent('#sendpreview');
+  const notices = await a.evaluate(
+    () => [...document.querySelectorAll('#banners .banner')].filter((b) => /stopped/.test(b.textContent)).length,
+  );
+  t(
+    'a stopped node: the Send page says so, and one notice says it',
+    /node is stopped/.test(pv) && notices === 1,
+    `${pv} / ${notices} notices`,
+  );
+  t('no page errors in the waits and masks', !p.errors.length, p.errors.join(' | '));
   await p.ctx.close();
 }
 await browser.close();
