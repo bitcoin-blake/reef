@@ -4,9 +4,9 @@
 // tested against the kernel; this file is the host: storage, the node, the relays, the window. Every string that comes
 // from outside (relays, the mempool, the chain, links, options) reaches the page as text, never as markup.
 const $ = (id) => document.getElementById(id);
-export const VERSION = '2026-10-01.18';
+export const VERSION = '2026-10-01.19';
 const SCHEMA = 2; // the storage layout this version writes
-const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@cebed0bb2fcf2157e32e8411a5594fb48d878a81';
+const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@5550637a7f31866e61ce215e1c2bd7b30a12ab80';
 const LIB = 'https://cdn.jsdelivr.net/gh/sidestr/spec@fe689e9c723f9bf43393d2dd5b6f924a701c8a18/siding/lib',
   CDN = 'https://cdn.jsdelivr.net/gh/bitcoin-desktop/schema@b8cbf6337c7450fe14ddc5bce00c7280059aab5d';
 // the engine's rule files by content as well as by commit: a CDN that served other rules would validate another chain
@@ -425,7 +425,13 @@ function renderStatus() {
     srcErrSince = null;
     unbanner('srcwait');
   }
-  if (node.error && !passing)
+  // a node that has not answered for a while (often a laptop waking) is a warning that clears itself, not a stop
+  if (node.unresponsive)
+    banner('unresponsive', 'warn', 'The node has not answered for two minutes. It usually comes back by itself; if it does not, reload.', [
+      ['Reload', () => location.reload()],
+    ]);
+  else unbanner('unresponsive');
+  if (node.error && !passing && !node.unresponsive)
     banner('nodeerr', 'bad', plainError(node.error), [
       ['Retry', () => location.reload()],
       ['Wipe and fetch again…', () => wipeAsk()],
@@ -3375,7 +3381,7 @@ async function copyDiagnostics() {
   }
 }
 // ---- a newer Reef: checked every hour, offered, never forced
-// "2026-10-01.18" → comparable: a stale copy at the web host never offers an older version as newer
+// "2026-10-01.19" → comparable: a stale copy at the web host never offers an older version as newer
 const versionKey = (v) => {
   const m = /^(\d{4})-(\d{2})-(\d{2})\.(\d+)$/.exec(String(v ?? ''));
   return m ? [+m[1], +m[2], +m[3], +m[4]] : null;
