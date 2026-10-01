@@ -196,5 +196,16 @@ t(
       V.recentLabel({ kind: 'out', label: 'Sent to', addr: a }) === 'Sent to tb1pek62mq…qts7wxz',
   );
 }
+{
+  const s = pay({ pending: false, replaced: tx('2') });
+  const line = V.exportRow({ ...row(s), sats: 0, label: '=HYPERLINK("x")' }, ctx([s]));
+  t(
+    'the export says what the lists say, counts a replaced version as 0, and quotes a formula',
+    /replaced: another version/.test(line) && /\(replaced\)/.test(line) && line.includes(',"0",') && line.includes(`"'=HYPERLINK(""x"")"`),
+    line,
+  );
+  const conf = { kind: 'in', txid: tx('c'), label: 'Received', addr: 'me', sats: 5, pending: false, height: 10, conf: 2 };
+  t('a receipt is exported with its confirmations, not just "confirmed"', /2 confirmations/.test(V.exportRow(conf, ctx([]))));
+}
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

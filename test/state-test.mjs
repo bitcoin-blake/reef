@@ -726,5 +726,18 @@ t(
     s0.pending && fx.some((e) => e.notice === 'A block was undone'),
   );
 }
+{
+  const o = pay({ replacedBy: tx('2') });
+  const r = pay({ txid: tx('2'), replaces: tx('1'), fee: 400 });
+  const settled = pay({ txid: tx('3'), pending: false, height: 152000, inputs: [inB] });
+  const sent = [o, r, settled];
+  S.forget(sent, r);
+  t('forgetting marks every waiting version, and nothing settled', o.abandoned && r.abandoned && !settled.abandoned && o.vAt && r.vAt);
+  const h = pay({ pending: false, replaced: tx('9'), vAt: 5 });
+  const mine = [h];
+  S.hide(mine, h);
+  const m = S.mergeSent(mine, [pay({ pending: false, replaced: tx('9'), vAt: 5 })]);
+  t('a hidden row stays hidden when merged with an older copy from another tab', m[0].hidden === true);
+}
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

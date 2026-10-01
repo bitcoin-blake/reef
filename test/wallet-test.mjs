@@ -183,7 +183,7 @@ t(
   'not enough coins says how much is missing',
   throws(
     () => W.plan({ coins: W.spendable(coins, height), amount: 100000, rate: 1, destSpk: spkB, changeSpk: spkA }),
-    /not enough: 77000 sat spendable/,
+    /not enough: 77000 sat can be spent, \d+ sat is needed/,
   ),
 );
 t(
@@ -532,6 +532,22 @@ t(
     'a raise that would leave dust change gives it to the fee: no dust output',
     r2.outputs.length === 1 && r2.fee === 510 && r2.change === 0,
     JSON.stringify(r2),
+  );
+}
+{
+  // the rate a raise starts from
+  const s2 = { inputs: ['a:0'], fee: 155, change: 1000, toScript: spkB };
+  const old = 155 / W.estimateVsize(1, [spkB, spkA]);
+  t('a raise starts at least half again above the old rate', W.raiseRate({ s: s2, ownSpk: spkA }) === Math.ceil(old * 1.5));
+  t(
+    'the mempool cannot push it past three times the old rate',
+    W.raiseRate({ s: s2, ownSpk: spkA, mempoolRate: 362 }) === Math.ceil(old * 3),
+  );
+  t("the person's own higher rate wins", W.raiseRate({ s: s2, ownSpk: spkA, optRate: 7 }) === 7);
+  const allS = { inputs: ['a:0'], fee: 112, change: 0, all: true, toScript: spkB };
+  t(
+    'a payment of everything is sized with one output',
+    W.raiseRate({ s: allS, ownSpk: spkA }) === Math.ceil((112 / W.estimateVsize(1, [spkB])) * 1.5),
   );
 }
 console.log(`\n${ok} passed, ${bad} failed`);
