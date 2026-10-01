@@ -45,8 +45,10 @@ The rest as before: Options for the fee rate, relays, units and value masking; *
 
 The page tells a payment a node has (it came back through the estate's mempool feed) from one only relays have echoed. A producer that is down while the feed still runs is not told apart; that would need an acknowledgement per payment.
 
-**Rolling back** a release: revert the commit, then bump the version above the current one in all three places (`VERSION` in `reef.js`, `version.json`, and `reef.js?v=` in `index.html`; a lower version is refused by CI and never offered to open tabs), and push; the workflow deploys it like any release. Never roll back across a change of `SCHEMA` (the stored records) or of the node's file layout: browsers that ran the newer release would stay read-only or locked out. Roll forward with a fix instead.
+**Rolling back** a release: revert the commit, then bump the version above the current one in all three places (`VERSION` in `reef.js`, `version.json`, and `reef.js?v=` in `index.html`; a lower version is refused by CI and never offered to open tabs), and push; the workflow deploys it like any release. A rollback that moves the node pin moves it in all four apps (Reef, Bight, Winch, Hitch) in the same sitting, as a release does: they share the node's files. Never roll back across a change of `SCHEMA` (the stored records) or of the node's file layout: browsers that ran the newer release would stay read-only or locked out. Roll forward with a fix instead.
 
+
+**Other sites on the same origin** (bitcoin-blake.github.io): besides Reef, Bight, Winch and Hitch, the organisation's own page, the blaketestnode demo (`/blaketestnode/browser/`, which follows Reef's node pin and takes the same lock), and the awesome-bitcoin-blake and blaketest pages are served from it. All of them can read the key in this browser's storage and the node's files; they are part of what a release must not break, and part of what the key's safety depends on (see below).
 
 ## What a tab cannot protect
 

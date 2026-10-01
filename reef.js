@@ -4,7 +4,7 @@
 // tested against the kernel; this file is the host: storage, the node, the relays, the window. Every string that comes
 // from outside (relays, the mempool, the chain, links, options) reaches the page as text, never as markup.
 const $ = (id) => document.getElementById(id);
-export const VERSION = '2026-10-01.21';
+export const VERSION = '2026-10-01.22';
 const SCHEMA = 2; // the storage layout this version writes
 const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@c03bf56404e986bf633a44d8a7bbb530ec282cb5';
 const LIB = 'https://cdn.jsdelivr.net/gh/sidestr/spec@fe689e9c723f9bf43393d2dd5b6f924a701c8a18/siding/lib',
@@ -218,7 +218,9 @@ function showFatal(text) {
 
 // errors nobody caught: said, and kept (the last 20) for Copy diagnostics, instead of a page silently stuck
 const pageErrors = [];
+let fatalShown = false;
 const caught = (what) => {
+  if (fatalShown) return; // a fatal notice already says what happened
   const text = String(what?.message ?? what ?? 'unknown error').slice(0, 300);
   pageErrors.push({ at: Date.now(), text });
   if (pageErrors.length > 20) pageErrors.shift();
@@ -237,17 +239,32 @@ addEventListener('unhandledrejection', (e) => caught(e.reason));
   const asked = document.querySelector('script[src*="reef.js"]')?.src.match(/v=([^&]+)/)?.[1];
   const mixKey = 'reef:mixed:' + decodeURIComponent(asked ?? '') + '>' + VERSION; // once per pair of versions, not once per tab
   if (asked && decodeURIComponent(asked) !== VERSION && !SS.get(mixKey)) {
-    SS.set(mixKey, '1');
-    location.replace(location.pathname + (keepQuery() ? keepQuery() + '&' : '?') + 'v=' + encodeURIComponent(VERSION));
-    await new Promise(() => {}); // nothing more runs in a page being replaced (no lock, no worker, no import)
+    // a session that cannot remember the reload (storage blocked) never reloads: it would loop
+    if (SS.set(mixKey, '1') !== false && SS.get(mixKey)) {
+      // the page asked for another version of this script: refresh the cached copy of what it asked for, then reload
+      await fetch(document.querySelector('script[src*="reef.js"]').src, { cache: 'reload' }).catch(() => {});
+      location.replace(location.pathname + (keepQuery() ? keepQuery() + '&' : '?') + 'r=' + Date.now());
+      await new Promise(() => {}); // nothing more runs in a page being replaced (no lock, no worker, no import)
+    }
   }
 }
 // ---- the libraries; a CDN outage is said in words, not as a dead page
+// the node's loader is the anchor of the node's own hash table, so it is checked here by its sha256 (the release test
+// recomputes it from the pinned commit) and run from that checked text, never fetched again by the import
+const TABNODE_SHA256 = '4027b05fc85f5a5603025f0c2849d4b0e6a4c12785a184209a0692b2c5b76d7b';
+async function loadTabnode() {
+  const r = await fetch(`${NODE}/browser/tabnode.js`);
+  if (!r.ok) throw new Error(`the loader answered ${r.status}`);
+  const bytes = new Uint8Array(await r.arrayBuffer());
+  const got = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((b) => b.toString(16).padStart(2, '0')).join('');
+  if (got !== TABNODE_SHA256) throw new Error(`the node's loader from the CDN is not the pinned file (sha256 ${got.slice(0, 12)}…)`);
+  return import(URL.createObjectURL(new Blob([bytes], { type: 'text/javascript' })));
+}
 let createTabNode, mib, secs, n, WL, S, V, T;
 try {
   // a CDN that hangs rather than fails would leave "starting" for ever: twenty seconds, then said
   ({ createTabNode, mib, secs, n } = await Promise.race([
-    import(`${NODE}/browser/tabnode.js`),
+    loadTabnode(),
     new Promise((_, no) => setTimeout(() => no(new Error('no answer in 20 seconds')), 20e3)),
   ]));
   WL = await import(`./lib/wallet.mjs?v=${VERSION}`);
@@ -256,8 +273,11 @@ try {
   T = await import(`./lib/trust.mjs?v=${VERSION}`);
 } catch (e) {
   showFatal(
-    `Reef could not load its node code (${e.message}). The CDN (cdn.jsdelivr.net) may be unreachable: check the connection and reload.`,
+    /not the pinned file/.test(e.message)
+      ? `Reef refused its node code: ${e.message}. Nothing was run. Reload later; if it persists, report it.`
+      : `Reef could not load its node code (${e.message}). The CDN (cdn.jsdelivr.net) may be unreachable: check the connection and reload.`,
   );
+  fatalShown = true; // the error handler does not raise a second notice for this
   throw e;
 }
 const T0 = Date.now();
@@ -920,12 +940,14 @@ const openNode = () => {
   });
   nodeOpener = document.activeElement?.closest?.('.dd') ? document.querySelector('#menu > [data-m=window]') : document.activeElement;
   $('nw').classList.add('open');
+  document.body.classList.add('nwopen');
   fitNode();
   $('nw').querySelector('[role=tab][aria-selected=true]')?.focus();
 };
 const closeNode = () => {
   if (!$('nw').classList.contains('open')) return;
   $('nw').classList.remove('open');
+  document.body.classList.remove('nwopen');
   behind().forEach((c) => {
     c.inert = false;
   });
@@ -1055,6 +1077,7 @@ function hideWindow() {
   document.querySelector('.skip')?.setAttribute('hidden', '');
   unseen = 0;
   $('tray-badge').hidden = true;
+  $('tray-new').textContent = '';
   $('tray').hidden = false;
   trayRefresh();
   $('tray').focus();
@@ -1065,9 +1088,13 @@ function showWindow() {
   $('tray').hidden = true;
   unseen = 0;
   $('tray-badge').hidden = true;
+  $('tray-new').textContent = '';
   document.querySelector('.tool button.on')?.focus();
 }
 function trayRefresh() {
+  $('tray').title = IDLE
+    ? 'Reef is idle in this tab (the node runs in another one); click to bring the window back (Ctrl+M)'
+    : 'Reef keeps running while this tab is open; click to bring the window back (Ctrl+M)';
   if ($('tray').hidden) return;
   const sd = tn.seeding?.t ? ` · seeding to ${tn.seeding.t.wires.filter((w) => !w.destroyed && w.type !== 'webSeed').length}` : '';
   $('tray-l').textContent = IDLE
@@ -1097,7 +1124,7 @@ document.addEventListener('keydown', (e) => {
   if (e.altKey && e.shiftKey && !e.ctrlKey && !typing && (e.code === 'KeyM' || k === 'm')) {
     e.preventDefault();
     $('m-mask').onclick();
-  } else if (e.ctrlKey && !e.shiftKey && !typing && k === 'm') {
+  } else if (e.ctrlKey && !e.shiftKey && k === 'm') {
     // one key, both ways: to the tray when the window shows, back from it when it does not
     e.preventDefault();
     win.style.display === 'none' ? $('m-main').onclick() : hideWindow();
@@ -2133,16 +2160,17 @@ function renderWalletInner() {
     renderStatus();
   }
   // an idle tab shows no history, as it shows no balance: the running tab is the one that knows
-  const rows = IDLE
-    ? []
-    : WL.history({
-        coins: W.coins,
-        sent: sent.filter((s) => !s.hidden),
-        mempoolIn: incomingTxs(),
-        height: W.height,
-        address: W.address,
-        ledger,
-      });
+  const rows =
+    IDLE || PROBING
+      ? []
+      : WL.history({
+          coins: W.coins,
+          sent: sent.filter((s) => !s.hidden),
+          mempoolIn: incomingTxs(),
+          height: W.height,
+          address: W.address,
+          ledger,
+        });
   const vctx = {
     inMempool,
     height: W.height,
@@ -2871,7 +2899,8 @@ function openBackup() {
   $('backup').showModal();
 }
 function backupNudge(urgent = false) {
-  if (!W || backedUp() || IDLE) {
+  // nothing about the wallet is said until this tab knows whether it runs it (the lock probe settles)
+  if (!W || backedUp() || IDLE || PROBING) {
     unbanner('backup');
     return;
   }
@@ -2978,7 +3007,7 @@ function notify(title, body, bad = /not |did not|failed|stopped/i.test(title)) {
   if (!$('tray').hidden) {
     unseen++;
     $('tray-badge').textContent = unseen;
-    $('tray-badge').setAttribute('aria-label', `${unseen} new notice${unseen === 1 ? '' : 's'}`);
+    $('tray-new').textContent = ` ${unseen} new notice${unseen === 1 ? '' : 's'}`;
     $('tray-badge').hidden = false;
   }
   const el = document.createElement('div');
@@ -3002,6 +3031,7 @@ function notify(title, body, bad = /not |did not|failed|stopped/i.test(title)) {
   let timer;
   const arm = () => {
     clearTimeout(timer);
+    if (el.matches(':hover') || el.contains(document.activeElement)) return; // still being read or reached
     timer = setTimeout(
       () => {
         el.classList.add('out');
@@ -3115,6 +3145,7 @@ const cout = $('cout'),
 const chist = [];
 let hi = 0;
 const err = (code, message) => ({ __err: { code, message } });
+const hide = (x) => (OPT.mask ? 'amount hidden' : x); // Mask values covers the console too
 function cprint(s, cls) {
   const el = document.createElement('span');
   if (cls) el.className = cls;
@@ -3243,15 +3274,15 @@ const ANS = {
   },
   getblockheader: (a) => ANS.getblock(a),
   uptime: () => Math.floor((Date.now() - T0) / 1000),
-  getbalance: () => (W?.coinsKnown ? wallBal().available / 1e8 : err(-18, 'wallet not ready')),
+  getbalance: () => (W?.coinsKnown ? hide(wallBal().available / 1e8) : err(-18, 'wallet not ready')),
   getwalletinfo: () =>
     W?.coinsKnown
       ? {
           walletname: 'reef',
           format: 'one key in this tab (rawtr)',
-          balance: wallBal().available / 1e8,
-          unconfirmed_balance: wallBal().pending / 1e8,
-          immature_balance: wallBal().immature / 1e8,
+          balance: hide(wallBal().available / 1e8),
+          unconfirmed_balance: hide(wallBal().pending / 1e8),
+          immature_balance: hide(wallBal().immature / 1e8),
           txcount: ledger.size + sent.length,
           keypoolsize: 1,
           descriptors: true,
@@ -3282,14 +3313,16 @@ const ANS = {
           vout: Number(c.key.slice(65)),
           address: W.address,
           scriptPubKey: W.script,
-          amount: c.value / 1e8,
+          amount: hide(c.value / 1e8),
           confirmations: W.height != null ? W.height - c.height + 1 : null,
           spendable: WL.isMature(c, W.height),
           coinbase: !!c.coinbase,
         }))
       : err(-18, 'wallet not ready'),
   sendtoaddress: () => err(-4, 'send from the Send page, where the payment is shown and confirmed before it leaves'),
-  listsent: () => sent.map(({ hex, ...s }) => s),
+  listsent: () => sent.map(({ hex, ...s }) => (OPT.mask ? { ...s, sats: hide(0), fee: hide(0), change: hide(0), values: undefined } : s)),
+  'help-console': () =>
+    "Type a command and press Enter; Up and Down recall earlier ones; Ctrl+L clears the window. Answers come from this tab's own node and wallet; nothing typed here sends money.",
   help: () =>
     `== Blockchain ==\ngetbestblockhash\ngetblock "blockhash" | height\ngetblockchaininfo\ngetblockcount\ngetblockhash height\ngetsnapshotinfo\ngettxout "txid" n\ngettxoutsetinfo\n\n== Control ==\nhelp\nuptime\n\n== Mempool ==\ngetmempoolentry "txid"\ngetmempoolinfo\ngetrawmempool [true]\n\n== Network ==\ngetnetworkinfo\ngetnostrtip\ngetpeerinfo\n\n== Wallet ==\ngetaddressinfo "address"\ngetbalance\ngetnewaddress\ngetwalletinfo\nlistsent\nlistunspent`,
 };
@@ -3303,6 +3336,7 @@ cin.onkeydown = (e) => {
   } else if (e.ctrlKey && e.key.toLowerCase() === 'l') {
     e.preventDefault();
     cout.textContent = '';
+    sayOnce('console cleared');
   } else if (e.key === 'Enter') {
     const line = cin.value.trim();
     cin.value = '';
@@ -3461,7 +3495,7 @@ async function copyDiagnostics() {
   }
 }
 // ---- a newer Reef: checked every hour, offered, never forced
-// "2026-10-01.21" → comparable: a stale copy at the web host never offers an older version as newer
+// "2026-10-01.22" → comparable: a stale copy at the web host never offers an older version as newer
 const versionKey = (v) => {
   const m = /^(\d{4})-(\d{2})-(\d{2})\.(\d+)$/.exec(String(v ?? ''));
   return m ? [+m[1], +m[2], +m[3], +m[4]] : null;
@@ -3569,6 +3603,7 @@ function readOnlyPage() {
   $('cin').disabled = true;
   $('cin').placeholder = 'the node runs in another tab: use its console';
   $('cin').setAttribute('aria-describedby', 'nwidle');
+  cprint('This tab is idle: the node and the wallet answer in the tab that runs them.', 'err');
   for (const id of ['txsearch', 'txtype']) $(id).disabled = true; // no history here to search
 }
 function goIdle() {
@@ -3678,6 +3713,7 @@ async function startNode(force = false) {
       if (IDLE) return;
       RUNNING = true;
       LS.set('reef:schema', String(SCHEMA)); // only the tab that runs the node marks the layout
+      backupNudge(); // now that this tab is known to run the wallet
       // ask on every start, not only the first: a browser under disk pressure evicts a site it was not asked to keep
       navigator.storage
         ?.persist?.()

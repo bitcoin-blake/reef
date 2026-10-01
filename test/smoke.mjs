@@ -4,6 +4,7 @@
 //   SCHEMA=<bitcoin-desktop/schema> SIDESTR_LIB=<siding/lib> node test/smoke.mjs
 import { readFileSync, existsSync } from 'node:fs';
 import { execSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 const H = (p) => p.replace(/^~/, homedir());
@@ -34,6 +35,9 @@ const MAP = [
   [/^http:\/\/localhost:8799\/seed$/, () => null],
   [/^http:\/\/localhost:8799\/([^?]*)/, (m) => `${ROOT}${m[1] || 'index.html'}`],
 ];
+const FAKE_SHA = createHash('sha256')
+  .update(readFileSync(`${ROOT}test/fake/tabnode.js`))
+  .digest('hex');
 const type = (p) =>
   p.endsWith('.html') ? 'text/html' : /\.json(ld)?$/.test(p) ? 'application/json' : p.endsWith('.css') ? 'text/css' : 'text/javascript';
 const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {});
@@ -57,6 +61,10 @@ async function profile({ libDelay = 0, startMs = 50, seed = {} } = {}) {
         }
       } else body = existsSync(p) ? readFileSync(p) : null;
       if (body == null) return route.fulfill({ status: 404, body: '' });
+      // the page checks its node loader by sha256: the fake loader's hash stands in for the pinned one (the real pin is
+      // checked against the commit by the release test)
+      if (typeof p === 'string' && p.endsWith('/reef.js'))
+        body = String(body).replace(/const TABNODE_SHA256 = '[0-9a-f]{64}'/, `const TABNODE_SHA256 = '${FAKE_SHA}'`);
       if (libDelay && !u.startsWith('http://localhost:8799')) await new Promise((r) => setTimeout(r, libDelay));
       const name = typeof p === 'object' ? p.path : p;
       return route.fulfill({ status: 200, contentType: type(name), body, headers: { 'access-control-allow-origin': '*' } });
@@ -139,7 +147,11 @@ for (const [name, opts] of [
   const p = await profile({ ...opts, seed: returning() });
   const page = await p.open();
   await page.waitForFunction(() => /^tb1p/.test(document.getElementById('rcvaddr').value), null, { timeout: 30000 });
-  await page.waitForTimeout(opts.startMs + 1000);
+  await page
+    .waitForFunction((k) => JSON.parse(localStorage.getItem(k) ?? '[]').length > 0, 'reef:quarantine:' + TAG, {
+      timeout: opts.startMs + 10000,
+    })
+    .catch(() => {}); // the assertion below says what was found
   const q = JSON.parse((await ls(page, 'reef:quarantine:' + TAG)) ?? '[]');
   const stored = JSON.parse((await ls(page, 'reef:sent:' + TAG)) ?? '[]');
   t(
@@ -148,7 +160,7 @@ for (const [name, opts] of [
     JSON.stringify({ q, stored }),
   );
   await coins(page);
-  await page.waitForTimeout(400);
+  await page.waitForFunction(() => /\d/.test(document.getElementById('avail').textContent), null, { timeout: 5000 });
   const avail = await page.textContent('#avail');
   t(`${name}: its coin is held (0.00020000 available, not 0.00025000)`, /0\.0002000\b|0\.00020000/.test(avail), avail);
   const q2 = JSON.parse((await ls(page, 'reef:quarantine:' + TAG)) ?? '[]');
@@ -165,7 +177,7 @@ for (const [name, opts] of [
   const seed = returning({ 'reef:schema': '99' });
   const p = await profile({ seed });
   const page = await p.open();
-  await page.waitForTimeout(4000);
+  await page.waitForSelector('#banners [data-b=schema]', { timeout: 10000 });
   t('a newer schema: the node is not started', (await page.evaluate(() => window.__fake.starts)) === 0);
   t(
     'a newer schema: the records and the marker are untouched',
@@ -184,11 +196,11 @@ for (const [name, opts] of [
 {
   const p = await profile({ seed: { 'reef:started': '1', 'reef:key': KEY } });
   const a = await p.open();
-  await a.waitForTimeout(2500);
+  await a.waitForFunction(() => document.getElementById('recent').textContent.trim().length > 0, null, { timeout: 10000 });
   const recent = await a.textContent('#recent');
   t('before the node answers, the recent list says it is waiting', /waiting for the node/.test(recent), recent);
   const b = await p.open();
-  await b.waitForTimeout(4500);
+  await b.waitForFunction(() => document.body.classList.contains('idle'), null, { timeout: 10000 });
   t(
     'a second tab is idle: sending disabled, the node not started there',
     (await b.getAttribute('#sendgo', 'aria-disabled')) === 'true' &&
@@ -206,10 +218,20 @@ for (const [name, opts] of [
   await a.keyboard.press('End');
   const item = await a.evaluate(() => document.activeElement?.id);
   await a.evaluate(() => document.activeElement.click());
-  await a.waitForTimeout(200);
+  await a.waitForSelector('dialog[open]', { timeout: 5000 }).catch(() => {});
   const opened = await a.evaluate(() => document.querySelector('dialog[open]')?.id);
+  await a
+    .waitForFunction(() => document.querySelector('dialog[open]')?.contains(document.activeElement), null, { timeout: 5000 })
+    .catch(() => {});
   await a.keyboard.press('Escape');
-  await a.waitForTimeout(200);
+  await a
+    .waitForFunction(
+      () =>
+        !document.querySelector('dialog[open]') && document.activeElement !== document.body && !document.activeElement?.closest('dialog'),
+      null,
+      { timeout: 5000 },
+    )
+    .catch(() => {});
   const back = await a.evaluate(() => document.activeElement?.dataset?.m);
   t(
     'a dialog opened from a menu gives focus back to the menu title when closed',
@@ -217,9 +239,11 @@ for (const [name, opts] of [
     JSON.stringify({ item, opened, back }),
   );
   await a.evaluate(() => document.getElementById('m-exit').click());
-  await a.waitForTimeout(200);
+  await a.waitForFunction(() => !document.getElementById('tray').hidden, null, { timeout: 5000 });
   await a.evaluate(() => document.getElementById('tray').click());
-  await a.waitForTimeout(200);
+  await a
+    .waitForFunction(() => document.getElementById('tray').hidden && !!document.activeElement?.closest('.tool'), null, { timeout: 5000 })
+    .catch(() => {});
   t('restoring from the tray puts focus on the page toolbar', await a.evaluate(() => !!document.activeElement?.closest('.tool')));
   t('no page errors', !p.errors.length, p.errors.join(' | '));
   await p.ctx.close();
@@ -229,7 +253,6 @@ for (const [name, opts] of [
   const p = await profile({ seed: { 'reef:started': '1', 'reef:key': KEY } });
   const a = await p.open();
   await a.waitForFunction(() => /^tb1p/.test(document.getElementById('rcvaddr').value), null, { timeout: 30000 });
-  await a.waitForTimeout(800);
   const COIN = 'cd'.repeat(32) + ':0';
   await a.evaluate(
     ({ script, COIN }) => {
@@ -287,7 +310,13 @@ for (const [name, opts] of [
     confirmText.slice(0, 160),
   );
   await a.click('#ask-ok');
-  await a.waitForFunction(() => (window.__relay ?? []).length === 1, null, { timeout: 15000 }).catch(() => {});
+  const relayed = await a
+    .waitForFunction(() => (window.__relay ?? []).length === 1, null, { timeout: 15000 })
+    .then(
+      () => true,
+      () => false,
+    );
+  t('the payment reached the relays', relayed);
   const rec = JSON.parse((await ls(a, 'reef:sent:' + TAG)) ?? '[]');
   const ev = await a.evaluate(() => window.__relay?.[0] ?? null);
   t(
@@ -330,7 +359,9 @@ for (const [name, opts] of [
   // the coin spent by something else, no change back: the page asks the node which transaction spent it
   const txid = rec[0].txid;
   await a.evaluate(({ script }) => window.__fake.emit('message', { type: 'coins', script, height: 152102, coins: [] }), { script: SCRIPT });
-  await a.waitForTimeout(200);
+  await a
+    .waitForFunction((txid) => window.__fake.posts.some((m) => m.type === 'spend' && m.req === 'sent:' + txid), txid, { timeout: 5000 })
+    .catch(() => {});
   const asked = await a.evaluate((txid) => window.__fake.posts.find((m) => m.type === 'spend' && m.req === 'sent:' + txid), txid);
   t(
     'with its coin gone and no change back, the node is asked which transaction spent it',
@@ -341,7 +372,7 @@ for (const [name, opts] of [
     (txid) => window.__fake.emit('message', { type: 'spend', req: 'sent:' + txid, found: true, txid: 'ee'.repeat(32), height: 152101 }),
     txid,
   );
-  await a.waitForTimeout(300);
+  await a.waitForFunction(() => document.querySelectorAll('.toast').length > 0, null, { timeout: 5000 }).catch(() => {});
   const toast = await a.evaluate(() => [...document.querySelectorAll('.toast')].map((x) => x.textContent).join(' | '));
   const row = await a.evaluate(() => document.querySelector('#txrows tr')?.textContent ?? '');
   t(
@@ -392,6 +423,79 @@ for (const withIdle of [false, true]) {
   );
   if (b) t('the idle tab says the key was changed elsewhere', !!(await b.$('#banners [data-b=keychanged]')));
   t(`no page errors in the key switch${withIdle ? ' with an idle tab' : ''}`, !p.errors.length, p.errors.join(' | '));
+  await p.ctx.close();
+}
+// 8: money in a block above the signed tip is said as being double-checked; a silent broadcaster is warned about
+{
+  const p = await profile({ seed: { 'reef:started': '1', 'reef:key': KEY } });
+  const a = await p.open();
+  await a.waitForFunction(() => /^tb1p/.test(document.getElementById('rcvaddr').value), null, { timeout: 30000 });
+  await a.evaluate(
+    ({ script }) => {
+      const now = Math.floor(Date.now() / 1000);
+      window.__fake.emit('message', { type: 'synced', height: 152105, applied: true });
+      window.__fake.emit('message', {
+        type: 'nostr',
+        height: 152100,
+        hash: 'ab'.repeat(32),
+        agree: 3,
+        diverged: false,
+        live: true,
+        created_at: now,
+      });
+      window.__fake.emit('message', {
+        type: 'coins',
+        script,
+        height: 152105,
+        coins: [
+          { key: 'aa'.repeat(32) + ':0', value: 10000, height: 152090 },
+          { key: 'bb'.repeat(32) + ':0', value: 7000, height: 152104 },
+        ],
+      });
+    },
+    { script: SCRIPT },
+  );
+  await a
+    .waitForFunction(() => /double-checked/.test(document.getElementById('outgoing').textContent), null, { timeout: 5000 })
+    .catch(() => {});
+  t(
+    'money in a block above the signed tip: not available, said as being double-checked, in the list too',
+    (await a.textContent('#avail')).startsWith('0.00010000') &&
+      /0\.00007000 tBTC in blocks still being double-checked/.test(await a.textContent('#outgoing')) &&
+      /being double-checked/.test(await a.textContent('#recent')),
+    `${await a.textContent('#avail')} | ${await a.textContent('#outgoing')}`,
+  );
+  await a.evaluate(() =>
+    window.__fake.emit('message', {
+      type: 'mempool',
+      count: 0,
+      bytes: 0,
+      fees: 0,
+      stats: { refused: 0, dropped: 0 },
+      txs: [],
+      all: [],
+      following: true,
+      feedFileAt: Date.now() - 11 * 60e3,
+    }),
+  );
+  await a.waitForSelector('#banners [data-b=feed]', { timeout: 5000 }).catch(() => {});
+  t('a broadcaster silent for over ten minutes is warned about', !!(await a.$('#banners [data-b=feed]')));
+  await a.evaluate(() =>
+    window.__fake.emit('message', {
+      type: 'mempool',
+      count: 0,
+      bytes: 0,
+      fees: 0,
+      stats: { refused: 0, dropped: 0 },
+      txs: [],
+      all: [],
+      following: true,
+      feedFileAt: Date.now(),
+    }),
+  );
+  await a.waitForFunction(() => !document.querySelector('#banners [data-b=feed]'), null, { timeout: 5000 }).catch(() => {});
+  t('...and the warning goes when it reports again', !(await a.$('#banners [data-b=feed]')));
+  t('no page errors in the double-check and heartbeat paths', !p.errors.length, p.errors.join(' | '));
   await p.ctx.close();
 }
 await browser.close();

@@ -12,6 +12,7 @@ export function createTabNode() {
   };
   const emit = (t, a) => {
     // what the real loader does with a node message before the page sees it
+    if (t === 'message' && a?.type === 'mempool') node.mempool = a;
     if (t === 'message' && a?.type === 'synced')
       Object.assign(node, { synced: true, phase: 'synced', height: a.height, lastSync: Date.now(), time: Math.floor(Date.now() / 1000) });
     for (const f of h.get(t) ?? []) f(a);

@@ -650,6 +650,25 @@ t(
     );
   }
   {
+    // the node's loader is checked by sha256 in the page: the hash is that of the file at the pinned node commit
+    const { execSync } = await import('node:child_process');
+    const { createHash } = await import('node:crypto');
+    const { homedir } = await import('node:os');
+    const want = src.match(/const TABNODE_SHA256 = '([0-9a-f]{64})'/)?.[1];
+    let got = null;
+    try {
+      got = createHash('sha256')
+        .update(
+          execSync(
+            `git -C ${process.env.BLAKETESTNODE ?? homedir() + '/remote/github.com/bitcoin-blake/blaketestnode'} show ${node}:browser/tabnode.js`,
+            { stdio: ['ignore', 'pipe', 'ignore'] },
+          ),
+        )
+        .digest('hex');
+    } catch {}
+    t("the node loader's pinned sha256 is the file's at the pinned node commit", !!want && want === got, `${want} vs ${got}`);
+  }
+  {
     const { execSync } = await import('node:child_process');
     const { homedir } = await import('node:os');
     let w = '';

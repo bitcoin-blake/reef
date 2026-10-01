@@ -13,10 +13,11 @@ jobs:
     steps:
       - name: compare the node pins of the published apps
         run: |
-          set -e
+          set -eo pipefail
           declare -A pin
           for f in reef/reef.js bight/bight.js winch/winch.js hitch/hitch.js; do
-            p=$(curl -fsSL "https://bitcoin-blake.github.io/$f?nocache=$RANDOM" | grep -o 'blaketestnode@[0-9a-f]\{40\}' | sort -u)
+            body=$(curl -fsSL "https://bitcoin-blake.github.io/$f?nocache=$RANDOM") || { echo "::error::could not fetch $f from Pages (the site, not the pins)"; exit 1; }
+            p=$(printf '%s' "$body" | grep -o 'blaketestnode@[0-9a-f]\{40\}' | sort -u || true)
             n=$(echo "$p" | grep -c . || true)
             echo "$f: $p"
             if [ "$n" != 1 ]; then echo "::error::$f pins $n node versions"; exit 1; fi

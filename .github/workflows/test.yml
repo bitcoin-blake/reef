@@ -84,6 +84,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: the four published apps pin the same node (after this deploy is served)
         run: |
+          set -o pipefail
           want=$(node -pe 'require("./version.json").version')
           for i in $(seq 1 30); do
             got=$(curl -fsSL "https://bitcoin-blake.github.io/reef/version.json?nocache=$RANDOM" | node -pe 'JSON.parse(require("fs").readFileSync(0)).version' || true)
@@ -92,7 +93,8 @@ jobs:
           if [ "$got" != "$want" ]; then echo "::error::the deployed version.json is $got, not $want, after five minutes"; exit 1; fi
           declare -A pin
           for f in reef/reef.js bight/bight.js winch/winch.js hitch/hitch.js; do
-            p=$(curl -fsSL "https://bitcoin-blake.github.io/$f?nocache=$RANDOM" | grep -o 'blaketestnode@[0-9a-f]\{40\}' | sort -u)
+            body=$(curl -fsSL "https://bitcoin-blake.github.io/$f?nocache=$RANDOM") || { echo "::error::could not fetch $f from Pages (the site, not the pins)"; exit 1; }
+            p=$(printf '%s' "$body" | grep -o 'blaketestnode@[0-9a-f]\{40\}' | sort -u || true)
             echo "$f: $p"; pin[$f]=$p
             if [ "$(echo "$p" | grep -c .)" != 1 ]; then echo "::error::$f pins more or fewer than one node version"; exit 1; fi
           done
