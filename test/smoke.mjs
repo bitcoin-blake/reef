@@ -1669,7 +1669,7 @@ async function wallet(coins, extra = {}) {
 // 21: payment requests (BIP 21): a link's ?pay= fills the Send page and sends nothing; a bitcoin: URI typed into Pay To fills
 // the form; a request Reef cannot honour is refused in words
 {
-  const A = 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx';
+  const A = 'tb1pfu64hh9hes90w2808n8tjc2ajp5yhddjef0ctx4s7zmsgp6cwx4quvla6g'; // taproot (the test key 11…11)
   const uri = `bitcoin:${A}?amount=0.0001&label=Table%207&message=buy-in`;
   const p = await profile({ seed: { 'reef:started': '1', 'reef:key': KEY } });
   const a = await p.open({ path: 'index.html?pay=' + encodeURIComponent(uri) });

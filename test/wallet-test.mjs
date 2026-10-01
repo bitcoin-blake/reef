@@ -34,7 +34,7 @@ const throws = (f, re) => {
 
 // ---- payment requests (BIP 21): what a link or a pasted bitcoin: URI asks for, read exactly; nothing else is a request
 {
-  const A = 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx';
+  const A = 'tb1pfu64hh9hes90w2808n8tjc2ajp5yhddjef0ctx4s7zmsgp6cwx4quvla6g'; // taproot (the test key 11…11)
   const r = W.parsePaymentUri(`bitcoin:${A}?amount=0.001&label=Table%207&message=buy-in+for+seat+3`);
   t(
     'a request gives the address, the amount exactly and its words',
