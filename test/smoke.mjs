@@ -87,7 +87,7 @@ async function profile({ libDelay = 0, startMs = 50, seed = {}, tamper = false, 
       const name = typeof p === 'object' ? p.path : p;
       return route.fulfill({ status: 200, contentType: type(name), body, headers: { 'access-control-allow-origin': '*' } });
     }
-    if (/^https:\/\/cdn\.jsdelivr\.net\/npm\//.test(u)) return route.continue(); // qrcode, webtorrent: pinned with SRI where loaded
+    if (/^https:\/\/cdn\.jsdelivr\.net\/npm\//.test(u)) return route.continue(); // qrcode (pinned by version, with an integrity hash) and webtorrent (by version only)
     return route.fulfill({ status: 404, body: '' }); // the mirror over http: nothing leaves the test (relays are faked above)
   });
   await ctx.addInitScript((ms) => (window.__START_MS = ms), startMs);

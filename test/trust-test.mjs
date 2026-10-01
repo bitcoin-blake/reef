@@ -109,5 +109,20 @@ t(
 );
 t("vouched: without vouchedTo the page's record is the fallback", T.vouchedHeight(tip({ agree: 0 }), 152090, 150307) === 152090);
 t('vouched: an agreeing tip above the last record wins', T.vouchedHeight(tip({ height: 152100 }), 152090, 150307) === 152100);
+// one agreeing relay is enough to vouch (agree > 0, not > 1): the boundary, in the status and in the vouched height
+t(
+  'a signed tip with exactly one agreeing relay counts as checked, and none does not',
+  L({}, tip({ agree: 1 })).level === 'ok' &&
+    L({}, tip({ agree: 0 })).level === 'none' &&
+    /not been checked/.test(L({}, tip({ agree: 0 })).text),
+);
+t(
+  'signedHeight: one agreeing relay vouches, none does not, a disagreement never does',
+  T.signedHeight(tip({ agree: 1 })) === 152100 &&
+    T.signedHeight(tip({ agree: 0 })) === null &&
+    T.signedHeight(tip({ agree: 1, diverged: true })) === null &&
+    T.signedHeight(null) === null,
+);
+
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

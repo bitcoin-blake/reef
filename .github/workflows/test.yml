@@ -23,9 +23,12 @@ jobs:
       - name: pins
         id: pins
         run: |
-          echo "node=$(grep -o 'blaketestnode@[0-9a-f]\{40\}' reef.js | head -1 | cut -d@ -f2)" >> "$GITHUB_OUTPUT"
-          echo "lib=$(grep -o 'sidestr/spec@[0-9a-f]\{40\}' reef.js | head -1 | cut -d@ -f2)" >> "$GITHUB_OUTPUT"
-          echo "engine=$(grep -o 'schema@[0-9a-f]\{40\}' reef.js | head -1 | cut -d@ -f2)" >> "$GITHUB_OUTPUT"
+          # an empty match would check out the dependency's default branch instead of the pin: fail instead
+          node=$(grep -o 'blaketestnode@[0-9a-f]\{40\}' reef.js | head -1 | cut -d@ -f2)
+          lib=$(grep -o 'sidestr/spec@[0-9a-f]\{40\}' reef.js | head -1 | cut -d@ -f2)
+          engine=$(grep -o 'schema@[0-9a-f]\{40\}' reef.js | head -1 | cut -d@ -f2)
+          [ -n "$node" ] && [ -n "$lib" ] && [ -n "$engine" ] || { echo "::error::a pin was not found in reef.js (node '$node', lib '$lib', engine '$engine')"; exit 1; }
+          { echo "node=$node"; echo "lib=$lib"; echo "engine=$engine"; } >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         with: { repository: bitcoin-blake/blaketestnode, ref: '${{ steps.pins.outputs.node }}', path: deps/blaketestnode, fetch-depth: 0 }
       - uses: actions/checkout@v4
@@ -38,7 +41,7 @@ jobs:
           SIDESTR_LIB: ${{ github.workspace }}/deps/spec/siding/lib
           SCHEMA: ${{ github.workspace }}/deps/schema
       - name: formatting
-        run: npx --yes prettier@3.3.3 --check reef.js lib test
+        run: npm run fmt:check
       - name: version bumped with the code, and upwards
         run: |
           base="${{ github.event.before }}"

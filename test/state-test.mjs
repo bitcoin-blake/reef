@@ -174,7 +174,7 @@ t(
   t(
     'the states read in words, each with what to do next',
     st(pay()) === 'handed to the relays' &&
-      /retrying/.test(st(pay({ relays: [] }))) &&
+      /not yet handed to a relay: published again every 10 minutes/.test(st(pay({ relays: [] }))) &&
       st(pay(), { inMempool: () => true }) === 'waiting for a block' &&
       /raise the fee/.test(st(pay({ tip: 152097 }), { inMempool: () => true })) &&
       /higher fee/.test(st(pay({ replacedBy: 'x' }))) &&
@@ -184,7 +184,8 @@ t(
       /made elsewhere/.test(st(pay({ hex: undefined }))) &&
       /^[0-9,]+ confirmations$/.test(st(pay({ pending: false, height: 1 }))) &&
       /confirming \(2 of 6\)/.test(st(pay({ pending: false, height: 152100 }))) &&
-      /every 10 minutes/.test(st(pay(), { now: 2000 + 11 * 60e3 })),
+      /published again every 10 minutes/.test(st(pay(), { now: 2000 + 11 * 60e3 })) &&
+      S.REPUBLISH_EVERY === 'every 10 minutes',
   );
 }
 
@@ -1168,5 +1169,78 @@ t(
     JSON.stringify([m1.pending, m2.pending]),
   );
 }
+// ---- round 14: each guard of a stored record and of a refusal on its own
+{
+  const own = '5120' + 'ee'.repeat(32),
+    dest = '5120' + 'dd'.repeat(32);
+  const scriptOf = (a) => (a === 'tb1pme' ? own : dest);
+  const tx2 =
+    (o = {}) =>
+    () => ({
+      txid: tx('1'),
+      inputs: [inA],
+      outputs: [
+        { value: 3000, scriptPubKey: dest },
+        { value: 6845, scriptPubKey: own },
+      ],
+      ...o,
+    });
+  const ok2 = (rec, check = tx2()) => S.validRecord(rec, { check, scriptOf, ownScript: own });
+  t(
+    'a txid must be a string of 64 lower-case hex: not missing, not an array, not short, not upper case',
+    ok2(pay()) &&
+      !ok2(null) &&
+      !ok2(undefined) &&
+      !ok2(pay({ txid: [tx('1')] })) &&
+      !ok2(pay({ txid: tx('1').slice(1) })) &&
+      !ok2(pay({ txid: tx('1').toUpperCase().replace(/1/g, 'A') })),
+  );
+  t(
+    'the decoded transaction must have the same txid and the same coins, each on its own',
+    !ok2(pay(), tx2({ txid: tx('9') })) &&
+      !ok2(pay({ inputs: [inB] })) &&
+      !ok2(pay(), tx2({ inputs: [inA, inB] })) &&
+      !ok2(pay(), () => null),
+  );
+  // a cancel pays everything back to this wallet in one output
+  const cancel = pay({ kind: 'cancel', to: 'tb1pme', toScript: own, sats: 0, change: 9845, self: true });
+  const one = tx2({ outputs: [{ value: 9845, scriptPubKey: own }] });
+  t(
+    'a cancel is kept only with one output to this wallet: not two, not to a stranger',
+    ok2(cancel, one) &&
+      !ok2(
+        cancel,
+        tx2({
+          outputs: [
+            { value: 5000, scriptPubKey: own },
+            { value: 4845, scriptPubKey: own },
+          ],
+        }),
+      ) &&
+      !ok2(cancel, tx2({ outputs: [{ value: 9845, scriptPubKey: dest }] })),
+  );
+  // a payment to oneself: what comes back (its change plus the amount) must be what pays this wallet
+  const selfTx = tx2({
+    outputs: [
+      { value: 3000, scriptPubKey: own },
+      { value: 6845, scriptPubKey: own },
+    ],
+  });
+  const selfRec = (o) => pay({ to: 'tb1pme', toScript: own, self: true, ...o });
+  t(
+    "a payment to oneself whose change matches neither way is dropped; the older 'change only' form is kept",
+    ok2(selfRec({}), selfTx) && ok2(selfRec({ change: 9845 }), selfTx) && !ok2(selfRec({ change: 1 }), selfTx),
+  );
+  t('a record that never said its change is not judged on it', ok2(pay({ change: undefined })) && !ok2(pay({ change: 1 })));
+  // refusals: only of a payment still waiting, with our bytes, of the newest version, and never a crash on an odd record
+  t(
+    'a refusal of a payment no longer waiting, or of a record with no transaction, or of an unknown txid, changes nothing',
+    S.onRefused([pay({ pending: false })], tx('1'), 'x', '00').length === 0 &&
+      S.onRefused([pay({ hex: undefined })], tx('1'), 'x', '00').length === 0 &&
+      S.onRefused([pay()], tx('7'), 'x', '00').length === 0 &&
+      S.onRefused([pay({ replacedBy: tx('2') })], tx('1'), 'x', '00').length === 0,
+  );
+}
+
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

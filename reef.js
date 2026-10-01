@@ -4,7 +4,7 @@
 // tested against the kernel; this file is the host: storage, the node, the relays, the window. Every string that comes
 // from outside (relays, the mempool, the chain, links, options) reaches the page as text, never as markup.
 const $ = (id) => document.getElementById(id);
-export const VERSION = '2026-10-01.31';
+export const VERSION = '2026-10-01.32';
 const SCHEMA = 2; // the storage layout this version writes
 const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@3037bb4c7ea414e75332632677ac2ffee191b704';
 const LIB = 'https://cdn.jsdelivr.net/gh/sidestr/spec@fe689e9c723f9bf43393d2dd5b6f924a701c8a18/siding/lib',
@@ -496,7 +496,7 @@ const loadVouched = () => {
   }
 };
 let lastVouched = loadVouched();
-const SNAPSHOT_BASE = 150307;
+const SNAPSHOT_BASE = 150307; // the UTXO snapshot's height; the first BLAKE2b block is the next (S.FIRST_BLAKE_HEIGHT)
 const vouched = () => T.vouchedHeight(node.nostr, lastVouched, SNAPSHOT_BASE);
 // no signed chain tip, or none newer than half an hour: money above the vouched height may wait longer than a block
 const tipStale = () => !node.nostr?.created_at || Date.now() / 1000 - node.nostr.created_at > 1800;
@@ -976,7 +976,7 @@ function tabs(listId, onSelect, panelPrefix) {
   }
   return (name) => select(all.find((t) => (t.dataset.t ?? t.dataset.o) === name) ?? all[0]);
 }
-const nwTab = tabs(
+tabs(
   'nwtabs',
   (t, via) => {
     document.querySelectorAll('.tp').forEach((p) => p.classList.toggle('on', p.id === 't-' + t.dataset.t));
@@ -2905,7 +2905,7 @@ async function sendFlow() {
     saveSent();
     if (!pub.ok.length)
       sendInfo(
-        'The payment is made and kept, but no relay took it yet. Reef publishes it again every 10 minutes: do not send it again. Check the relays in Settings → Options → Network.',
+        `The payment is made and kept, but no relay took it yet. It is published again ${S.REPUBLISH_EVERY}: do not send it again. Check the relays in Settings → Options → Network.`,
         'bad',
       );
     else
@@ -3108,7 +3108,7 @@ async function replaceFlow(s, cancel) {
       cancel ? 'Cancel requested' : 'Fee raised',
       pub.ok.length
         ? 'the replacement is with the relays; the Transactions page shows which version a block takes'
-        : 'no relay took the replacement yet; it is published again every 10 minutes',
+        : `no relay took the replacement yet; it is published again ${S.REPUBLISH_EVERY}`,
       !pub.ok.length,
     );
   } finally {
@@ -3527,14 +3527,14 @@ const ANS = {
     pruned: false,
     size_on_disk: node.st?.dat ?? null,
     warnings: [
-      `synced from the verified UTXO snapshot at 150307 (hash_serialized_3 ${node.hs ? node.hs.slice(0, 16) + '…' : 'pending'}); BLAKE2b blocks since the fork validated in this tab`,
+      `synced from the verified UTXO snapshot at ${SNAPSHOT_BASE} (hash_serialized_3 ${node.hs ? node.hs.slice(0, 16) + '…' : 'pending'}); BLAKE2b blocks since the fork validated in this tab`,
       trust().text,
     ],
   }),
   getblockcount: () => node.height,
   getbestblockhash: () => node.hash,
   getsnapshotinfo: () => ({
-    base_height: 150307,
+    base_height: SNAPSHOT_BASE,
     base_hash: node.st?.expect.baseHash,
     hash_serialized_3: node.hs ?? node.st?.expect.txoutsetHash,
     verified: node.hsOk ?? node.st?.idx > 0,
@@ -3637,12 +3637,12 @@ const ANS = {
   getblockhash: (a) => {
     const h = Number(a[0]);
     if (!/^\d+$/.test(a[0] ?? '')) return err(-8, 'getblockhash height');
-    if (h === 150307) return node.st?.expect.baseHash;
+    if (h === SNAPSHOT_BASE) return node.st?.expect.baseHash;
     if (!node.synced) return err(-28, 'still syncing');
-    if (h < 150308 || h > node.height)
+    if (h < S.FIRST_BLAKE_HEIGHT || h > node.height)
       return err(
         -8,
-        `Block height out of range: this tab holds ${n(150308)} to ${n(node.height)} (the BLAKE2b blocks; the snapshot base is 150307)`,
+        `Block height out of range: this tab holds ${n(S.FIRST_BLAKE_HEIGHT)} to ${n(node.height)} (the BLAKE2b blocks; the snapshot base is ${SNAPSHOT_BASE})`,
       );
     post({ type: 'block', height: h, req: 'hash' });
     return '(reading the block file…)';

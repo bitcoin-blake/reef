@@ -1,45 +1,82 @@
-// The pins of the four apps that share this origin's node (Reef, Bight, Winch, Hitch), as GitHub Pages publishes them: every
-// CDN path pinned to a repository (cdn.jsdelivr.net/gh/<owner>/<repo>@<ref>) must be pinned to a whole commit (a tag can be
-// moved), and the four must pin the same node (they share its files and its lock). The library and engine pins are listed.
-//   node tools/pins.mjs               the four as published (hourly, and after a Reef deploy)
+// The pins of the four apps that share this origin's node (Reef, Bight, Winch, Hitch), as GitHub Pages publishes them. Every
+// reference to a script CDN is checked, not only the repository form: on cdn.jsdelivr.net a /gh/ path must name a whole commit
+// (owner/repo@<40 hex>, since a tag or branch can be moved) and an /npm/ path an exact version (name@x.y.z); a /combine/ path,
+// a bare /gh/ or /npm/ prefix, a range (@^1, @latest) and every other script CDN host (unpkg, esm.sh, cdnjs, …) fail. Winch
+// and Hitch have no content security policy, so for them this is the only check. The four must also pin the same node (they
+// share its files and its lock). Only literal URLs are seen: a URL built from parts at run time is not.
+//   node tools/pins.mjs               the four as published (after a Reef deploy, and by pins.yml)
 //   node tools/pins.mjs --local       Reef from this checkout, the others as published (before a Reef deploy)
-const APPS = ['reef/reef.js', 'reef/index.html', 'bight/bight.js', 'bight/index.html', 'winch/winch.js', 'winch/index.html', 'hitch/hitch.js', 'hitch/index.html'];
+const APPS = [
+  'reef/reef.js',
+  'reef/index.html',
+  'bight/bight.js',
+  'bight/index.html',
+  'winch/winch.js',
+  'winch/index.html',
+  'hitch/hitch.js',
+  'hitch/index.html',
+];
+const main = import.meta.url === `file://${process.argv[1]}`;
 const local = process.argv.includes('--local');
-const { readFileSync } = await import('node:fs');
+import { readFileSync } from 'node:fs';
 
-const GH = /cdn\.jsdelivr\.net\/gh\/([\w.-]+\/[\w.-]+)@([\w.-]+)/g;
-let failed = 0;
-const fail = (m) => {
-  console.log(`::error::${m}`);
-  failed++;
-};
-const byApp = {};
-for (const f of APPS) {
-  const app = f.split('/')[0];
-  let body;
-  if (local && app === 'reef') body = readFileSync(new URL('../' + f.slice(5), import.meta.url), 'utf8');
-  else {
-    const r = await fetch(`https://bitcoin-blake.github.io/${f}?nocache=${Date.now()}`, { cache: 'no-store' }).catch((e) => ({ ok: false, statusText: e.message }));
-    if (!r.ok) {
-      fail(`could not fetch ${f} from Pages (${r.status ?? ''} ${r.statusText}): the site, not the pins`);
-      continue;
-    }
-    body = await r.text();
-  }
-  const pins = (byApp[app] ??= new Map());
-  for (const [, repo, ref] of body.matchAll(GH)) {
-    (pins.get(repo) ?? pins.set(repo, new Set()).get(repo)).add(ref);
-    if (!/^[0-9a-f]{40}$/.test(ref)) fail(`${f} pins ${repo}@${ref}: not a whole commit (a tag or branch can be moved)`);
-  }
+// any URL on a host that serves scripts from packages or repositories
+const CDN_URL =
+  /(?:https?:)?\/\/((?:cdn|fastly|gcore|testingcf)\.jsdelivr\.net|unpkg\.com|esm\.sh|esm\.run|cdnjs\.cloudflare\.com|cdn\.skypack\.dev|ga\.jspm\.io|jspm\.dev|cdn\.statically\.io|rawcdn\.githack\.com|raw\.githack\.com)(\/[^\s'"`;),]*)?/g;
+const GH = /^\/gh\/([\w.-]+\/[\w.-]+)@([0-9a-f]{40})(?:\/|$)/;
+const NPM = /^\/npm\/((?:@[\w.-]+\/)?[\w.-]+)@(\d+\.\d+\.\d+(?:-[\w.]+)?)(?:\/|$)/;
+// a URL's verdict: { repo, ref } when it is pinned as the rules above say, else { why }
+export function judge(host, path = '') {
+  if (host !== 'cdn.jsdelivr.net') return { why: `${host} is not an allowed script CDN (only cdn.jsdelivr.net with pinned paths)` };
+  let m = path.match(GH);
+  if (m) return { repo: m[1], ref: m[2] };
+  m = path.match(NPM);
+  if (m) return { repo: 'npm:' + m[1], ref: m[2] };
+  if (path.startsWith('/gh/'))
+    return { why: 'a /gh/ path not pinned to a whole commit (owner/repo@<40 hex>): a tag or branch can be moved' };
+  if (path.startsWith('/npm/')) return { why: 'an /npm/ path not pinned to an exact version (name@x.y.z): a range or tag can move' };
+  return { why: `${path || 'the bare host'}: only /gh/ and /npm/ paths can be pinned (combine and the like cannot)` };
 }
-for (const [app, pins] of Object.entries(byApp))
-  console.log(`${app}${local && app === 'reef' ? ' (this checkout)' : ''}: ${[...pins].map(([repo, refs]) => `${repo}@${[...refs].join(',')}`).join('  ') || 'no pins'}`);
-const nodes = Object.entries(byApp).map(([app, pins]) => [app, [...(pins.get('bitcoin-blake/blaketestnode') ?? [])]]);
-for (const [app, refs] of nodes) if (refs.length !== 1) fail(`${app} pins ${refs.length} node versions (${refs.join(', ') || 'none'})`);
-if (new Set(nodes.map(([, refs]) => refs.join())).size > 1)
-  fail(
-    `the apps pin different node versions: ${nodes.map(([a, r]) => `${a} ${r.join(',').slice(0, 7)}`).join(', ')}` +
-      (local ? ' (release the other apps on this pin first: README, Releasing)' : ''),
-  );
-if (!failed) console.log(`all four pin the node at ${nodes[0]?.[1][0]}, and every repository pin is a whole commit`);
-process.exit(failed ? 1 : 0);
+if (main) {
+  let failed = 0;
+  const fail = (m) => {
+    console.log(`::error::${m}`);
+    failed++;
+  };
+  const byApp = {};
+  for (const f of APPS) {
+    const app = f.split('/')[0];
+    let body;
+    if (local && app === 'reef') body = readFileSync(new URL('../' + f.slice(5), import.meta.url), 'utf8');
+    else {
+      const r = await fetch(`https://bitcoin-blake.github.io/${f}?nocache=${Date.now()}`, { cache: 'no-store' }).catch((e) => ({
+        ok: false,
+        statusText: e.message,
+      }));
+      if (!r.ok) {
+        fail(`could not fetch ${f} from Pages (${r.status ?? ''} ${r.statusText}): the site, not the pins`);
+        continue;
+      }
+      body = await r.text();
+    }
+    const pins = (byApp[app] ??= new Map());
+    for (const [url, host, path] of body.matchAll(CDN_URL)) {
+      const v = judge(host, path);
+      if (v.why) fail(`${f}: ${url}: ${v.why}`);
+      else (pins.get(v.repo) ?? pins.set(v.repo, new Set()).get(v.repo)).add(v.ref);
+    }
+  }
+  for (const [app, pins] of Object.entries(byApp))
+    console.log(
+      `${app}${local && app === 'reef' ? ' (this checkout)' : ''}: ${[...pins].map(([repo, refs]) => `${repo}@${[...refs].join(',')}`).join('  ') || 'no pins'}`,
+    );
+  const nodes = Object.entries(byApp).map(([app, pins]) => [app, [...(pins.get('bitcoin-blake/blaketestnode') ?? [])]]);
+  for (const [app, refs] of nodes) if (refs.length !== 1) fail(`${app} pins ${refs.length} node versions (${refs.join(', ') || 'none'})`);
+  if (new Set(nodes.map(([, refs]) => refs.join())).size > 1)
+    fail(
+      `the apps pin different node versions: ${nodes.map(([a, r]) => `${a} ${r.join(',').slice(0, 7)}`).join(', ')}` +
+        (local ? ' (release the other apps on this pin first: README, Releasing)' : ''),
+    );
+  if (!failed) console.log(`all four pin the node at ${nodes[0]?.[1][0]}; every CDN reference is a whole commit or an exact version`);
+  process.exit(failed ? 1 : 0);
+}

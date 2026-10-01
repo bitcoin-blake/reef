@@ -917,5 +917,103 @@ t(
       vouched: 152099,
     }).available === 7000,
 );
+// ---- round 14: the exact limits of a replacement, and the transaction's version and lock time
+{
+  const tx = W.unsignedTx({ picked: [coin(61, 5000)], outputs: [{ value: 4000, scriptPubKey: spkB }] });
+  t(
+    'a payment is version 2 with lock time 0, and every input signals replacement (not version 3, not a future lock time)',
+    tx.version === 2 && tx.lockTime === 0 && tx.inputs.every((i) => i.sequence === 0xfffffffd),
+    JSON.stringify({ version: tx.version, lockTime: tx.lockTime }),
+  );
+  const s0 = { inputs: ['a:0'], sats: 30000, fee: 155, change: 1, toScript: spkB };
+  // a cancel: what comes back must be at least DUST, exactly
+  const vsC = W.estimateVsize(1, [spkA]),
+    feeC = s0.fee + vsC;
+  const cancelAt = (back) => () => W.planReplace({ ...s0, values: [feeC + back] }, { cancel: true, rate: 1, ownSpk: spkA });
+  t(
+    'a cancel that pays back exactly DUST is made; one sat less is refused',
+    cancelAt(W.DUST)().amount === W.DUST && throws(cancelAt(W.DUST - 1), /cover the fee/),
+  );
+  // a payment of everything: the recipient must receive at least MIN_SEND, exactly
+  const vsA = W.estimateVsize(1, [spkB]),
+    feeA = s0.fee + vsA;
+  const allAt = (left) => () => W.planReplace({ ...s0, all: true, change: 0, values: [feeA + left] }, { rate: 1, ownSpk: spkA });
+  t(
+    'raising a payment of everything that leaves exactly MIN_SEND is made; one sat less is refused',
+    allAt(W.MIN_SEND)().amount === W.MIN_SEND && throws(allAt(W.MIN_SEND - 1), /less than the minimum/),
+  );
+  // a raise from the change: change of exactly 0 is made (no change output), -1 is refused
+  const vsR = W.estimateVsize(1, [spkB, spkA]),
+    feeR = s0.fee + vsR;
+  const raiseAt = (ch) => () => W.planReplace({ ...s0, values: [s0.sats + feeR + ch] }, { rate: 1, ownSpk: spkA });
+  const r0 = raiseAt(0)();
+  t(
+    'a raise that uses up the change exactly is made with one output; a sat short is refused',
+    r0.outputs.length === 1 && r0.change === 0 && r0.fee === feeR && throws(raiseAt(-1), /too small to raise/),
+    JSON.stringify(r0),
+  );
+}
+// ---- round 14: the worse-case balance counts a refused replacement only while its original still waits
+{
+  const a = coin(71, 50000),
+    b = coin(72, 40000);
+  const orig = { txid: 'o'.repeat(64), inputs: [a.key], values: [a.value], sats: 20000, fee: 200, change: 29800, pending: true, at: 1 };
+  // the replacement pays more fee and returns less: refused here, it may still be mined elsewhere
+  const repl = { ...orig, txid: 'r'.repeat(64), fee: 2000, change: 28000, refused: 'x', replaces: orig.txid };
+  const base = W.balances({ coins: [a, b], sent: [orig], height: 152100 });
+  const both = W.balances({ coins: [a, b], sent: [orig, repl], height: 152100 });
+  t(
+    'a refused replacement of a waiting payment is counted in the worse case: the least coming back, the most going out',
+    base.returning === 29800 &&
+      base.outgoing === 20200 &&
+      both.returning === 28000 &&
+      both.outgoing === 22000 &&
+      both.total === base.total - 1800,
+    JSON.stringify({ base, both }),
+  );
+  const shapes = [
+    ['not pending', { ...repl, pending: false }],
+    ['abandoned', { ...repl, abandoned: true }],
+    ['not a replacement', { ...repl, replaces: undefined }],
+    ['of another payment (no shared coin)', { ...repl, inputs: [b.key] }],
+  ];
+  const same = (r) => JSON.stringify(W.balances({ coins: [a, b], sent: [orig, r], height: 152100 })) === JSON.stringify(base);
+  t(
+    'a refused one that is not pending, abandoned, not a replacement, or of another payment changes nothing',
+    shapes.every(([, r]) => same(r)),
+    shapes
+      .filter(([, r]) => r && !same(r))
+      .map(([n]) => n)
+      .join(', '),
+  );
+  // and with its original abandoned, a refused replacement has nothing to stand beside
+  const origGone = { ...orig, abandoned: true };
+  t(
+    'a refused replacement whose original is no longer waiting is not counted',
+    JSON.stringify(W.balances({ coins: [a, b], sent: [origGone, repl], height: 152100 })) ===
+      JSON.stringify(W.balances({ coins: [a, b], sent: [origGone], height: 152100 })),
+  );
+}
+
+// ---- round 14: a version that did not happen moves no money in the list, whether it was replaced or failed
+{
+  const won = { txid: 'a1'.repeat(32), to: 'tb1pthem', sats: 5000, fee: 300, pending: false, height: 152090, inputs: ['x:0'] };
+  const rows = (o) =>
+    W.history({
+      coins: [],
+      sent: [won, { txid: 'b2'.repeat(32), to: 'tb1pthem', sats: 5000, fee: 200, pending: false, inputs: ['x:0'], ...o }],
+      height: 152100,
+      address: 'tb1pme',
+    });
+  const lost = (o) => rows(o).find((r) => r.txid === 'b2'.repeat(32));
+  t(
+    'a replaced version (not failed) and a failed one both show 0, and the version that won shows what it cost',
+    lost({ replaced: won.txid }).sats === 0 &&
+      lost({ failed: won.txid }).sats === 0 &&
+      rows({ replaced: won.txid }).find((r) => r.txid === won.txid).sats === -5300,
+    JSON.stringify(lost({ replaced: won.txid })),
+  );
+}
+
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);
