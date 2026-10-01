@@ -4,24 +4,75 @@
 // tested against the kernel; this file is the host: storage, the node, the relays, the window. Every string that comes
 // from outside (relays, the mempool, the chain, links, options) reaches the page as text, never as markup.
 const $ = (id) => document.getElementById(id);
-export const VERSION = '2026-10-01.9'; const SCHEMA = 2; // the storage layout this version writes
+export const VERSION = '2026-10-01.10';
+const SCHEMA = 2; // the storage layout this version writes
 const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@448f74a64f19d5a6edabe6b02815a2c67e79374d';
-const LIB = 'https://cdn.jsdelivr.net/gh/sidestr/spec@fe689e9c723f9bf43393d2dd5b6f924a701c8a18/siding/lib', CDN = 'https://cdn.jsdelivr.net/gh/bitcoin-desktop/schema@b8cbf6337c7450fe14ddc5bce00c7280059aab5d';
-const EXPLORER = 'https://mempool.guide/testnet4', REPO = 'https://github.com/bitcoin-blake/reef';
+const LIB = 'https://cdn.jsdelivr.net/gh/sidestr/spec@fe689e9c723f9bf43393d2dd5b6f924a701c8a18/siding/lib',
+  CDN = 'https://cdn.jsdelivr.net/gh/bitcoin-desktop/schema@b8cbf6337c7450fe14ddc5bce00c7280059aab5d';
+const EXPLORER = 'https://mempool.guide/testnet4',
+  REPO = 'https://github.com/bitcoin-blake/reef';
 const DEFAULT_RELAYS = ['wss://nos.lol', 'wss://relay.primal.net', 'wss://nostr.mom', 'wss://nostr.oxtr.dev'];
 const TIP_RELAYS = ['wss://nos.lol', 'wss://relay.damus.io', 'wss://relay.nostr.band'];
-const DEFAULT_SNAP = 'https://melvin.me/public/txbt4/utxo-knots-150307.dat', DEFAULT_BLOCKS = 'https://melvin.me/public/txbt4/txbt4-blocks';
-const RETURNING = (() => { try { return !!localStorage.getItem('reef:started') || (!!localStorage.getItem('reef:key') && !localStorage.getItem('reef:keynew')); } catch { return false; } })(); // someone who used Reef before: no welcome step (a key made by a visit that chose Not now does not count)
-const esc = (x) => String(x ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const LS = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); return true; } catch { return false; } }, del: (k) => { try { localStorage.removeItem(k); } catch {} } };
-const SS = { get: (k) => { try { return sessionStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { sessionStorage.setItem(k, v); } catch {} } };
+const DEFAULT_SNAP = 'https://melvin.me/public/txbt4/utxo-knots-150307.dat',
+  DEFAULT_BLOCKS = 'https://melvin.me/public/txbt4/txbt4-blocks';
+const RETURNING = (() => {
+  try {
+    return !!localStorage.getItem('reef:started') || (!!localStorage.getItem('reef:key') && !localStorage.getItem('reef:keynew'));
+  } catch {
+    return false;
+  }
+})(); // someone who used Reef before: no welcome step (a key made by a visit that chose Not now does not count)
+const esc = (x) => String(x ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const LS = {
+  get: (k) => {
+    try {
+      return localStorage.getItem(k);
+    } catch {
+      return null;
+    }
+  },
+  set: (k, v) => {
+    try {
+      localStorage.setItem(k, v);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  del: (k) => {
+    try {
+      localStorage.removeItem(k);
+    } catch {}
+  },
+};
+const SS = {
+  get: (k) => {
+    try {
+      return sessionStorage.getItem(k);
+    } catch {
+      return null;
+    }
+  },
+  set: (k, v) => {
+    try {
+      sessionStorage.setItem(k, v);
+    } catch {}
+  },
+};
 const OPT_DEFAULTS = { unit: 'tbtc', feeRate: 1, notify: true, mask: false, relays: DEFAULT_RELAYS, torrent: false, seed: false };
-const OPT = (() => { try { return { ...OPT_DEFAULTS, ...JSON.parse(LS.get('reef:options') ?? '{}') }; } catch { return { ...OPT_DEFAULTS }; } })();
+const OPT = (() => {
+  try {
+    return { ...OPT_DEFAULTS, ...JSON.parse(LS.get('reef:options') ?? '{}') };
+  } catch {
+    return { ...OPT_DEFAULTS };
+  }
+})();
 if (!['tbtc', 'mtbtc', 'sats'].includes(OPT.unit)) OPT.unit = 'tbtc';
 const saveOptions = () => LS.set('reef:options', JSON.stringify(OPT));
 const RELAYS = () => (OPT.relays?.length ? OPT.relays : DEFAULT_RELAYS);
 const q = new URLSearchParams(location.search);
-const embedded = q.get('embedded') === '1' || q.get('frame') === '0'; if (embedded) document.body.classList.add('embedded');
+const embedded = q.get('embedded') === '1' || q.get('frame') === '0';
+if (embedded) document.body.classList.add('embedded');
 const keepQuery = () => (q.get('frame') === '0' ? '?frame=0' : q.get('embedded') === '1' ? '?embedded=1' : '');
 // the sources: what Options set, or the defaults. A link may propose others (?snapshot=, ?blocks=); they are used only
 // for this visit and only after the person agrees in the page, and never stored
@@ -29,444 +80,2922 @@ const proposed = { snapshot: q.get('snapshot'), blocks: q.get('blocks') };
 const accepted = (k) => proposed[k] && SS.get('reef:accept:' + k) === proposed[k];
 const SNAP_URL = (accepted('snapshot') ? proposed.snapshot : null) ?? LS.get('reef:snapshot') ?? DEFAULT_SNAP;
 const BLOCKS_URL = (accepted('blocks') ? proposed.blocks : null) ?? LS.get('reef:blocks') ?? DEFAULT_BLOCKS;
-const fmt = (t) => t ? new Date(t * 1000).toLocaleString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '…';
+const fmt = (t) =>
+  t
+    ? new Date(t * 1000).toLocaleString(undefined, {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    : '…';
 const txLink = (txid, text = txid) => `<a href="${EXPLORER}/tx/${esc(txid)}" target="_blank" rel="noopener">${esc(text)}</a>`;
 
 // ---- banners: one line each at the top of the window, for what the person must know now
 const dismissed = new Set();
-function banner(id, cls, text, actions = []) { if (dismissed.has(id)) return; let el = document.querySelector(`#banners [data-b="${id}"]`); if (el && el.dataset.text === cls + text) return; if (!el) { el = document.createElement('div'); el.dataset.b = id; $('banners').appendChild(el); }
-  el.dataset.text = cls + text; el.className = 'banner ' + cls; el.onclick = null; el.setAttribute('role', cls === 'bad' ? 'alert' : 'status'); el.textContent = ''; const t = document.createElement('span'); t.textContent = text; el.appendChild(t);
-  for (const [label, fn] of actions) { const b = document.createElement('button'); b.className = 'q'; b.type = 'button'; b.textContent = label; b.onclick = fn; el.appendChild(b); }
-  { const more = document.createElement('button'); more.type = 'button'; more.className = 'q more'; more.textContent = 'More'; more.setAttribute('aria-expanded', 'false'); more.onclick = () => { const f = el.classList.toggle('full'); more.setAttribute('aria-expanded', String(f)); more.textContent = f ? 'Less' : 'More'; }; el.appendChild(more); }
-  if (cls !== 'bad') { const x = document.createElement('button'); x.className = 'q x'; x.type = 'button'; x.textContent = '×'; x.setAttribute('aria-label', 'Hide this notice for now'); x.onclick = () => { dismissed.add(id); el.remove(); }; el.appendChild(x); }
-  const all = [...$('banners').children]; const rank = (b) => (b.classList.contains('bad') ? 0 : b.classList.contains('warn') ? 1 : 2); all.sort((a, b) => rank(a) - rank(b)).forEach((b) => $('banners').appendChild(b)); }
+function banner(id, cls, text, actions = []) {
+  if (dismissed.has(id)) return;
+  let el = document.querySelector(`#banners [data-b="${id}"]`);
+  if (el && el.dataset.text === cls + text) return;
+  if (!el) {
+    el = document.createElement('div');
+    el.dataset.b = id;
+    $('banners').appendChild(el);
+  }
+  el.dataset.text = cls + text;
+  el.className = 'banner ' + cls;
+  el.onclick = null;
+  el.setAttribute('role', cls === 'bad' ? 'alert' : 'status');
+  el.textContent = '';
+  const t = document.createElement('span');
+  t.textContent = text;
+  el.appendChild(t);
+  for (const [label, fn] of actions) {
+    const b = document.createElement('button');
+    b.className = 'q';
+    b.type = 'button';
+    b.textContent = label;
+    b.onclick = fn;
+    el.appendChild(b);
+  }
+  {
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'q more';
+    more.textContent = 'More';
+    more.setAttribute('aria-expanded', 'false');
+    more.onclick = () => {
+      const f = el.classList.toggle('full');
+      more.setAttribute('aria-expanded', String(f));
+      more.textContent = f ? 'Less' : 'More';
+    };
+    el.appendChild(more);
+  }
+  if (cls !== 'bad') {
+    const x = document.createElement('button');
+    x.className = 'q x';
+    x.type = 'button';
+    x.textContent = '×';
+    x.setAttribute('aria-label', 'Hide this notice for now');
+    x.onclick = () => {
+      dismissed.add(id);
+      el.remove();
+    };
+    el.appendChild(x);
+  }
+  const all = [...$('banners').children];
+  const rank = (b) => (b.classList.contains('bad') ? 0 : b.classList.contains('warn') ? 1 : 2);
+  all.sort((a, b) => rank(a) - rank(b)).forEach((b) => $('banners').appendChild(b));
+}
 const unbanner = (id) => document.querySelector(`#banners [data-b="${id}"]`)?.remove();
-function showFatal(text) { $('syncmsg').textContent = text; banner('fatal', 'bad', text, [['Reload', () => location.reload()]]); }
+function showFatal(text) {
+  $('syncmsg').textContent = text;
+  banner('fatal', 'bad', text, [['Reload', () => location.reload()]]);
+}
 
 // ---- the libraries; a CDN outage is said in words, not as a dead page
-let createTabNode, mib, secs, n, WL, S;
-try { ({ createTabNode, mib, secs, n } = await import(`${NODE}/browser/tabnode.js`)); WL = await import(`./lib/wallet.mjs?v=${VERSION}`); S = await import(`./lib/state.mjs?v=${VERSION}`); }
-catch (e) { showFatal(`Reef could not load its node code (${e.message}). The CDN (cdn.jsdelivr.net) may be unreachable: check the connection and reload.`); throw e; }
-const T0 = Date.now(); $('startup').textContent = fmt(Math.floor(T0 / 1000)); $('i-snapurl').textContent = SNAP_URL; $('i-blocks').textContent = `${BLOCKS_URL}.dat, mirrored into OPFS`;
-for (const k of ['snapshot', 'blocks']) if (proposed[k] && !accepted(k) && proposed[k] !== (k === 'snapshot' ? SNAP_URL : BLOCKS_URL))
-  banner('src-' + k, 'warn', `This link asks Reef to read the ${k === 'snapshot' ? 'snapshot' : 'blocks'} from ${proposed[k]}. A source you do not trust can show you a chain that is not the real one. It is ignored unless you choose it, for this visit only.`, [['Use it for this visit', () => { SS.set('reef:accept:' + k, proposed[k]); location.reload(); }], ['Ignore', () => unbanner('src-' + k)]]);
-if (SNAP_URL !== DEFAULT_SNAP || BLOCKS_URL !== DEFAULT_BLOCKS) banner('src', 'warn', `Reef is reading from a source other than the default (${BLOCKS_URL !== DEFAULT_BLOCKS ? BLOCKS_URL : SNAP_URL}). Balances are only as good as that source; the default is restored in Options → Main.`);
+let createTabNode, mib, secs, n, WL, S, V;
+try {
+  ({ createTabNode, mib, secs, n } = await import(`${NODE}/browser/tabnode.js`));
+  WL = await import(`./lib/wallet.mjs?v=${VERSION}`);
+  S = await import(`./lib/state.mjs?v=${VERSION}`);
+  V = await import(`./lib/view.mjs?v=${VERSION}`);
+} catch (e) {
+  showFatal(
+    `Reef could not load its node code (${e.message}). The CDN (cdn.jsdelivr.net) may be unreachable: check the connection and reload.`,
+  );
+  throw e;
+}
+const T0 = Date.now();
+$('startup').textContent = fmt(Math.floor(T0 / 1000));
+$('i-snapurl').textContent = SNAP_URL;
+$('i-blocks').textContent = `${BLOCKS_URL}.dat, mirrored into OPFS`;
+for (const k of ['snapshot', 'blocks'])
+  if (proposed[k] && !accepted(k) && proposed[k] !== (k === 'snapshot' ? SNAP_URL : BLOCKS_URL))
+    banner(
+      'src-' + k,
+      'warn',
+      `This link asks Reef to read the ${k === 'snapshot' ? 'snapshot' : 'blocks'} from ${proposed[k]}. A source you do not trust can show you a chain that is not the real one. It is ignored unless you choose it, for this visit only.`,
+      [
+        [
+          'Use it for this visit',
+          () => {
+            SS.set('reef:accept:' + k, proposed[k]);
+            location.reload();
+          },
+        ],
+        ['Ignore', () => unbanner('src-' + k)],
+      ],
+    );
+if (SNAP_URL !== DEFAULT_SNAP || BLOCKS_URL !== DEFAULT_BLOCKS)
+  banner(
+    'src',
+    'warn',
+    `Reef is reading from a source other than the default (${BLOCKS_URL !== DEFAULT_BLOCKS ? BLOCKS_URL : SNAP_URL}). Balances are only as good as that source; the default is restored in Options → Main.`,
+  );
 
 // ---- node state, filled by the worker's messages
-const tn = createTabNode({ base: NODE, snapshotUrl: SNAP_URL, blocksUrl: BLOCKS_URL, torrent: OPT.torrent, seed: OPT.seed }); const node = tn.node; const post = (m) => tn.post(m);
+const tn = createTabNode({ base: NODE, snapshotUrl: SNAP_URL, blocksUrl: BLOCKS_URL, torrent: OPT.torrent, seed: OPT.seed });
+const node = tn.node;
+const post = (m) => tn.post(m);
 let lastPhase = null;
-function setSync(msg, pct, eta) { $('syncmsg').textContent = msg; const phase = node.error ? 'error' : node.synced ? 'synced' : node.phase; if (phase !== lastPhase) { lastPhase = phase; $('announce').textContent = msg; } document.title = node.error ? 'Reef · stopped' : node.synced ? `Reef · txbt4 · ${n(node.height)}` : pct != null ? `Reef · ${phase === 'fetch' ? 'fetching' : phase === 'sync' ? 'syncing' : 'checking'} ${pct.toFixed(0)}%` : 'Reef · starting'; const pb = $('pb'); if (pct == null) { pb.hidden = true; $('synceta').textContent = ''; } else { pb.hidden = false; const v = Math.max(0, Math.min(100, pct)); $('pbi').style.width = v.toFixed(1) + '%'; pb.setAttribute('aria-valuenow', v.toFixed(0)); $('synceta').textContent = `${pct.toFixed(0)}%${eta ? ' · ' + eta : ''}`; } renderStatus(); }
-function renderHist() { $('i-hist').innerHTML = node.hist.map(([k, v]) => `<span class="l">${esc(k)}</span><span class="v">${esc(secs(v))}</span>`).join('') + `<span class="l" style="font-weight:600">total</span><span class="v">${esc(secs(node.hist.reduce((a, [, v]) => a + v, 0)))}</span>`; }
-function renderInfo() { const st = node.st; if (st) { $('i-datadir').textContent = `origin private file system (OPFS), ${st.usage ? mib(st.usage) + ' used' : 'usage unknown'}${st.quota ? ' of ' + (st.quota / 1073741824).toFixed(1) + ' GiB' : ''}`; $('i-snapdisk').textContent = st.dat < 0 ? 'absent' : st.dat >= st.expect.bytes ? `complete, ${mib(st.dat)}` : `${mib(st.dat)} of ${mib(st.expect.bytes)}${st.partial ? ' (resumable)' : ''}`; $('i-sha').textContent = st.sha ? (st.sha === st.expect.sha256 ? st.sha + ' — matches the pinned value' : 'MISMATCH ' + st.sha) : 'not checked yet'; if (st.idx > 0 && !node.hs) $('i-hs').textContent = `${st.expect.txoutsetHash} — verified on an earlier visit; index ${mib(st.idx)}`; if (!node.coins) $('i-coins').textContent = `${n(st.expect.coins)} expected`; }
-  if (node.hs) $('i-hs').textContent = `${node.hs} — recomputed from the file, ${node.hsOk ? 'matches' : 'MISMATCH'}`; if (node.coins) $('i-coins').textContent = `${n(node.coins)} in ${n(node.txids)} txids`;
-  $('i-height').textContent = node.height != null ? n(node.height) : '…'; $('lbt').textContent = fmt(node.time); $('i-hash').innerHTML = node.hash ? `<a href="${EXPLORER}/block/${esc(node.hash)}" target="_blank" rel="noopener">${esc(node.hash)}</a>` : '…'; $('i-heap').textContent = performance.memory ? `${Math.round(performance.memory.usedJSHeapSize / 1048576)} MB heap (page)` : 'not exposed by this browser';
-  if (node.nostr) $('i-nostr').textContent = `${n(node.nostr.height)} · ${node.nostr.hash.slice(0, 16)}… · ${node.nostr.relay ?? ''} · ${node.nostr.diverged ? 'DIVERGES from the block file' : node.nostr.agree ? 'agrees with the block file' : 'not yet compared'}${node.nostr.live ? ' · live' : ''}`;
-  $('tr-recv').textContent = `${(node.recv / 1e6).toFixed(2)} MB`; $('tr-sent').textContent = `${(node.sent / 1e6).toFixed(2)} MB`; renderStatus(); }
+function setSync(msg, pct, eta) {
+  $('syncmsg').textContent = msg;
+  const phase = node.error ? 'error' : node.synced ? 'synced' : node.phase;
+  if (phase !== lastPhase) {
+    lastPhase = phase;
+    $('announce').textContent = msg;
+  }
+  document.title = node.error
+    ? 'Reef · stopped'
+    : node.synced
+      ? `Reef · txbt4 · ${n(node.height)}`
+      : pct != null
+        ? `Reef · ${phase === 'fetch' ? 'fetching' : phase === 'sync' ? 'syncing' : 'checking'} ${pct.toFixed(0)}%`
+        : 'Reef · starting';
+  const pb = $('pb');
+  if (pct == null) {
+    pb.hidden = true;
+    $('synceta').textContent = '';
+  } else {
+    pb.hidden = false;
+    const v = Math.max(0, Math.min(100, pct));
+    $('pbi').style.width = v.toFixed(1) + '%';
+    pb.setAttribute('aria-valuenow', v.toFixed(0));
+    $('synceta').textContent = `${pct.toFixed(0)}%${eta ? ' · ' + eta : ''}`;
+  }
+  renderStatus();
+}
+function renderHist() {
+  $('i-hist').innerHTML =
+    node.hist.map(([k, v]) => `<span class="l">${esc(k)}</span><span class="v">${esc(secs(v))}</span>`).join('') +
+    `<span class="l" style="font-weight:600">total</span><span class="v">${esc(secs(node.hist.reduce((a, [, v]) => a + v, 0)))}</span>`;
+}
+function renderInfo() {
+  const st = node.st;
+  if (st) {
+    $('i-datadir').textContent =
+      `origin private file system (OPFS), ${st.usage ? mib(st.usage) + ' used' : 'usage unknown'}${st.quota ? ' of ' + (st.quota / 1073741824).toFixed(1) + ' GiB' : ''}`;
+    $('i-snapdisk').textContent =
+      st.dat < 0
+        ? 'absent'
+        : st.dat >= st.expect.bytes
+          ? `complete, ${mib(st.dat)}`
+          : `${mib(st.dat)} of ${mib(st.expect.bytes)}${st.partial ? ' (resumable)' : ''}`;
+    $('i-sha').textContent = st.sha
+      ? st.sha === st.expect.sha256
+        ? st.sha + ' — matches the pinned value'
+        : 'MISMATCH ' + st.sha
+      : 'not checked yet';
+    if (st.idx > 0 && !node.hs) $('i-hs').textContent = `${st.expect.txoutsetHash} — verified on an earlier visit; index ${mib(st.idx)}`;
+    if (!node.coins) $('i-coins').textContent = `${n(st.expect.coins)} expected`;
+  }
+  if (node.hs) $('i-hs').textContent = `${node.hs} — recomputed from the file, ${node.hsOk ? 'matches' : 'MISMATCH'}`;
+  if (node.coins) $('i-coins').textContent = `${n(node.coins)} in ${n(node.txids)} txids`;
+  $('i-height').textContent = node.height != null ? n(node.height) : '…';
+  $('lbt').textContent = fmt(node.time);
+  $('i-hash').innerHTML = node.hash
+    ? `<a href="${EXPLORER}/block/${esc(node.hash)}" target="_blank" rel="noopener">${esc(node.hash)}</a>`
+    : '…';
+  $('i-heap').textContent = performance.memory
+    ? `${Math.round(performance.memory.usedJSHeapSize / 1048576)} MB heap (page)`
+    : 'not exposed by this browser';
+  if (node.nostr)
+    $('i-nostr').textContent =
+      `${n(node.nostr.height)} · ${node.nostr.hash.slice(0, 16)}… · ${node.nostr.relay ?? ''} · ${node.nostr.diverged ? 'DIVERGES from the block file' : node.nostr.agree ? 'agrees with the block file' : 'not yet compared'}${node.nostr.live ? ' · live' : ''}`;
+  $('tr-recv').textContent = `${(node.recv / 1e6).toFixed(2)} MB`;
+  $('tr-sent').textContent = `${(node.sent / 1e6).toFixed(2)} MB`;
+  renderStatus();
+}
 // how far the chain the tab follows is confirmed by someone other than its block source: a signed tip (NIP-333)
-function trust() { if (IDLE) return { level: 'idle', text: 'idle: the node runs in another tab of this browser' }; if (!node.synced) return { level: 'sync', text: 'syncing: the balance is known once the tab is up to date' };
-  const t = node.nostr; if (!t) return { level: 'none', text: `up to date with the block source at ${n(node.height)}; no signed chain tip reached this browser to confirm it (the tip relays may be blocked here)` };
-  if (t.diverged) return { level: 'bad', text: `the block source DISAGREES with the signed chain tip at ${n(t.height)}: do not trust the balance or confirmations until this clears` };
-  if (t.height > node.height + 2) return { level: 'warn', text: `the tab is ${n(t.height - node.height)} blocks behind the signed chain tip (${n(t.height)}): the block source may be stale` };
-  if (t.height < node.height - 1) return { level: 'none', text: `up to date with the block source at ${n(node.height)}; the latest signed chain tip reaching this browser is older (${n(t.height)}), so the last ${n(node.height - t.height)} blocks are confirmed by the block source alone` };
-  return { level: 'ok', text: `up to date: block ${n(node.height)}, matching the signed chain tip` }; }
-function renderStatus() { $('wt').textContent = IDLE ? 'Reef — txbt4 · idle: the node runs in another tab' : 'Reef — txbt4, BLAKE2b testnet4 · a node in this tab'; const tr = trust(); const ok = tr.level === 'ok'; const ico = $('st-sync'); ico.dataset.s = node.error ? 'bad' : tr.level; $('st-btn').setAttribute('aria-label', 'Chain status: ' + (node.error ? 'error: ' + node.error : tr.text)); ico.setAttribute('aria-label', node.error ? 'error: ' + node.error : tr.text); ico.querySelector('title').textContent = node.error ? 'error: ' + node.error : tr.text;
-  const nConn = 1 + TIP_RELAYS.length + RELAYS().length; const connText = IDLE ? 'connections: none in this tab, the node runs in another tab' : `connections: 1 block mirror and ${nConn - 1} relays (a tab does not speak the peer-to-peer protocol)`; $('st-conn').querySelector('title').textContent = connText; $('st-conn').setAttribute('aria-label', connText);
-  if (node.synced && !node.error && (tr.level === 'bad' || tr.level === 'warn')) banner('trust', tr.level === 'bad' ? 'bad' : 'warn', tr.text); else unbanner('trust');
-  if (node.error) banner('nodeerr', 'bad', plainError(node.error), [['Retry', () => location.reload()], ['Wipe and fetch again…', () => wipeAsk()]]); else unbanner('nodeerr');
-  $('ovtrust').textContent = IDLE ? IDLE_TEXT : W && W.coinsKnown && tr.level !== 'ok' ? tr.text : ''; $('ovtrust').classList.toggle('mut', tr.level === 'none'); $('ovtrust').classList.toggle('warnt', tr.level !== 'none'); }
+function trust() {
+  if (IDLE) return { level: 'idle', text: 'idle: the node runs in another tab of this browser' };
+  if (!node.synced) return { level: 'sync', text: 'syncing: the balance is known once the tab is up to date' };
+  const t = node.nostr;
+  if (!t)
+    return {
+      level: 'none',
+      text: `up to date with the block source at ${n(node.height)}; no signed chain tip reached this browser to confirm it (the tip relays may be blocked here)`,
+    };
+  if (t.diverged)
+    return {
+      level: 'bad',
+      text: `the block source DISAGREES with the signed chain tip at ${n(t.height)}: do not trust the balance or confirmations until this clears`,
+    };
+  if (t.height > node.height + 2)
+    return {
+      level: 'warn',
+      text: `the tab is ${n(t.height - node.height)} blocks behind the signed chain tip (${n(t.height)}): the block source may be stale`,
+    };
+  if (t.height < node.height - 1)
+    return {
+      level: 'none',
+      text: `up to date with the block source at ${n(node.height)}; the latest signed chain tip reaching this browser is older (${n(t.height)}), so the last ${n(node.height - t.height)} blocks are confirmed by the block source alone`,
+    };
+  return { level: 'ok', text: `up to date: block ${n(node.height)}, matching the signed chain tip` };
+}
+function renderStatus() {
+  $('wt').textContent = IDLE ? 'Reef — txbt4 · idle: the node runs in another tab' : 'Reef — txbt4, BLAKE2b testnet4 · a node in this tab';
+  const tr = trust();
+  const ok = tr.level === 'ok';
+  const ico = $('st-sync');
+  ico.dataset.s = node.error ? 'bad' : tr.level;
+  $('st-btn').setAttribute('aria-label', 'Chain status: ' + (node.error ? 'error: ' + node.error : tr.text));
+  ico.setAttribute('aria-label', node.error ? 'error: ' + node.error : tr.text);
+  ico.querySelector('title').textContent = node.error ? 'error: ' + node.error : tr.text;
+  const nConn = 1 + TIP_RELAYS.length + RELAYS().length;
+  const connText = IDLE
+    ? 'connections: none in this tab, the node runs in another tab'
+    : `connections: 1 block mirror and ${nConn - 1} relays (a tab does not speak the peer-to-peer protocol)`;
+  $('st-conn').querySelector('title').textContent = connText;
+  $('st-conn').setAttribute('aria-label', connText);
+  if (node.synced && !node.error && (tr.level === 'bad' || tr.level === 'warn'))
+    banner('trust', tr.level === 'bad' ? 'bad' : 'warn', tr.text);
+  else unbanner('trust');
+  if (node.error)
+    banner('nodeerr', 'bad', plainError(node.error), [
+      ['Retry', () => location.reload()],
+      ['Wipe and fetch again…', () => wipeAsk()],
+    ]);
+  else unbanner('nodeerr');
+  $('ovtrust').textContent = IDLE ? IDLE_TEXT : W && W.coinsKnown && tr.level !== 'ok' ? tr.text : '';
+  $('ovtrust').classList.toggle('mut', tr.level === 'none');
+  $('ovtrust').classList.toggle('warnt', tr.level !== 'none');
+}
 // node errors in words a person can act on
-function plainError(e) { const s = String(e); if (/another tab|NoModificationAllowedError|access handle|InvalidStateError/i.test(s)) return 'Another tab of this site is using the node\'s files (Reef, Bight, Winch or Hitch). Close it and retry.'; if (/quota|QuotaExceeded|out of space|not enough space/i.test(s)) return 'The browser refused more storage: Reef needs about 1.1 GB for the snapshot and its index. Free disk space or allow more for this site, then retry.';
-  if (/sha256 does not match|MISMATCH|hash_serialized/i.test(s)) return 'The snapshot on disk is not the one the node expects (damaged or from another source). Wipe it and fetch again.';
-  if (/Failed to fetch|NetworkError|network|ERR_|load failed/i.test(s)) return 'The block source could not be reached. Check the connection; the download resumes where it stopped when you retry.';
-  if (/OPFS|getDirectory|createSyncAccessHandle/i.test(s)) return 'This browser does not offer the private file system Reef needs. Use a current Chrome, Edge, Brave or Firefox.';
-  return 'The node stopped: ' + s.slice(0, 160); }
+function plainError(e) {
+  const s = String(e);
+  if (/another tab|NoModificationAllowedError|access handle|InvalidStateError/i.test(s))
+    return "Another tab of this site is using the node's files (Reef, Bight, Winch or Hitch). Close it and retry.";
+  if (/quota|QuotaExceeded|out of space|not enough space/i.test(s))
+    return 'The browser refused more storage: Reef needs about 1.1 GB for the snapshot and its index. Free disk space or allow more for this site, then retry.';
+  if (/sha256 does not match|MISMATCH|hash_serialized/i.test(s))
+    return 'The snapshot on disk is not the one the node expects (damaged or from another source). Wipe it and fetch again.';
+  if (/Failed to fetch|NetworkError|network|ERR_|load failed/i.test(s))
+    return 'The block source could not be reached. Check the connection; the download resumes where it stopped when you retry.';
+  if (/OPFS|getDirectory|createSyncAccessHandle/i.test(s))
+    return 'This browser does not offer the private file system Reef needs. Use a current Chrome, Edge, Brave or Firefox.';
+  return 'The node stopped: ' + s.slice(0, 160);
+}
 window.reef = { node, tn, OPT, VERSION };
 function onMessage(m) {
   if (m.type === 'status' || m.type === 'verified') renderInfo();
-  else if (m.type === 'synced') { node.syncedAt ??= Date.now(); if (!node.mempoolOn) { node.mempoolOn = true; const relays = [...new Set([...RELAYS(), ...TIP_RELAYS])]; tn.followMempool({ relays }); $('i-conn').textContent = `1 mirror, ${relays.length} relays`; } renderInfo(); document.title = `Reef · txbt4 · ${n(m.height)}`; if (m.applied || !W?.coinsKnown) askCoins(); tick(); }
-  else if (m.type === 'nostr') { node.nostr = m; renderInfo(); }
-  else if (m.type === 'mempool') { $('i-mp').textContent = `${n(m.count)} (${m.stats.refused} refused, ${m.stats.dropped} dropped since the tab opened)`; $('i-mpmem').textContent = `${n(m.bytes)} vB, ${n(m.fees)} sat in fees`; if (document.querySelector('#nwtabs [role=tab][aria-selected=true]')?.dataset.t === 'mempool') renderMempool(); walletMempool(); }
-  else if (m.type === 'coin') cprint(JSON.stringify(m, null, 2));
+  else if (m.type === 'synced') {
+    node.syncedAt ??= Date.now();
+    if (!node.mempoolOn) {
+      node.mempoolOn = true;
+      const relays = [...new Set([...RELAYS(), ...TIP_RELAYS])];
+      tn.followMempool({ relays });
+      $('i-conn').textContent = `1 mirror, ${relays.length} relays`;
+    }
+    renderInfo();
+    document.title = `Reef · txbt4 · ${n(m.height)}`;
+    if (m.applied || !W?.coinsKnown) askCoins();
+    tick();
+  } else if (m.type === 'nostr') {
+    node.nostr = m;
+    renderInfo();
+  } else if (m.type === 'mempool') {
+    $('i-mp').textContent = `${n(m.count)} (${m.stats.refused} refused, ${m.stats.dropped} dropped since the tab opened)`;
+    $('i-mpmem').textContent = `${n(m.bytes)} vB, ${n(m.fees)} sat in fees`;
+    if (document.querySelector('#nwtabs [role=tab][aria-selected=true]')?.dataset.t === 'mempool') renderMempool();
+    walletMempool();
+  } else if (m.type === 'coin') cprint(JSON.stringify(m, null, 2));
   else if (m.type === 'coins') onCoins(m);
   else if (m.type === 'spend' && typeof m.req === 'string' && m.req.startsWith('sent:')) onSpendAnswer(m);
-  else if (m.type === 'spend' && typeof m.req === 'string' && m.req.startsWith('recheck:')) { if (W && !IDLE) { carryOut(S.onRecheck(sent, m.req.slice(8), m, W.height)); saveSent(); renderWallet(); } }
-  else if (m.type === 'refused') onRefusedTx(m);
-  else if (m.type === 'block') { const b = { hash: m.hash, confirmations: m.confirmations, height: m.height, version: m.header.version, merkleroot: m.header.merkleRoot ?? m.header.merkleroot, time: m.header.time, nonce: m.header.nonce, bits: typeof m.header.bits === 'number' ? m.header.bits.toString(16) : m.header.bits, nTx: m.nTx, previousblockhash: m.previousblockhash, nextblockhash: m.nextblockhash, size: m.size, pow: 'BLAKE2b', validated_by: 'this tab', tx: m.txids }; cprint(m.req === 'hash' ? `getblockhash ${n(m.height)} → ${m.hash}` : `getblock ${n(m.height)} →\n` + JSON.stringify(b, null, 2)); } }
+  else if (m.type === 'spend' && typeof m.req === 'string' && m.req.startsWith('recheck:')) {
+    if (W && !IDLE) {
+      carryOut(S.onRecheck(sent, m.req.slice(8), m, W.height));
+      saveSent();
+      renderWallet();
+    }
+  } else if (m.type === 'refused') onRefusedTx(m);
+  else if (m.type === 'block') {
+    const b = {
+      hash: m.hash,
+      confirmations: m.confirmations,
+      height: m.height,
+      version: m.header.version,
+      merkleroot: m.header.merkleRoot ?? m.header.merkleroot,
+      time: m.header.time,
+      nonce: m.header.nonce,
+      bits: typeof m.header.bits === 'number' ? m.header.bits.toString(16) : m.header.bits,
+      nTx: m.nTx,
+      previousblockhash: m.previousblockhash,
+      nextblockhash: m.nextblockhash,
+      size: m.size,
+      pow: 'BLAKE2b',
+      validated_by: 'this tab',
+      tx: m.txids,
+    };
+    cprint(m.req === 'hash' ? `getblockhash ${n(m.height)} → ${m.hash}` : `getblock ${n(m.height)} →\n` + JSON.stringify(b, null, 2));
+  }
+}
 
 // ---- the window: floating on a large screen, maximized on a small one, movable by its title bar, resizable at every
 // edge, zoomed by the green dot or a double-click on the title, geometry remembered; inside Glass (?embedded=1) the host frames it
 const win = $('win');
-const geom = { get: () => { try { return JSON.parse(LS.get('reef:geometry') ?? 'null'); } catch { return null; } }, set: (g) => LS.set('reef:geometry', JSON.stringify(g)) };
+const geom = {
+  get: () => {
+    try {
+      return JSON.parse(LS.get('reef:geometry') ?? 'null');
+    } catch {
+      return null;
+    }
+  },
+  set: (g) => LS.set('reef:geometry', JSON.stringify(g)),
+};
 const narrow = () => innerWidth < 760;
-function applyGeometry(g) { win.style.left = g.x + 'px'; win.style.top = g.y + 'px'; win.style.width = g.w + 'px'; win.style.height = g.h + 'px'; }
-function clampGeometry(g) { const W = innerWidth, H = innerHeight; g.w = Math.max(Math.min(720, W), Math.min(g.w, W)); g.h = Math.max(Math.min(420, H), Math.min(g.h, H)); g.x = Math.max(0, Math.min(g.x, W - Math.min(g.w, 120))); g.y = Math.max(0, Math.min(g.y, H - 40)); return g; }
-function defaultGeometry() { const w = Math.min(1180, innerWidth - 48), h = Math.min(780, innerHeight - 48); return { x: Math.round((innerWidth - w) / 2), y: Math.round((innerHeight - h) / 2), w, h }; }
-function layoutWindow() { if (embedded) return; const small = innerWidth < 1100 || innerHeight < 700; const saved = geom.get(); const max = narrow() || (saved?.max ?? small); win.classList.toggle('max', max); if (!max) applyGeometry(clampGeometry(saved?.g ?? defaultGeometry())); }
-function saveGeometry() { if (embedded) return; const max = win.classList.contains('max'); const g = max ? (geom.get()?.g ?? defaultGeometry()) : { x: win.offsetLeft, y: win.offsetTop, w: win.offsetWidth, h: win.offsetHeight }; geom.set({ max, g }); }
-function toggleZoom() { if (embedded || narrow()) return; const max = !win.classList.contains('max'); win.classList.toggle('max', max); if (!max) applyGeometry(clampGeometry(geom.get()?.g ?? defaultGeometry())); saveGeometry(); }
+function applyGeometry(g) {
+  win.style.left = g.x + 'px';
+  win.style.top = g.y + 'px';
+  win.style.width = g.w + 'px';
+  win.style.height = g.h + 'px';
+}
+function clampGeometry(g) {
+  const W = innerWidth,
+    H = innerHeight;
+  g.w = Math.max(Math.min(720, W), Math.min(g.w, W));
+  g.h = Math.max(Math.min(420, H), Math.min(g.h, H));
+  g.x = Math.max(0, Math.min(g.x, W - Math.min(g.w, 120)));
+  g.y = Math.max(0, Math.min(g.y, H - 40));
+  return g;
+}
+function defaultGeometry() {
+  const w = Math.min(1180, innerWidth - 48),
+    h = Math.min(780, innerHeight - 48);
+  return { x: Math.round((innerWidth - w) / 2), y: Math.round((innerHeight - h) / 2), w, h };
+}
+function layoutWindow() {
+  if (embedded) return;
+  const small = innerWidth < 1100 || innerHeight < 700;
+  const saved = geom.get();
+  const max = narrow() || (saved?.max ?? small);
+  win.classList.toggle('max', max);
+  if (!max) applyGeometry(clampGeometry(saved?.g ?? defaultGeometry()));
+}
+function saveGeometry() {
+  if (embedded) return;
+  const max = win.classList.contains('max');
+  const g = max ? (geom.get()?.g ?? defaultGeometry()) : { x: win.offsetLeft, y: win.offsetTop, w: win.offsetWidth, h: win.offsetHeight };
+  geom.set({ max, g });
+}
+function toggleZoom() {
+  if (embedded || narrow()) return;
+  const max = !win.classList.contains('max');
+  win.classList.toggle('max', max);
+  if (!max) applyGeometry(clampGeometry(geom.get()?.g ?? defaultGeometry()));
+  saveGeometry();
+}
 if (!embedded) {
-  layoutWindow(); addEventListener('resize', () => { if (narrow()) { win.classList.add('max'); return; } if (!win.classList.contains('max')) applyGeometry(clampGeometry({ x: win.offsetLeft, y: win.offsetTop, w: win.offsetWidth, h: win.offsetHeight })); });
-  $('dot-zoom').onclick = (e) => { e.stopPropagation(); toggleZoom(); }; $('wtitle').ondblclick = (e) => { if (!e.target.closest('.dots, .badge')) toggleZoom(); }; $('dot-close').onclick = (e) => { e.stopPropagation(); hideWindow(); }; $('dot-min').onclick = (e) => { e.stopPropagation(); hideWindow(); };
-  $('wtitle').onpointerdown = (e) => { if (win.classList.contains('max') || e.target.closest('.dots, .badge')) return; const sx = e.clientX - win.offsetLeft, sy = e.clientY - win.offsetTop; const move = (ev) => applyGeometry(clampGeometry({ x: ev.clientX - sx, y: ev.clientY - sy, w: win.offsetWidth, h: win.offsetHeight })); const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); saveGeometry(); }; addEventListener('pointermove', move); addEventListener('pointerup', up); e.preventDefault(); };
-  win.querySelectorAll(':scope > .rs').forEach((h) => { h.onpointerdown = (e) => { if (win.classList.contains('max')) return; const d = h.dataset.rs, x0 = e.clientX, y0 = e.clientY, g0 = { x: win.offsetLeft, y: win.offsetTop, w: win.offsetWidth, h: win.offsetHeight };
-    const move = (ev) => { const dx = ev.clientX - x0, dy = ev.clientY - y0; const g = { ...g0 }; if (d.includes('e')) g.w = g0.w + dx; if (d.includes('s')) g.h = g0.h + dy; if (d.includes('w')) { g.w = g0.w - dx; g.x = g0.x + dx; } if (d.includes('n')) { g.h = g0.h - dy; g.y = g0.y + dy; } if (g.w < 720) { if (d.includes('w')) g.x = g0.x + g0.w - 720; g.w = 720; } if (g.h < 420) { if (d.includes('n')) g.y = g0.y + g0.h - 420; g.h = 420; } applyGeometry(g); };
-    const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); saveGeometry(); }; addEventListener('pointermove', move); addEventListener('pointerup', up); e.preventDefault(); e.stopPropagation(); }; });
+  layoutWindow();
+  addEventListener('resize', () => {
+    if (narrow()) {
+      win.classList.add('max');
+      return;
+    }
+    if (!win.classList.contains('max'))
+      applyGeometry(clampGeometry({ x: win.offsetLeft, y: win.offsetTop, w: win.offsetWidth, h: win.offsetHeight }));
+  });
+  $('dot-zoom').onclick = (e) => {
+    e.stopPropagation();
+    toggleZoom();
+  };
+  $('wtitle').ondblclick = (e) => {
+    if (!e.target.closest('.dots, .badge')) toggleZoom();
+  };
+  $('dot-close').onclick = (e) => {
+    e.stopPropagation();
+    hideWindow();
+  };
+  $('dot-min').onclick = (e) => {
+    e.stopPropagation();
+    hideWindow();
+  };
+  $('wtitle').onpointerdown = (e) => {
+    if (win.classList.contains('max') || e.target.closest('.dots, .badge')) return;
+    const sx = e.clientX - win.offsetLeft,
+      sy = e.clientY - win.offsetTop;
+    const move = (ev) => applyGeometry(clampGeometry({ x: ev.clientX - sx, y: ev.clientY - sy, w: win.offsetWidth, h: win.offsetHeight }));
+    const up = () => {
+      removeEventListener('pointermove', move);
+      removeEventListener('pointerup', up);
+      saveGeometry();
+    };
+    addEventListener('pointermove', move);
+    addEventListener('pointerup', up);
+    e.preventDefault();
+  };
+  win.querySelectorAll(':scope > .rs').forEach((h) => {
+    h.onpointerdown = (e) => {
+      if (win.classList.contains('max')) return;
+      const d = h.dataset.rs,
+        x0 = e.clientX,
+        y0 = e.clientY,
+        g0 = { x: win.offsetLeft, y: win.offsetTop, w: win.offsetWidth, h: win.offsetHeight };
+      const move = (ev) => {
+        const dx = ev.clientX - x0,
+          dy = ev.clientY - y0;
+        const g = { ...g0 };
+        if (d.includes('e')) g.w = g0.w + dx;
+        if (d.includes('s')) g.h = g0.h + dy;
+        if (d.includes('w')) {
+          g.w = g0.w - dx;
+          g.x = g0.x + dx;
+        }
+        if (d.includes('n')) {
+          g.h = g0.h - dy;
+          g.y = g0.y + dy;
+        }
+        if (g.w < 720) {
+          if (d.includes('w')) g.x = g0.x + g0.w - 720;
+          g.w = 720;
+        }
+        if (g.h < 420) {
+          if (d.includes('n')) g.y = g0.y + g0.h - 420;
+          g.h = 420;
+        }
+        applyGeometry(g);
+      };
+      const up = () => {
+        removeEventListener('pointermove', move);
+        removeEventListener('pointerup', up);
+        saveGeometry();
+      };
+      addEventListener('pointermove', move);
+      addEventListener('pointerup', up);
+      e.preventDefault();
+      e.stopPropagation();
+    };
+  });
 }
 
 // ---- menus: a menubar a keyboard can drive (Enter or Down opens, arrows move, Escape closes)
 const menus = [...document.querySelectorAll('#menu > [data-m]')];
 const menuItems = (m) => [...m.querySelectorAll('.dd > [role^=menuitem]')];
-function closeMenus(except) { for (const m of menus) if (m !== except) { m.classList.remove('open'); m.setAttribute('aria-expanded', 'false'); } }
-function openMenu(m, focusFirst = false) { closeMenus(m); m.classList.add('open'); m.setAttribute('aria-expanded', 'true'); if (focusFirst) menuItems(m).find((x) => x.getAttribute('aria-disabled') !== 'true')?.focus(); }
-for (const it of document.querySelectorAll('.dd [aria-disabled=true]')) { const why = it.getAttribute('title'); if (why) it.setAttribute('aria-description', why); }
-for (const it of document.querySelectorAll('.dd .k')) { it.parentElement.setAttribute('aria-keyshortcuts', it.textContent.replace(/\s/g, '')); it.setAttribute('aria-hidden', 'true'); }
+function closeMenus(except) {
+  for (const m of menus)
+    if (m !== except) {
+      m.classList.remove('open');
+      m.setAttribute('aria-expanded', 'false');
+    }
+}
+function openMenu(m, focusFirst = false) {
+  closeMenus(m);
+  m.classList.add('open');
+  m.setAttribute('aria-expanded', 'true');
+  if (focusFirst)
+    menuItems(m)
+      .find((x) => x.getAttribute('aria-disabled') !== 'true')
+      ?.focus();
+}
+for (const it of document.querySelectorAll('.dd [aria-disabled=true]')) {
+  const why = it.getAttribute('title');
+  if (why) it.setAttribute('aria-description', why);
+}
+for (const it of document.querySelectorAll('.dd .k')) {
+  it.parentElement.setAttribute('aria-keyshortcuts', it.textContent.replace(/\s/g, ''));
+  it.setAttribute('aria-hidden', 'true');
+}
 for (const m of menus) {
-  m.onclick = (e) => { if (e.target.closest('.dd')) return; m.classList.contains('open') ? closeMenus() : openMenu(m); e.stopPropagation(); };
-  m.onkeydown = (e) => { const items = menuItems(m); const i = items.indexOf(document.activeElement); const mi = menus.indexOf(m);
-    if (e.target === m && (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown')) { e.preventDefault(); openMenu(m, true); }
-    else if (e.key === 'Escape') { e.preventDefault(); closeMenus(); m.focus(); }
-    else if (e.key === 'ArrowDown' && i >= 0) { e.preventDefault(); items[(i + 1) % items.length].focus(); }
-    else if (e.key === 'ArrowUp' && i >= 0) { e.preventDefault(); items[(i - 1 + items.length) % items.length].focus(); }
-    else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); const next = menus[(mi + (e.key === 'ArrowRight' ? 1 : -1) + menus.length) % menus.length]; next.focus(); if (m.classList.contains('open')) openMenu(next, true); }
-    else if ((e.key === 'Enter' || e.key === ' ') && i >= 0) { e.preventDefault(); items[i].click(); } };
-  for (const it of menuItems(m)) it.addEventListener('click', (e) => { if (it.getAttribute('aria-disabled') === 'true') { e.stopImmediatePropagation(); return; } closeMenus(); }); }
-document.addEventListener('click', () => closeMenus()); $('menu').addEventListener('focusout', (e) => { if (!$('menu').contains(e.relatedTarget)) closeMenus(); });
-menus.forEach((m, i) => { m.tabIndex = i ? -1 : 0; m.addEventListener('focus', () => menus.forEach((x) => { x.tabIndex = x === m ? 0 : -1; })); });
+  m.onclick = (e) => {
+    if (e.target.closest('.dd')) return;
+    m.classList.contains('open') ? closeMenus() : openMenu(m);
+    e.stopPropagation();
+  };
+  m.onkeydown = (e) => {
+    const items = menuItems(m);
+    const i = items.indexOf(document.activeElement);
+    const mi = menus.indexOf(m);
+    if (e.target === m && (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown')) {
+      e.preventDefault();
+      openMenu(m, true);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      closeMenus();
+      m.focus();
+    } else if (e.key === 'ArrowDown' && i >= 0) {
+      e.preventDefault();
+      items[(i + 1) % items.length].focus();
+    } else if (e.key === 'ArrowUp' && i >= 0) {
+      e.preventDefault();
+      items[(i - 1 + items.length) % items.length].focus();
+    } else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      e.preventDefault();
+      const next = menus[(mi + (e.key === 'ArrowRight' ? 1 : -1) + menus.length) % menus.length];
+      next.focus();
+      if (m.classList.contains('open')) openMenu(next, true);
+    } else if ((e.key === 'Enter' || e.key === ' ') && i >= 0) {
+      e.preventDefault();
+      items[i].click();
+    }
+  };
+  for (const it of menuItems(m))
+    it.addEventListener('click', (e) => {
+      if (it.getAttribute('aria-disabled') === 'true') {
+        e.stopImmediatePropagation();
+        return;
+      }
+      closeMenus();
+    });
+}
+document.addEventListener('click', () => closeMenus());
+$('menu').addEventListener('focusout', (e) => {
+  if (!$('menu').contains(e.relatedTarget)) closeMenus();
+});
+menus.forEach((m, i) => {
+  m.tabIndex = i ? -1 : 0;
+  m.addEventListener('focus', () =>
+    menus.forEach((x) => {
+      x.tabIndex = x === m ? 0 : -1;
+    }),
+  );
+});
 // tabs (the node window, Options): role=tab, arrows move, Enter or Space selects
-function tabs(listId, onSelect, panelPrefix) { const list = $(listId); const all = [...list.querySelectorAll('[role=tab]')]; const select = (t, via = 'click') => { for (const x of all) { const on = x === t; x.setAttribute('aria-selected', String(on)); x.tabIndex = on ? 0 : -1; x.classList.toggle('on', on); } onSelect(t, via); };
-  for (const t of all) { const name = t.dataset.t ?? t.dataset.o; t.id ||= `${listId}-${name}`; const panel = $(panelPrefix + name); if (panel) { panel.setAttribute('role', 'tabpanel'); panel.setAttribute('aria-labelledby', t.id); t.setAttribute('aria-controls', panel.id); }
-    t.onclick = () => select(t); t.onkeydown = (e) => { const i = all.indexOf(t); if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); const nx = all[(i + (e.key === 'ArrowRight' ? 1 : -1) + all.length) % all.length]; nx.focus(); select(nx, 'key'); } else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(t, 'enter'); } }; }
-  return (name) => select(all.find((t) => (t.dataset.t ?? t.dataset.o) === name) ?? all[0]); }
-const nwTab = tabs('nwtabs', (t, via) => { document.querySelectorAll('.tp').forEach((p) => p.classList.toggle('on', p.id === 't-' + t.dataset.t)); if (t.dataset.t === 'traffic') drawTraffic(); if (t.dataset.t === 'console' && via !== 'key') $('cin').focus(); if (t.dataset.t === 'peers') renderPeers(); if (t.dataset.t === 'mempool') renderMempool(); }, 't-');
-const optTab = tabs('otabs', (t) => document.querySelectorAll('.op').forEach((p) => p.classList.toggle('on', p.id === 'o-' + t.dataset.o)), 'o-');
+function tabs(listId, onSelect, panelPrefix) {
+  const list = $(listId);
+  const all = [...list.querySelectorAll('[role=tab]')];
+  const select = (t, via = 'click') => {
+    for (const x of all) {
+      const on = x === t;
+      x.setAttribute('aria-selected', String(on));
+      x.tabIndex = on ? 0 : -1;
+      x.classList.toggle('on', on);
+    }
+    onSelect(t, via);
+  };
+  for (const t of all) {
+    const name = t.dataset.t ?? t.dataset.o;
+    t.id ||= `${listId}-${name}`;
+    const panel = $(panelPrefix + name);
+    if (panel) {
+      panel.setAttribute('role', 'tabpanel');
+      panel.setAttribute('aria-labelledby', t.id);
+      t.setAttribute('aria-controls', panel.id);
+    }
+    t.onclick = () => select(t);
+    t.onkeydown = (e) => {
+      const i = all.indexOf(t);
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        const nx = all[(i + (e.key === 'ArrowRight' ? 1 : -1) + all.length) % all.length];
+        nx.focus();
+        select(nx, 'key');
+      } else if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        select(t, 'enter');
+      }
+    };
+  }
+  return (name) => select(all.find((t) => (t.dataset.t ?? t.dataset.o) === name) ?? all[0]);
+}
+const nwTab = tabs(
+  'nwtabs',
+  (t, via) => {
+    document.querySelectorAll('.tp').forEach((p) => p.classList.toggle('on', p.id === 't-' + t.dataset.t));
+    if (t.dataset.t === 'traffic') drawTraffic();
+    if (t.dataset.t === 'console' && via !== 'key') $('cin').focus();
+    if (t.dataset.t === 'peers') renderPeers();
+    if (t.dataset.t === 'mempool') renderMempool();
+  },
+  't-',
+);
+const optTab = tabs(
+  'otabs',
+  (t) => document.querySelectorAll('.op').forEach((p) => p.classList.toggle('on', p.id === 'o-' + t.dataset.o)),
+  'o-',
+);
 // the toolbar pages
-function showPage(p) { document.querySelectorAll('.tool button[data-p]').forEach((x) => { const on = x.dataset.p === p; x.classList.toggle('on', on); if (on) x.setAttribute('aria-current', 'page'); else x.removeAttribute('aria-current'); }); document.querySelectorAll('.page').forEach((pg) => pg.classList.toggle('on', pg.id === 'p-' + p)); }
-const toolBtns = [...document.querySelectorAll('.tool button[data-p]')]; toolBtns.forEach((b, i) => { b.tabIndex = i ? -1 : 0; b.addEventListener('focus', () => toolBtns.forEach((x) => { x.tabIndex = x === b ? 0 : -1; })); b.onclick = () => showPage(b.dataset.p); b.onkeydown = (e) => { if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); const nx = toolBtns[(i + (e.key === 'ArrowRight' ? 1 : -1) + toolBtns.length) % toolBtns.length]; nx.focus(); showPage(nx.dataset.p); } }; });
-document.querySelectorAll('[data-go]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); showPage(a.dataset.go); }; });
+function showPage(p) {
+  document.querySelectorAll('.tool button[data-p]').forEach((x) => {
+    const on = x.dataset.p === p;
+    x.classList.toggle('on', on);
+    if (on) x.setAttribute('aria-current', 'page');
+    else x.removeAttribute('aria-current');
+  });
+  document.querySelectorAll('.page').forEach((pg) => pg.classList.toggle('on', pg.id === 'p-' + p));
+}
+const toolBtns = [...document.querySelectorAll('.tool button[data-p]')];
+toolBtns.forEach((b, i) => {
+  b.tabIndex = i ? -1 : 0;
+  b.addEventListener('focus', () =>
+    toolBtns.forEach((x) => {
+      x.tabIndex = x === b ? 0 : -1;
+    }),
+  );
+  b.onclick = () => showPage(b.dataset.p);
+  b.onkeydown = (e) => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      e.preventDefault();
+      const nx = toolBtns[(i + (e.key === 'ArrowRight' ? 1 : -1) + toolBtns.length) % toolBtns.length];
+      nx.focus();
+      showPage(nx.dataset.p);
+    }
+  };
+});
+document.querySelectorAll('[data-go]').forEach((a) => {
+  a.onclick = (e) => {
+    e.preventDefault();
+    showPage(a.dataset.go);
+  };
+});
 // the node window
-let nodeOpener = null; const behind = () => [...win.children].filter((c) => c.id !== 'nw' && !c.classList.contains('rs')); const openNode = () => { if (narrow()) behind().forEach((c) => { c.inert = true; }); nodeOpener = document.activeElement?.closest?.('.dd') ? document.querySelector('#menu > [data-m=window]') : document.activeElement; $('nw').classList.add('open'); $('nw').querySelector('[role=tab][aria-selected=true]')?.focus(); }; const closeNode = () => { if (!$('nw').classList.contains('open')) return; $('nw').classList.remove('open'); behind().forEach((c) => { c.inert = false; }); (nodeOpener && document.contains(nodeOpener) ? nodeOpener : toolBtns.find((b) => b.classList.contains('on')))?.focus?.(); };
-$('m-node').onclick = openNode; $('nwclose').onclick = closeNode; $('nw').addEventListener('keydown', (e) => { if (e.key === 'Escape') closeNode(); });
-(() => { const nw = $('nw'), t = $('nwt'); try { const g = JSON.parse(LS.get('reef:node-geometry') ?? 'null'); if (g && !narrow()) { nw.style.left = g.x + 'px'; nw.style.top = g.y + 'px'; nw.style.width = g.w + 'px'; nw.style.height = g.h + 'px'; } } catch {} const save = () => LS.set('reef:node-geometry', JSON.stringify({ x: nw.offsetLeft, y: nw.offsetTop, w: nw.offsetWidth, h: nw.offsetHeight }));
-  t.onpointerdown = (e) => { if (e.target.closest('button') || narrow()) return; const sx = e.clientX - nw.offsetLeft, sy = e.clientY - nw.offsetTop; const move = (ev) => { nw.style.left = Math.max(0, Math.min(ev.clientX - sx, innerWidth - 120)) + 'px'; nw.style.top = Math.max(0, Math.min(ev.clientY - sy, innerHeight - 40)) + 'px'; }; const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); save(); }; addEventListener('pointermove', move); addEventListener('pointerup', up); e.preventDefault(); };
-  nw.querySelector('.rs.se').onpointerdown = (e) => { const x0 = e.clientX, y0 = e.clientY, w0 = nw.offsetWidth, h0 = nw.offsetHeight; const move = (ev) => { nw.style.width = Math.max(560, w0 + ev.clientX - x0) + 'px'; nw.style.height = Math.max(320, h0 + ev.clientY - y0) + 'px'; }; const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); save(); }; addEventListener('pointermove', move); addEventListener('pointerup', up); e.preventDefault(); e.stopPropagation(); }; })();
-document.querySelector('a.skip')?.addEventListener('click', (e) => { e.preventDefault(); const pg = document.querySelector('.page.on'); pg.tabIndex = -1; pg.focus(); });
-$('st-btn').onclick = () => { const tr = trust(); notify('Chain status', node.error ? plainError(node.error) : tr.text, tr.level === 'bad'); };
-$('m-readme').onclick = () => window.open(REPO + '#readme', '_blank', 'noopener'); $('m-source').onclick = () => window.open(REPO, '_blank', 'noopener'); $('m-issue').onclick = () => window.open(REPO + '/issues/new', '_blank', 'noopener');
-$('about-src').href = REPO; $('about-issues').href = REPO + '/issues'; $('about-ok').onclick = () => $('about').close();
-$('m-about').onclick = () => { $('about-pins').textContent = `Reef ${VERSION} · node blaketestnode@${NODE.slice(-40, -33)} · lib sidestr/spec@${LIB.match(/@([0-9a-f]{7})/)[1]} · engine schema@${CDN.slice(-40, -33)}` + (node.height != null ? ` · height ${n(node.height)}` : ''); $('about').showModal(); };
-$('m-mask').onclick = () => { OPT.mask = !OPT.mask; saveOptions(); applyDisplay(); }; $('m-exit').onclick = () => hideWindow(); $('m-zoom').onclick = () => toggleZoom(); $('m-main').onclick = () => { showWindow(); closeNode(); };
-$('m-backup').onclick = () => openBackup(); $('m-diag').onclick = () => copyDiagnostics();
+let nodeOpener = null;
+const behind = () => [...win.children].filter((c) => c.id !== 'nw' && !c.classList.contains('rs'));
+const openNode = () => {
+  if (narrow())
+    behind().forEach((c) => {
+      c.inert = true;
+    });
+  nodeOpener = document.activeElement?.closest?.('.dd') ? document.querySelector('#menu > [data-m=window]') : document.activeElement;
+  $('nw').classList.add('open');
+  $('nw').querySelector('[role=tab][aria-selected=true]')?.focus();
+};
+const closeNode = () => {
+  if (!$('nw').classList.contains('open')) return;
+  $('nw').classList.remove('open');
+  behind().forEach((c) => {
+    c.inert = false;
+  });
+  (nodeOpener && document.contains(nodeOpener) ? nodeOpener : toolBtns.find((b) => b.classList.contains('on')))?.focus?.();
+};
+$('m-node').onclick = openNode;
+$('nwclose').onclick = closeNode;
+$('nw').addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeNode();
+});
+(() => {
+  const nw = $('nw'),
+    t = $('nwt');
+  try {
+    const g = JSON.parse(LS.get('reef:node-geometry') ?? 'null');
+    if (g && !narrow()) {
+      nw.style.left = g.x + 'px';
+      nw.style.top = g.y + 'px';
+      nw.style.width = g.w + 'px';
+      nw.style.height = g.h + 'px';
+    }
+  } catch {}
+  const save = () =>
+    LS.set('reef:node-geometry', JSON.stringify({ x: nw.offsetLeft, y: nw.offsetTop, w: nw.offsetWidth, h: nw.offsetHeight }));
+  t.onpointerdown = (e) => {
+    if (e.target.closest('button') || narrow()) return;
+    const sx = e.clientX - nw.offsetLeft,
+      sy = e.clientY - nw.offsetTop;
+    const move = (ev) => {
+      nw.style.left = Math.max(0, Math.min(ev.clientX - sx, innerWidth - 120)) + 'px';
+      nw.style.top = Math.max(0, Math.min(ev.clientY - sy, innerHeight - 40)) + 'px';
+    };
+    const up = () => {
+      removeEventListener('pointermove', move);
+      removeEventListener('pointerup', up);
+      save();
+    };
+    addEventListener('pointermove', move);
+    addEventListener('pointerup', up);
+    e.preventDefault();
+  };
+  nw.querySelector('.rs.se').onpointerdown = (e) => {
+    const x0 = e.clientX,
+      y0 = e.clientY,
+      w0 = nw.offsetWidth,
+      h0 = nw.offsetHeight;
+    const move = (ev) => {
+      nw.style.width = Math.max(560, w0 + ev.clientX - x0) + 'px';
+      nw.style.height = Math.max(320, h0 + ev.clientY - y0) + 'px';
+    };
+    const up = () => {
+      removeEventListener('pointermove', move);
+      removeEventListener('pointerup', up);
+      save();
+    };
+    addEventListener('pointermove', move);
+    addEventListener('pointerup', up);
+    e.preventDefault();
+    e.stopPropagation();
+  };
+})();
+document.querySelector('a.skip')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  const pg = document.querySelector('.page.on');
+  pg.tabIndex = -1;
+  pg.focus();
+});
+$('st-btn').onclick = () => {
+  const tr = trust();
+  notify('Chain status', node.error ? plainError(node.error) : tr.text, tr.level === 'bad');
+};
+$('m-readme').onclick = () => window.open(REPO + '#readme', '_blank', 'noopener');
+$('m-source').onclick = () => window.open(REPO, '_blank', 'noopener');
+$('m-issue').onclick = () => window.open(REPO + '/issues/new', '_blank', 'noopener');
+$('about-src').href = REPO;
+$('about-issues').href = REPO + '/issues';
+$('about-ok').onclick = () => $('about').close();
+$('m-about').onclick = () => {
+  $('about-pins').textContent =
+    `Reef ${VERSION} · node blaketestnode@${NODE.slice(-40, -33)} · lib sidestr/spec@${LIB.match(/@([0-9a-f]{7})/)[1]} · engine schema@${CDN.slice(-40, -33)}` +
+    (node.height != null ? ` · height ${n(node.height)}` : '');
+  $('about').showModal();
+};
+$('m-mask').onclick = () => {
+  OPT.mask = !OPT.mask;
+  saveOptions();
+  applyDisplay();
+};
+$('m-exit').onclick = () => hideWindow();
+$('m-zoom').onclick = () => toggleZoom();
+$('m-main').onclick = () => {
+  showWindow();
+  closeNode();
+};
+$('m-backup').onclick = () => openBackup();
+$('m-diag').onclick = () => copyDiagnostics();
 // ---- the tray: closing or minimizing the window keeps the node running while the tab is open, and leaves a small card to come back through; inside Glass the host is told and keeps its dock
 let unseen = 0;
-function hideWindow() { if (embedded) { try { parent.postMessage({ source: 'reef', type: 'minimize' }, '*'); } catch {} return; } win.style.display = 'none'; unseen = 0; $('tray-badge').hidden = true; $('tray').hidden = false; trayRefresh(); $('tray').focus(); }
-function showWindow() { win.style.display = ''; $('tray').hidden = true; unseen = 0; $('tray-badge').hidden = true; }
-function trayRefresh() { if ($('tray').hidden) return; const sd = tn.seeding?.t ? ` · seeding to ${tn.seeding.t.wires.filter((w) => !w.destroyed && w.type !== 'webSeed').length}` : ''; $('tray-l').textContent = node.error ? 'stopped: open for details' : node.synced ? `up to date · ${n(node.height)}${sd}` : node.phase === 'fetch' ? 'fetching the snapshot' : node.phase === 'hash' ? 'checking the snapshot' : node.phase === 'verify' ? 'verifying the snapshot' : node.phase === 'sync' ? `syncing · ${n(node.height ?? 0)}` : 'starting'; $('tray-dot').className = node.error ? 'bad' : node.synced ? 'ok' : 'sync'; }
-$('tray').onclick = () => showWindow(); setInterval(trayRefresh, 1000);
-document.addEventListener('keydown', (e) => { const k = e.key.toLowerCase(); if (e.ctrlKey && e.shiftKey && k === 'm') { e.preventDefault(); $('m-mask').onclick(); } else if (e.ctrlKey && !e.shiftKey && k === 'm') { e.preventDefault(); $('m-main').onclick(); } else if (e.ctrlKey && e.shiftKey && k === 'd') { e.preventDefault(); $('nw').classList.contains('open') ? closeNode() : openNode(); } });
+function hideWindow() {
+  if (embedded) {
+    try {
+      parent.postMessage({ source: 'reef', type: 'minimize' }, '*');
+    } catch {}
+    return;
+  }
+  win.style.display = 'none';
+  unseen = 0;
+  $('tray-badge').hidden = true;
+  $('tray').hidden = false;
+  trayRefresh();
+  $('tray').focus();
+}
+function showWindow() {
+  win.style.display = '';
+  $('tray').hidden = true;
+  unseen = 0;
+  $('tray-badge').hidden = true;
+}
+function trayRefresh() {
+  if ($('tray').hidden) return;
+  const sd = tn.seeding?.t ? ` · seeding to ${tn.seeding.t.wires.filter((w) => !w.destroyed && w.type !== 'webSeed').length}` : '';
+  $('tray-l').textContent = node.error
+    ? 'stopped: open for details'
+    : node.synced
+      ? `up to date · ${n(node.height)}${sd}`
+      : node.phase === 'fetch'
+        ? 'fetching the snapshot'
+        : node.phase === 'hash'
+          ? 'checking the snapshot'
+          : node.phase === 'verify'
+            ? 'verifying the snapshot'
+            : node.phase === 'sync'
+              ? `syncing · ${n(node.height ?? 0)}`
+              : 'starting';
+  $('tray-dot').className = node.error ? 'bad' : node.synced ? 'ok' : 'sync';
+}
+$('tray').onclick = () => showWindow();
+setInterval(trayRefresh, 1000);
+document.addEventListener('keydown', (e) => {
+  const k = e.key.toLowerCase();
+  if (e.ctrlKey && e.shiftKey && k === 'm') {
+    e.preventDefault();
+    $('m-mask').onclick();
+  } else if (e.ctrlKey && !e.shiftKey && k === 'm') {
+    e.preventDefault();
+    $('m-main').onclick();
+  } else if (e.ctrlKey && e.shiftKey && k === 'd') {
+    e.preventDefault();
+    $('nw').classList.contains('open') ? closeNode() : openNode();
+  }
+});
 
 // ---- a question in the page (never a browser dialog): resolves true on the confirming button
-function ask(title, lines, okLabel = 'OK', danger = false, cancelLabel = 'Cancel', escNull = false) { return new Promise((resolve) => { $('ask-cancel').textContent = cancelLabel; const d = $('ask'); $('ask-t').textContent = title; const b = $('ask-b'); b.textContent = ''; for (const l of lines) { const p = document.createElement('p'); p.textContent = l; b.appendChild(p); } const ok = $('ask-ok'); ok.textContent = okLabel; ok.classList.toggle('danger', danger); const done = (v) => { ok.onclick = null; $('ask-cancel').onclick = null; d.onclose = null; d.close(); resolve(v); }; ok.onclick = () => done(true); $('ask-cancel').onclick = () => done(false); d.onclose = () => resolve(escNull ? null : false); d.showModal(); $('ask-cancel').focus(); }); }
-async function wipeAsk() { if (IDLE) return notify('Not here', 'the node runs in another tab: wipe from there', true); if (await ask('Wipe the snapshot', ['This removes the snapshot and its index from this browser\'s storage (about 1.1 GB). The next start fetches the 830 MB snapshot again: about half a minute on a fast connection, several minutes on a slow one.', 'The wallet key is not touched.'], 'Wipe', true)) { tn.wipe(); setTimeout(() => location.reload(), 1500); } }
+function ask(title, lines, okLabel = 'OK', danger = false, cancelLabel = 'Cancel', escNull = false) {
+  return new Promise((resolve) => {
+    $('ask-cancel').textContent = cancelLabel;
+    const d = $('ask');
+    $('ask-t').textContent = title;
+    const b = $('ask-b');
+    b.textContent = '';
+    for (const l of lines) {
+      const p = document.createElement('p');
+      p.textContent = l;
+      b.appendChild(p);
+    }
+    const ok = $('ask-ok');
+    ok.textContent = okLabel;
+    ok.classList.toggle('danger', danger);
+    const done = (v) => {
+      ok.onclick = null;
+      $('ask-cancel').onclick = null;
+      d.onclose = null;
+      d.close();
+      resolve(v);
+    };
+    ok.onclick = () => done(true);
+    $('ask-cancel').onclick = () => done(false);
+    d.onclose = () => resolve(escNull ? null : false);
+    d.showModal();
+    $('ask-cancel').focus();
+  });
+}
+async function wipeAsk() {
+  if (IDLE) return notify('Not here', 'the node runs in another tab: wipe from there', true);
+  if (
+    await ask(
+      'Wipe the snapshot',
+      [
+        "This removes the snapshot and its index from this browser's storage (about 1.1 GB). The next start fetches the 830 MB snapshot again: about half a minute on a fast connection, several minutes on a slow one.",
+        'The wallet key is not touched.',
+      ],
+      'Wipe',
+      true,
+    )
+  ) {
+    tn.wipe();
+    setTimeout(() => location.reload(), 1500);
+  }
+}
 $('m-wipe').onclick = () => wipeAsk();
 
 // ---- Options: one dialog, four tabs, values kept in reef:options (the snapshot and blocks URLs keep their own keys)
-function fillOptions(o = OPT, urls = { snapshot: LS.get('reef:snapshot') ?? DEFAULT_SNAP, blocks: LS.get('reef:blocks') ?? DEFAULT_BLOCKS }) { $('o-snapshot').value = urls.snapshot; $('o-blocks').value = urls.blocks; $('o-feerate').value = o.feeRate; $('o-notify').checked = !!o.notify; $('o-torrent').checked = !!o.torrent; const mr = mempoolRate(); $('o-feeuse').style.display = mr != null ? '' : 'none'; $('o-feesugg').textContent = mr != null ? `the tab's mempool: ${node.mempool.count} transaction${node.mempool.count === 1 ? '' : 's'}, median ${mr} sat/vB` : '1 sat/vB is what txbt4 blocks take today'; $('o-seed').checked = !!o.seed; $('o-seednote').textContent = tn.seeding?.t ? `seeding now: ${tn.seeding.t.wires.filter((w) => !w.destroyed).length} peer(s), ${mib(tn.seeding.t.uploaded)} uploaded` : fileReady() ? 'the snapshot is here; turn this on to serve it' : 'starts once the snapshot is here and checked'; $('o-relays').value = (o.relays ?? DEFAULT_RELAYS).join('\n'); $('o-unit').value = o.unit; $('o-mask').checked = !!o.mask; $('o-mirror').textContent = urls.blocks + '.dat';
-  $('o-address').value = W?.address ?? '…'; if (W) renderOldKeys(); $('o-importkey').value = ''; $('o-keywarn').textContent = ''; $('o-geomnote').textContent = ''; $('o-backedup').textContent = W ? (backedUp() ? `backed up on ${new Date(Number(LS.get(backupKey()))).toLocaleDateString()}` : 'NOT backed up yet') : '…';
-  const perm = 'Notification' in window ? Notification.permission : 'unsupported'; $('o-perm').textContent = perm === 'granted' ? 'the browser allows notifications from this page' : perm === 'denied' ? 'the browser has blocked notifications from this page; change that in the site settings' : perm === 'default' ? 'the browser has not been asked yet' : 'this browser has no notifications'; $('o-allow').style.display = perm === 'default' ? '' : 'none';
-  const lp = loadJSON('reef:lastpublish', null) ?? o.lastPublish; $('o-relaylast').textContent = lp ? Object.entries(lp.results).map(([u, r]) => `${u.replace('wss://', '')} ${r === 'ok' ? 'ok' : 'failed'}`).join(', ') + ` (${fmt(Math.floor(lp.at / 1000))})` : 'none yet';
-  navigator.storage?.estimate?.().then((e) => { $('o-storage').textContent = `${mib(e.usage ?? 0)} in use of ${mib(e.quota ?? 0)} the browser allows`; }).catch(() => { $('o-storage').textContent = 'unknown'; });
-  navigator.storage?.persisted?.().then((p) => { $('o-persist').textContent = p ? 'persistent: the browser will not evict it under pressure' : 'best effort: the browser may evict it when disk is short; back up the key'; }).catch(() => { $('o-persist').textContent = 'unknown'; }); }
-function openOptions(tab = 'main') { fillOptions(); $('options').classList.toggle('idle', IDLE); $('o-idlenote').hidden = !IDLE; for (const el of $('options').querySelectorAll('#o-main input, #o-main button, #o-wallet input, #o-wallet textarea, #o-wallet button, #o-network input, #o-network textarea')) el.disabled = IDLE; optTab(tab); $('options').showModal(); $('otabs').querySelector('[aria-selected=true]')?.focus(); $('o-reset').disabled = IDLE; }
+function fillOptions(
+  o = OPT,
+  urls = { snapshot: LS.get('reef:snapshot') ?? DEFAULT_SNAP, blocks: LS.get('reef:blocks') ?? DEFAULT_BLOCKS },
+) {
+  $('o-snapshot').value = urls.snapshot;
+  $('o-blocks').value = urls.blocks;
+  $('o-feerate').value = o.feeRate;
+  $('o-notify').checked = !!o.notify;
+  $('o-torrent').checked = !!o.torrent;
+  const mr = mempoolRate();
+  $('o-feeuse').style.display = mr != null ? '' : 'none';
+  $('o-feesugg').textContent =
+    mr != null
+      ? `the tab's mempool: ${node.mempool.count} transaction${node.mempool.count === 1 ? '' : 's'}, median ${mr} sat/vB`
+      : '1 sat/vB is what txbt4 blocks take today';
+  $('o-seed').checked = !!o.seed;
+  $('o-seednote').textContent = tn.seeding?.t
+    ? `seeding now: ${tn.seeding.t.wires.filter((w) => !w.destroyed).length} peer(s), ${mib(tn.seeding.t.uploaded)} uploaded`
+    : fileReady()
+      ? 'the snapshot is here; turn this on to serve it'
+      : 'starts once the snapshot is here and checked';
+  $('o-relays').value = (o.relays ?? DEFAULT_RELAYS).join('\n');
+  $('o-unit').value = o.unit;
+  $('o-mask').checked = !!o.mask;
+  $('o-mirror').textContent = urls.blocks + '.dat';
+  $('o-address').value = W?.address ?? '…';
+  if (W) renderOldKeys();
+  $('o-importkey').value = '';
+  $('o-keywarn').textContent = '';
+  $('o-geomnote').textContent = '';
+  $('o-backedup').textContent = W
+    ? backedUp()
+      ? `backed up on ${new Date(Number(LS.get(backupKey()))).toLocaleDateString()}`
+      : 'NOT backed up yet'
+    : '…';
+  const perm = 'Notification' in window ? Notification.permission : 'unsupported';
+  $('o-perm').textContent =
+    perm === 'granted'
+      ? 'the browser allows notifications from this page'
+      : perm === 'denied'
+        ? 'the browser has blocked notifications from this page; change that in the site settings'
+        : perm === 'default'
+          ? 'the browser has not been asked yet'
+          : 'this browser has no notifications';
+  $('o-allow').style.display = perm === 'default' ? '' : 'none';
+  const lp = loadJSON('reef:lastpublish', null) ?? o.lastPublish;
+  $('o-relaylast').textContent = lp
+    ? Object.entries(lp.results)
+        .map(([u, r]) => `${u.replace('wss://', '')} ${r === 'ok' ? 'ok' : 'failed'}`)
+        .join(', ') + ` (${fmt(Math.floor(lp.at / 1000))})`
+    : 'none yet';
+  navigator.storage
+    ?.estimate?.()
+    .then((e) => {
+      $('o-storage').textContent = `${mib(e.usage ?? 0)} in use of ${mib(e.quota ?? 0)} the browser allows`;
+    })
+    .catch(() => {
+      $('o-storage').textContent = 'unknown';
+    });
+  navigator.storage
+    ?.persisted?.()
+    .then((p) => {
+      $('o-persist').textContent = p
+        ? 'persistent: the browser will not evict it under pressure'
+        : 'best effort: the browser may evict it when disk is short; back up the key';
+    })
+    .catch(() => {
+      $('o-persist').textContent = 'unknown';
+    });
+}
+function openOptions(tab = 'main') {
+  fillOptions();
+  $('options').classList.toggle('idle', IDLE);
+  $('o-idlenote').hidden = !IDLE;
+  for (const el of $('options').querySelectorAll(
+    '#o-main input, #o-main button, #o-wallet input, #o-wallet textarea, #o-wallet button, #o-network input, #o-network textarea',
+  ))
+    el.disabled = IDLE;
+  optTab(tab);
+  $('options').showModal();
+  $('otabs').querySelector('[aria-selected=true]')?.focus();
+  $('o-reset').disabled = IDLE;
+}
 $('m-options').onclick = () => openOptions();
-$('o-cancel').onclick = () => $('options').close(); $('o-reset').onclick = () => fillOptions(OPT_DEFAULTS, { snapshot: DEFAULT_SNAP, blocks: DEFAULT_BLOCKS });
-$('o-feeuse').onclick = () => { const r = mempoolRate(); if (r != null) $('o-feerate').value = r; }; $('o-allow').onclick = () => { Notification.requestPermission().then(() => fillOptions()); };
-$('o-backup').onclick = () => { $('options').close(); openBackup(); };
-$('o-newkey').onclick = () => { if (!W) return; $('o-importkey').value = W.signer.randomKey(); $('o-keywarn').textContent = 'a new key: press OK to use it in this tab'; };
-const keyProblem = (v) => (/^[5KL][1-9A-HJ-NP-Za-km-z]{50,51}$/.test(v) ? 'that is a MAINNET key (it starts with K, L or 5): never paste a real key into a test wallet' : !WL.parseKey(v, W.hash.sha256) ? 'not a key: 64 hex characters, or a WIF starting with c' : null);
-$('o-importkey').oninput = () => { if (!W) return; const v = $('o-importkey').value.trim(); $('o-keywarn').textContent = v ? (keyProblem(v) ?? 'press OK to switch to this key') : ''; };
-$('o-wipe').onclick = () => { $('options').close(); wipeAsk(); };
-$('o-resetgeom').onclick = () => { LS.del('reef:geometry'); LS.del('reef:node-geometry'); $('o-geomnote').textContent = 'reset; takes effect on reload'; };
-$('o-ok').onclick = async () => { const raw = $('o-importkey').value.trim(); if (raw && (IDLE || PROBING || !W || !RUNNING)) { optTab('wallet'); $('o-keywarn').textContent = !RUNNING && !IDLE ? 'start the node in this tab first: keys are switched only where the wallet runs' : 'the wallet runs in another tab: switch keys there'; return; } const key = raw && !keyProblem(raw) ? WL.parseKey(raw, W.hash.sha256) : null; if (raw && !key) { optTab('wallet'); $('o-keywarn').textContent = keyProblem(raw); return; }
-  if (key) { let pubOk = false; try { pubOk = /^[0-9a-f]{64}$/.test(W.signer.pubkeyOf(key)); } catch {} if (!pubOk) { optTab('wallet'); $('o-keywarn').textContent = 'that number is not a valid private key'; return; } }
-  const relays = $('o-relays').value.split(/\s+/).map((r) => r.trim()).filter((r) => /^wss:\/\/[^\s<>"]+$/.test(r)); const rate = Math.round(Number($('o-feerate').value)); if (!(rate >= 1 && rate <= WL.MAX_RATE)) { optTab('wallet'); $('o-feerate').focus(); return; }
-  if (key && key !== W.key) { const waiting = [...sent.filter((s) => s.pending && !s.abandoned), ...loadJSON('reef:quarantine:' + scriptTag(), []).filter((q) => q.pending && !q.released)]; const forgotten = sent.filter((s) => s.pending && s.abandoned); if (waiting.length) { optTab('wallet'); $('o-keywarn').textContent = `${waiting.length} payment${waiting.length === 1 ? ' is' : 's are'} still waiting with this key; switching would stop following ${waiting.length === 1 ? 'it' : 'them'}. Wait until confirmed, or cancel or forget ${waiting.length === 1 ? 'it' : 'them'} first.`; return; } const b = W.coinsKnown ? WL.balances({ coins: W.coins, sent, height: W.height }).total : null; $('options').close();
-    const ok = await ask('Switch to another key', [`This tab will use the new key from now on. The current key ${b ? `holds ${exact(b)}` : 'holds nothing'} is kept in this browser's list of earlier keys (Options → Wallet), but this browser is not a backup.`, backedUp() ? 'The current key is backed up.' : 'The current key is NOT backed up. Back it up first unless it is empty.', 'Coins sent to a key before the snapshot at block 150,307 are not shown by a tab.', ...(forgotten.length ? [`${forgotten.length} forgotten payment(s) may still be mined, and after the switch nothing spends their coins first. To settle one, pay yourself from this key before switching.`] : []), ...(hitchHeld().size ? ['Hitch holds some of this key\'s coins for a channel funding; Hitch keeps following them.'] : [])], 'Switch', !backedUp());
-    if (!ok) return; const old = (() => { try { return JSON.parse(LS.get('reef:oldkeys') ?? '[]'); } catch { return []; } })(); if (!old.some((x) => x.key === W.key)) old.push({ key: W.key, address: W.address, at: Date.now() }); LS.set('reef:oldkeys', JSON.stringify(old.filter((x) => x.key !== key))); LS.set('reef:key', key); location.search = keepQuery(); return; }
-  if (IDLE) { const stored = (() => { try { return JSON.parse(LS.get('reef:options') ?? '{}'); } catch { return {}; } })(); Object.assign(OPT, stored, { unit: $('o-unit').value, mask: $('o-mask').checked }); LS.set('reef:options', JSON.stringify({ ...stored, unit: OPT.unit, mask: OPT.mask })); $('options').close(); applyDisplay(); return; }
-  OPT.feeRate = rate; OPT.notify = $('o-notify').checked; OPT.torrent = $('o-torrent').checked; OPT.seed = $('o-seed').checked; tn.setTorrent(OPT.torrent); tn.setSeed(OPT.seed); OPT.relays = relays.length ? relays : DEFAULT_RELAYS; OPT.unit = $('o-unit').value; OPT.mask = $('o-mask').checked; saveOptions();
+$('o-cancel').onclick = () => $('options').close();
+$('o-reset').onclick = () => fillOptions(OPT_DEFAULTS, { snapshot: DEFAULT_SNAP, blocks: DEFAULT_BLOCKS });
+$('o-feeuse').onclick = () => {
+  const r = mempoolRate();
+  if (r != null) $('o-feerate').value = r;
+};
+$('o-allow').onclick = () => {
+  Notification.requestPermission().then(() => fillOptions());
+};
+$('o-backup').onclick = () => {
+  $('options').close();
+  openBackup();
+};
+$('o-newkey').onclick = () => {
+  if (!W) return;
+  $('o-importkey').value = W.signer.randomKey();
+  $('o-keywarn').textContent = 'a new key: press OK to use it in this tab';
+};
+const keyProblem = (v) =>
+  /^[5KL][1-9A-HJ-NP-Za-km-z]{50,51}$/.test(v)
+    ? 'that is a MAINNET key (it starts with K, L or 5): never paste a real key into a test wallet'
+    : !WL.parseKey(v, W.hash.sha256)
+      ? 'not a key: 64 hex characters, or a WIF starting with c'
+      : null;
+$('o-importkey').oninput = () => {
+  if (!W) return;
+  const v = $('o-importkey').value.trim();
+  $('o-keywarn').textContent = v ? (keyProblem(v) ?? 'press OK to switch to this key') : '';
+};
+$('o-wipe').onclick = () => {
+  $('options').close();
+  wipeAsk();
+};
+$('o-resetgeom').onclick = () => {
+  LS.del('reef:geometry');
+  LS.del('reef:node-geometry');
+  $('o-geomnote').textContent = 'reset; takes effect on reload';
+};
+$('o-ok').onclick = async () => {
+  const raw = $('o-importkey').value.trim();
+  if (raw && (IDLE || PROBING || !W || !RUNNING)) {
+    optTab('wallet');
+    $('o-keywarn').textContent =
+      !RUNNING && !IDLE
+        ? 'start the node in this tab first: keys are switched only where the wallet runs'
+        : 'the wallet runs in another tab: switch keys there';
+    return;
+  }
+  const key = raw && !keyProblem(raw) ? WL.parseKey(raw, W.hash.sha256) : null;
+  if (raw && !key) {
+    optTab('wallet');
+    $('o-keywarn').textContent = keyProblem(raw);
+    return;
+  }
+  if (key) {
+    let pubOk = false;
+    try {
+      pubOk = /^[0-9a-f]{64}$/.test(W.signer.pubkeyOf(key));
+    } catch {}
+    if (!pubOk) {
+      optTab('wallet');
+      $('o-keywarn').textContent = 'that number is not a valid private key';
+      return;
+    }
+  }
+  const relays = $('o-relays')
+    .value.split(/\s+/)
+    .map((r) => r.trim())
+    .filter((r) => /^wss:\/\/[^\s<>"]+$/.test(r));
+  const rate = Math.round(Number($('o-feerate').value));
+  if (!(rate >= 1 && rate <= WL.MAX_RATE)) {
+    optTab('wallet');
+    $('o-feerate').focus();
+    return;
+  }
+  if (key && key !== W.key) {
+    const waiting = [
+      ...sent.filter((s) => s.pending && !s.abandoned),
+      ...loadJSON('reef:quarantine:' + scriptTag(), []).filter((q) => q.pending && !q.released),
+    ];
+    const forgotten = sent.filter((s) => s.pending && s.abandoned);
+    if (waiting.length) {
+      optTab('wallet');
+      $('o-keywarn').textContent =
+        `${waiting.length} payment${waiting.length === 1 ? ' is' : 's are'} still waiting with this key; switching would stop following ${waiting.length === 1 ? 'it' : 'them'}. Wait until confirmed, or cancel or forget ${waiting.length === 1 ? 'it' : 'them'} first.`;
+      return;
+    }
+    const b = W.coinsKnown ? WL.balances({ coins: W.coins, sent, height: W.height }).total : null;
+    $('options').close();
+    const ok = await ask(
+      'Switch to another key',
+      [
+        `This tab will use the new key from now on. The current key ${b ? `holds ${exact(b)}` : 'holds nothing'} is kept in this browser's list of earlier keys (Options → Wallet), but this browser is not a backup.`,
+        backedUp() ? 'The current key is backed up.' : 'The current key is NOT backed up. Back it up first unless it is empty.',
+        'Coins sent to a key before the snapshot at block 150,307 are not shown by a tab.',
+        ...(forgotten.length
+          ? [
+              `${forgotten.length} forgotten payment(s) may still be mined, and after the switch nothing spends their coins first. To settle one, pay yourself from this key before switching.`,
+            ]
+          : []),
+        ...(hitchHeld().size ? ["Hitch holds some of this key's coins for a channel funding; Hitch keeps following them."] : []),
+      ],
+      'Switch',
+      !backedUp(),
+    );
+    if (!ok) return;
+    const old = (() => {
+      try {
+        return JSON.parse(LS.get('reef:oldkeys') ?? '[]');
+      } catch {
+        return [];
+      }
+    })();
+    if (!old.some((x) => x.key === W.key)) old.push({ key: W.key, address: W.address, at: Date.now() });
+    LS.set('reef:oldkeys', JSON.stringify(old.filter((x) => x.key !== key)));
+    LS.set('reef:key', key);
+    location.search = keepQuery();
+    return;
+  }
+  if (IDLE) {
+    const stored = (() => {
+      try {
+        return JSON.parse(LS.get('reef:options') ?? '{}');
+      } catch {
+        return {};
+      }
+    })();
+    Object.assign(OPT, stored, { unit: $('o-unit').value, mask: $('o-mask').checked });
+    LS.set('reef:options', JSON.stringify({ ...stored, unit: OPT.unit, mask: OPT.mask }));
+    $('options').close();
+    applyDisplay();
+    return;
+  }
+  OPT.feeRate = rate;
+  OPT.notify = $('o-notify').checked;
+  OPT.torrent = $('o-torrent').checked;
+  OPT.seed = $('o-seed').checked;
+  tn.setTorrent(OPT.torrent);
+  tn.setSeed(OPT.seed);
+  OPT.relays = relays.length ? relays : DEFAULT_RELAYS;
+  OPT.unit = $('o-unit').value;
+  OPT.mask = $('o-mask').checked;
+  saveOptions();
   if (OPT.notify && 'Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
-  const snap = $('o-snapshot').value.trim() || DEFAULT_SNAP, blocks = $('o-blocks').value.trim() || DEFAULT_BLOCKS; const urlsChanged = snap !== (LS.get('reef:snapshot') ?? DEFAULT_SNAP) || blocks !== (LS.get('reef:blocks') ?? DEFAULT_BLOCKS);
-  if (urlsChanged) { if (!/^https:\/\//.test(snap) || !/^https:\/\//.test(blocks)) { optTab('main'); return; } if (snap === DEFAULT_SNAP) LS.del('reef:snapshot'); else LS.set('reef:snapshot', snap); if (blocks === DEFAULT_BLOCKS) LS.del('reef:blocks'); else LS.set('reef:blocks', blocks); }
-  $('options').close(); if (urlsChanged) { location.search = keepQuery(); return; } if (!$('sendamt').value.trim()) $('sendunit').value = OPT.unit; applyDisplay(); renderPeers(); updatePreview(); };
+  const snap = $('o-snapshot').value.trim() || DEFAULT_SNAP,
+    blocks = $('o-blocks').value.trim() || DEFAULT_BLOCKS;
+  const urlsChanged = snap !== (LS.get('reef:snapshot') ?? DEFAULT_SNAP) || blocks !== (LS.get('reef:blocks') ?? DEFAULT_BLOCKS);
+  if (urlsChanged) {
+    if (!/^https:\/\//.test(snap) || !/^https:\/\//.test(blocks)) {
+      optTab('main');
+      return;
+    }
+    if (snap === DEFAULT_SNAP) LS.del('reef:snapshot');
+    else LS.set('reef:snapshot', snap);
+    if (blocks === DEFAULT_BLOCKS) LS.del('reef:blocks');
+    else LS.set('reef:blocks', blocks);
+  }
+  $('options').close();
+  if (urlsChanged) {
+    location.search = keepQuery();
+    return;
+  }
+  if (!$('sendamt').value.trim()) $('sendunit').value = OPT.unit;
+  applyDisplay();
+  renderPeers();
+  updatePreview();
+};
 
 // ---- the wallet: one key kept in this tab; coins from the tab's own UTXO set (created since the snapshot); payments
 // built, signed and checked here, then published for a sidestr producer's node to broadcast. The records of payments are
 // lib/state.mjs (merge, confirm, replace, republish, forget), tested; this section carries out what it decides.
 let IDLE_TEXT = 'The balance is shown in the tab that runs the node.';
-let W = null, sent = [], seen = new Map(), ledger = new Map(), mpSeen = new Set(), sending = false, IDLE = false, PROBING = true, RUNNING = false; const asked = new Set();
+let W = null,
+  sent = [],
+  seen = new Map(),
+  ledger = new Map(),
+  mpSeen = new Set(),
+  sending = false,
+  IDLE = false,
+  PROBING = true,
+  RUNNING = false;
+const asked = new Set();
 const canAct = () => !IDLE && !PROBING && W && W.coinsKnown; // the tab that runs the node is the only one that changes the wallet
 const scriptTag = () => W.script.slice(4, 20);
-const loadJSON = (k, d) => { try { return JSON.parse(LS.get(k) ?? 'null') ?? d; } catch { return d; } };
-const sentKey = () => 'reef:sent:' + scriptTag(), seenKey = () => 'reef:seen:' + scriptTag(), ledgerKey = () => 'reef:ledger:' + scriptTag(), backupKey = () => 'reef:backup:' + W.pub.slice(0, 16);
+const loadJSON = (k, d) => {
+  try {
+    return JSON.parse(LS.get(k) ?? 'null') ?? d;
+  } catch {
+    return d;
+  }
+};
+const sentKey = () => 'reef:sent:' + scriptTag(),
+  seenKey = () => 'reef:seen:' + scriptTag(),
+  ledgerKey = () => 'reef:ledger:' + scriptTag(),
+  backupKey = () => 'reef:backup:' + W.pub.slice(0, 16);
 const backedUp = () => !!(W && LS.get(backupKey()));
-const saveFailed = () => banner('savefail', 'bad', 'This browser refused to save the wallet\'s records (storage full or blocked). A payment made now might be forgotten on reload: free storage before sending.');
-const store = (k, v) => { if (!LS.set(k, v)) { saveFailed(); return false; } unbanner('savefail'); return true; };
+const saveFailed = () =>
+  banner(
+    'savefail',
+    'bad',
+    "This browser refused to save the wallet's records (storage full or blocked). A payment made now might be forgotten on reload: free storage before sending.",
+  );
+const store = (k, v) => {
+  if (!LS.set(k, v)) {
+    saveFailed();
+    return false;
+  }
+  unbanner('savefail');
+  return true;
+};
 // two tabs of the same origin share the storage but not their memory: merge with what is stored, field by field, before writing
-let quarantined = new Set(), pendingSort = null; const saveSent = () => { if (IDLE || !RUNNING) return false; const stored = loadJSON(sentKey(), []).filter((x) => !quarantined.has(x.txid)); const failing = stored.filter((x) => W.validRecord && !W.validRecord(x)); if (failing.length) { const qk = 'reef:quarantine:' + scriptTag(); const q = loadJSON(qk, []); LS.set(qk, JSON.stringify([...q, ...failing.filter((x) => !q.some((y) => y.txid === x.txid)).map((x) => ({ ...x, quarantinedAt: Date.now() }))].slice(-500))); for (const x of failing) quarantined.add(x.txid); }
-  sent = S.trimSent(S.mergeSent(sent, stored.filter((x) => !failing.includes(x))), 300, 1000); return store(sentKey(), JSON.stringify(S.forStorage(sent))); };
-const saveSeen = () => { if (IDLE) return; for (const [k, v] of loadJSON(seenKey(), [])) if (!seen.has(k)) seen.set(k, v); const need = new Set([...W.coins.map((c) => c.key), ...sent.filter((s) => s.pending).flatMap((s) => s.inputs ?? [])]); const all = [...seen]; const keep = all.filter(([k]) => need.has(k)).concat(all.filter(([k]) => !need.has(k)).slice(-3000)); store(seenKey(), JSON.stringify(keep)); };
-const saveLedger = () => { if (!IDLE) store(ledgerKey(), JSON.stringify([...ledger.values()].slice(-2000))); };
+let quarantined = new Set(),
+  pendingSort = null;
+const saveSent = () => {
+  if (IDLE || !RUNNING) return false;
+  const stored = loadJSON(sentKey(), []).filter((x) => !quarantined.has(x.txid));
+  const failing = stored.filter((x) => W.validRecord && !W.validRecord(x));
+  if (failing.length) {
+    const qk = 'reef:quarantine:' + scriptTag();
+    const q = loadJSON(qk, []);
+    LS.set(
+      qk,
+      JSON.stringify(
+        [...q, ...failing.filter((x) => !q.some((y) => y.txid === x.txid)).map((x) => ({ ...x, quarantinedAt: Date.now() }))].slice(-500),
+      ),
+    );
+    for (const x of failing) quarantined.add(x.txid);
+  }
+  sent = S.trimSent(
+    S.mergeSent(
+      sent,
+      stored.filter((x) => !failing.includes(x)),
+    ),
+    300,
+    1000,
+  );
+  return store(sentKey(), JSON.stringify(S.forStorage(sent)));
+};
+const saveSeen = () => {
+  if (IDLE) return;
+  for (const [k, v] of loadJSON(seenKey(), [])) if (!seen.has(k)) seen.set(k, v);
+  const need = new Set([...W.coins.map((c) => c.key), ...sent.filter((s) => s.pending).flatMap((s) => s.inputs ?? [])]);
+  const all = [...seen];
+  const keep = all.filter(([k]) => need.has(k)).concat(all.filter(([k]) => !need.has(k)).slice(-3000));
+  store(seenKey(), JSON.stringify(keep));
+};
+const saveLedger = () => {
+  if (!IDLE) store(ledgerKey(), JSON.stringify([...ledger.values()].slice(-2000)));
+};
 const unit = () => ({ key: OPT.unit, ...WL.UNITS[OPT.unit] });
 const money = (sats) => (OPT.mask ? '•••••' : WL.formatAmount(sats, OPT.unit));
 const amt = (sats) => `${money(sats)} ${unit().label}`;
 const exact = (sats) => `${WL.formatAmount(sats, OPT.unit)} ${unit().label}`; // what a person confirms is never masked
 const inMempool = (txid) => !!node.mempool?.txs.some((t) => t.txid === txid);
-function applyDisplay() { document.querySelectorAll('.unit').forEach((e) => { e.textContent = unit().label; }); $('m-mask-tick').textContent = OPT.mask ? '✓' : ''; $('m-mask').setAttribute('aria-checked', String(!!OPT.mask)); const rate = Math.max(1, Number(OPT.feeRate) || 1); $('feerate').textContent = `${rate} sat/vB (${(rate * 1000 / 1e8).toFixed(8)} tBTC/kvB)`; if (W) renderWallet(); }
+function applyDisplay() {
+  document.querySelectorAll('.unit').forEach((e) => {
+    e.textContent = unit().label;
+  });
+  $('m-mask-tick').textContent = OPT.mask ? '✓' : '';
+  $('m-mask').setAttribute('aria-checked', String(!!OPT.mask));
+  const rate = Math.max(1, Number(OPT.feeRate) || 1);
+  $('feerate').textContent = `${rate} sat/vB (${((rate * 1000) / 1e8).toFixed(8)} tBTC/kvB)`;
+  if (W) renderWallet();
+}
 async function walletInit() {
-  const [{ makeSigner }, txsign, addr, relay, secp, hash, { createKernel }, { knotsBlake2b }] = await Promise.all([import(`${LIB}/schnorr.mjs`), import(`${LIB}/txsign.mjs`), import(`${LIB}/address.mjs`), import(`${LIB}/relay.mjs`), import(`${CDN}/codec/secp256k1.js`), import(`${CDN}/codec/hash.js`), import(`${CDN}/codec/kernel.js`), import(`${CDN}/codec/overlays/knots-blake2b.js`)]);
-  const j = async (p) => { const r = await fetch(`${CDN}/${p}`); if (!r.ok) throw new Error(`the engine's ${p} could not be fetched (${r.status})`); return r.json(); };
-  const k = createKernel({ core: await j('schema/core.jsonld'), proof: await j('schema/proof.jsonld'), script: await j('schema/script.jsonld'), chain: await j('schema/chain.jsonld'), validate: await j('schema/validate.jsonld'), network: 'btc:testnet4-blake2b', overlays: [knotsBlake2b(await j('schema/overlays/knots-blake2b.jsonld'))] });
-  const signer = makeSigner({ hash, secp }); const valid = (x) => { try { return /^[0-9a-f]{64}$/.test(x ?? '') && /^[0-9a-f]{64}$/.test(signer.pubkeyOf(x)); } catch { return false; } };
+  const [{ makeSigner }, txsign, addr, relay, secp, hash, { createKernel }, { knotsBlake2b }] = await Promise.all([
+    import(`${LIB}/schnorr.mjs`),
+    import(`${LIB}/txsign.mjs`),
+    import(`${LIB}/address.mjs`),
+    import(`${LIB}/relay.mjs`),
+    import(`${CDN}/codec/secp256k1.js`),
+    import(`${CDN}/codec/hash.js`),
+    import(`${CDN}/codec/kernel.js`),
+    import(`${CDN}/codec/overlays/knots-blake2b.js`),
+  ]);
+  const j = async (p) => {
+    const r = await fetch(`${CDN}/${p}`);
+    if (!r.ok) throw new Error(`the engine's ${p} could not be fetched (${r.status})`);
+    return r.json();
+  };
+  const k = createKernel({
+    core: await j('schema/core.jsonld'),
+    proof: await j('schema/proof.jsonld'),
+    script: await j('schema/script.jsonld'),
+    chain: await j('schema/chain.jsonld'),
+    validate: await j('schema/validate.jsonld'),
+    network: 'btc:testnet4-blake2b',
+    overlays: [knotsBlake2b(await j('schema/overlays/knots-blake2b.jsonld'))],
+  });
+  const signer = makeSigner({ hash, secp });
+  const valid = (x) => {
+    try {
+      return /^[0-9a-f]{64}$/.test(x ?? '') && /^[0-9a-f]{64}$/.test(signer.pubkeyOf(x));
+    } catch {
+      return false;
+    }
+  };
   // the key: made once, under a lock, so two first-visit tabs cannot each make one and lose the other's
   let key = LS.get('reef:key');
-  if (!valid(key)) { const make = () => { let k2 = LS.get('reef:key'); if (valid(k2)) return k2; if (k2) { const old = loadJSON('reef:oldkeys', []); old.push({ key: k2, bad: true, at: Date.now() }); LS.set('reef:oldkeys', JSON.stringify(old)); setTimeout(() => banner('badkey', 'bad', 'The key stored in this browser could not be read, so Reef made a new one. The unreadable value is kept in reef:oldkeys in this site\'s storage; restore your wallet from your backup (Options → Wallet → Use another key).'), 0); } k2 = signer.randomKey(); if (!LS.set('reef:key', k2)) banner('nokey', 'bad', 'This browser did not keep the wallet key (a private window, or storage blocked). Anything sent to this address would be lost on reload. Use a normal window.'); else LS.set('reef:keynew', String(Date.now())); return k2; };
-    key = navigator.locks ? await navigator.locks.request('reef:key', make) : make(); }
-  const pub = signer.pubkeyOf(key), script = '5120' + pub, address = addr.scriptToAddress(script, 'tb');
-  W = { k, hash, secp, signer, txsign, addr, relay, events: relay.makeEvents({ signer, hash }), key, pub, script, address, coins: [], height: null, coinsKnown: false, unified: k?.params?.unifiedSighashParam != null };
-  seen = new Map(loadJSON(seenKey(), [])); ledger = new Map(loadJSON(ledgerKey(), []).map((r) => [r.txid, r]));
+  if (!valid(key)) {
+    const make = () => {
+      let k2 = LS.get('reef:key');
+      if (valid(k2)) return k2;
+      if (k2) {
+        const old = loadJSON('reef:oldkeys', []);
+        old.push({ key: k2, bad: true, at: Date.now() });
+        LS.set('reef:oldkeys', JSON.stringify(old));
+        setTimeout(
+          () =>
+            banner(
+              'badkey',
+              'bad',
+              "The key stored in this browser could not be read, so Reef made a new one. The unreadable value is kept in reef:oldkeys in this site's storage; restore your wallet from your backup (Options → Wallet → Use another key).",
+            ),
+          0,
+        );
+      }
+      k2 = signer.randomKey();
+      if (!LS.set('reef:key', k2))
+        banner(
+          'nokey',
+          'bad',
+          'This browser did not keep the wallet key (a private window, or storage blocked). Anything sent to this address would be lost on reload. Use a normal window.',
+        );
+      else LS.set('reef:keynew', String(Date.now()));
+      return k2;
+    };
+    key = navigator.locks ? await navigator.locks.request('reef:key', make) : make();
+  }
+  const pub = signer.pubkeyOf(key),
+    script = '5120' + pub,
+    address = addr.scriptToAddress(script, 'tb');
+  W = {
+    k,
+    hash,
+    secp,
+    signer,
+    txsign,
+    addr,
+    relay,
+    events: relay.makeEvents({ signer, hash }),
+    key,
+    pub,
+    script,
+    address,
+    coins: [],
+    height: null,
+    coinsKnown: false,
+    unified: k?.params?.unifiedSighashParam != null,
+  };
+  seen = new Map(loadJSON(seenKey(), []));
+  ledger = new Map(loadJSON(ledgerKey(), []).map((r) => [r.txid, r]));
   // earlier versions kept one list for every key: take over the sends that spent this key's coins
-  const migrated = LS.get(sentKey()) != null; sent = migrated ? loadJSON(sentKey(), []) : loadJSON('reef:sent', []).filter((s) => (s.inputs ?? []).some((x) => seen.has(x))).map((s) => { const { asked: _a, ...r } = s; return r; });
-  const check = (hex) => { const t = k.codec.decode('Transaction', hex); return { txid: k.codec.txid(t), inputs: t.inputs.map((i) => `${i.prevout.txid}:${i.prevout.vout}`), outputs: t.outputs.map((o) => ({ value: o.value, scriptPubKey: o.scriptPubKey })) }; }; const scriptOf = (a) => addr.decodeAddress(a)?.script ?? null;
+  const migrated = LS.get(sentKey()) != null;
+  sent = migrated
+    ? loadJSON(sentKey(), [])
+    : loadJSON('reef:sent', [])
+        .filter((s) => (s.inputs ?? []).some((x) => seen.has(x)))
+        .map((s) => {
+          const { asked: _a, ...r } = s;
+          return r;
+        });
+  const check = (hex) => {
+    const t = k.codec.decode('Transaction', hex);
+    return {
+      txid: k.codec.txid(t),
+      inputs: t.inputs.map((i) => `${i.prevout.txid}:${i.prevout.vout}`),
+      outputs: t.outputs.map((o) => ({ value: o.value, scriptPubKey: o.scriptPubKey })),
+    };
+  };
+  const scriptOf = (a) => addr.decodeAddress(a)?.script ?? null;
   // stored records sorted into kept and set aside, and both written back at once, so a save cannot bring a set-aside one back
-  { const qk = 'reef:quarantine:' + scriptTag(); const q0 = loadJSON(qk, []); const r = S.sortStored({ sent, quarantine: q0, ok: (x) => S.validRecord(x, { check, scriptOf, ownScript: script }), seenHas: (k2) => seen.has(k2) }); const fresh = r.quarantine.filter((x) => !q0.some((y) => y.txid === x.txid));
-    sent = r.keep; quarantined = new Set(r.quarantine.map((x) => x.txid));
+  {
+    const qk = 'reef:quarantine:' + scriptTag();
+    const q0 = loadJSON(qk, []);
+    const r = S.sortStored({
+      sent,
+      quarantine: q0,
+      ok: (x) => S.validRecord(x, { check, scriptOf, ownScript: script }),
+      seenHas: (k2) => seen.has(k2),
+    });
+    const fresh = r.quarantine.filter((x) => !q0.some((y) => y.txid === x.txid));
+    sent = r.keep;
+    quarantined = new Set(r.quarantine.map((x) => x.txid));
     // written only by the tab that runs the node, once it knows it does: the records first, then the quarantine without the ones restored
-    pendingSort = () => { if (store(sentKey(), JSON.stringify(S.forStorage(S.mergeSent(sent, loadJSON(sentKey(), []).filter((x) => !quarantined.has(x.txid))))))) LS.set(qk, JSON.stringify(r.quarantine.slice(-500))); };
-    const held = r.quarantine.filter((x) => x.pending && !x.released); if (held.length) setTimeout(() => banner('quarantine', 'warn', `${held.length} stored payment record(s) did not match their own transaction and were set aside (kept under ${qk}); the coins they spend are held so nothing is paid twice.`, [['Release their coins…', async () => { if (await ask('Release held coins', ['These records did not match their own transactions, so Reef cannot tell whether they were ever sent. If one was, and is mined later, its coins are spent; releasing them lets a new payment use them, and only one of the two can then go through.'], 'Release', true, 'Keep them held')) { const q = loadJSON(qk, []).map((x) => ({ ...x, released: true })); LS.set(qk, JSON.stringify(q)); unbanner('quarantine'); renderWallet(); } }]]), 0); }
-  const schema = Number(LS.get('reef:schema') ?? 0); if (schema > SCHEMA) { setTimeout(() => { goIdle(); banner('schema', 'bad', 'This browser\'s wallet records were written by a newer Reef. This older copy stays read-only so it cannot damage them: reload to get the newer version.', [['Reload', () => location.reload()]]); }, 0); } else LS.set('reef:schema', String(SCHEMA));
+    pendingSort = () => {
+      if (
+        store(
+          sentKey(),
+          JSON.stringify(
+            S.forStorage(
+              S.mergeSent(
+                sent,
+                loadJSON(sentKey(), []).filter((x) => !quarantined.has(x.txid)),
+              ),
+            ),
+          ),
+        )
+      )
+        LS.set(qk, JSON.stringify(r.quarantine.slice(-500)));
+    };
+    const held = r.quarantine.filter((x) => x.pending && !x.released);
+    if (held.length)
+      setTimeout(
+        () =>
+          banner(
+            'quarantine',
+            'warn',
+            `${held.length} stored payment record(s) did not match their own transaction and were set aside (kept under ${qk}); the coins they spend are held so nothing is paid twice.`,
+            [
+              [
+                'Release their coins…',
+                async () => {
+                  if (
+                    await ask(
+                      'Release held coins',
+                      [
+                        'These records did not match their own transactions, so Reef cannot tell whether they were ever sent. If one was, and is mined later, its coins are spent; releasing them lets a new payment use them, and only one of the two can then go through.',
+                      ],
+                      'Release',
+                      true,
+                      'Keep them held',
+                    )
+                  ) {
+                    const q = loadJSON(qk, []).map((x) => ({ ...x, released: true }));
+                    LS.set(qk, JSON.stringify(q));
+                    unbanner('quarantine');
+                    renderWallet();
+                  }
+                },
+              ],
+            ],
+          ),
+        0,
+      );
+  }
+  const schema = Number(LS.get('reef:schema') ?? 0);
+  if (schema > SCHEMA) {
+    setTimeout(() => {
+      goIdle();
+      banner(
+        'schema',
+        'bad',
+        "This browser's wallet records were written by a newer Reef. This older copy stays read-only so it cannot damage them: reload to get the newer version.",
+        [['Reload', () => location.reload()]],
+      );
+    }, 0);
+  } else LS.set('reef:schema', String(SCHEMA));
   W.validRecord = (x) => S.validRecord(x, { check, scriptOf, ownScript: script });
-  $('rcvaddr').value = address; try { const qr = qrcode(0, 'M'); qr.addData('bitcoin:' + address); qr.make(); $('rcvqr').innerHTML = qr.createSvgTag({ cellSize: 4, margin: 0, alt: 'QR code of ' + address, title: 'QR code of this wallet\'s address' }); } catch {}
-  $('rcvcopy').onclick = async () => { try { await navigator.clipboard.writeText(address); $('rcvcopy').textContent = 'Copied'; setTimeout(() => { $('rcvcopy').textContent = 'Copy'; }, 1500); } catch { $('rcvaddr').select(); } };
-  navigator.storage?.persisted?.().then((p) => { $('rcvpersist').textContent = p ? '' : 'This browser keeps the key only as long as it keeps this site\'s data (a private window forgets it on close): back it up before you receive.'; }).catch(() => {});
-  $('sendall').onclick = () => { const on = $('sendall').getAttribute('aria-pressed') !== 'true'; $('sendall').setAttribute('aria-pressed', String(on)); $('sendamt').disabled = on; if (on) $('sendamt').value = ''; updatePreview(); };
-  $('sendclear').onclick = () => { $('sendto').value = ''; $('sendamt').value = ''; $('sendamt').disabled = false; $('sendall').setAttribute('aria-pressed', 'false'); $('sendout').textContent = ''; updatePreview(); };
+  $('rcvaddr').value = address;
+  try {
+    const qr = qrcode(0, 'M');
+    qr.addData('bitcoin:' + address);
+    qr.make();
+    $('rcvqr').innerHTML = qr.createSvgTag({
+      cellSize: 4,
+      margin: 0,
+      alt: 'QR code of ' + address,
+      title: "QR code of this wallet's address",
+    });
+  } catch {}
+  $('rcvcopy').onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(address);
+      $('rcvcopy').textContent = 'Copied';
+      setTimeout(() => {
+        $('rcvcopy').textContent = 'Copy';
+      }, 1500);
+    } catch {
+      $('rcvaddr').select();
+    }
+  };
+  navigator.storage
+    ?.persisted?.()
+    .then((p) => {
+      $('rcvpersist').textContent = p
+        ? ''
+        : "This browser keeps the key only as long as it keeps this site's data (a private window forgets it on close): back it up before you receive.";
+    })
+    .catch(() => {});
+  $('sendall').onclick = () => {
+    const on = $('sendall').getAttribute('aria-pressed') !== 'true';
+    $('sendall').setAttribute('aria-pressed', String(on));
+    $('sendamt').disabled = on;
+    if (on) $('sendamt').value = '';
+    updatePreview();
+  };
+  $('sendclear').onclick = () => {
+    $('sendto').value = '';
+    $('sendamt').value = '';
+    $('sendamt').disabled = false;
+    $('sendall').setAttribute('aria-pressed', 'false');
+    $('sendout').textContent = '';
+    updatePreview();
+  };
   $('sendgo').onclick = () => sendFlow().catch((e) => sendError(e.message));
-  $('sendpaste').onclick = async () => { try { $('sendto').value = (await navigator.clipboard.readText()).trim(); updatePreview(); } catch { sendError('the browser did not allow reading the clipboard: paste with Ctrl+V'); } };
-  let pv; for (const id of ['sendto', 'sendamt']) $(id).addEventListener('input', () => { $('sendpreview').setAttribute('aria-live', 'off'); updatePreview(); clearTimeout(pv); pv = setTimeout(() => { $('sendpreview').setAttribute('aria-live', 'polite'); const t = $('sendpreview').textContent; $('sendpreview').textContent = ''; $('sendpreview').textContent = t; }, 800); });
+  $('sendpaste').onclick = async () => {
+    try {
+      $('sendto').value = (await navigator.clipboard.readText()).trim();
+      updatePreview();
+    } catch {
+      sendError('the browser did not allow reading the clipboard: paste with Ctrl+V');
+    }
+  };
+  let pv;
+  for (const id of ['sendto', 'sendamt'])
+    $(id).addEventListener('input', () => {
+      $('sendpreview').setAttribute('aria-live', 'off');
+      updatePreview();
+      clearTimeout(pv);
+      pv = setTimeout(() => {
+        $('sendpreview').setAttribute('aria-live', 'polite');
+        const t = $('sendpreview').textContent;
+        $('sendpreview').textContent = '';
+        $('sendpreview').textContent = t;
+      }, 800);
+    });
   // a change of unit converts the amount typed, so the digits never silently mean a thousand times more
-  let lastUnit = OPT.unit; $('sendunit').value = OPT.unit; $('sendunit').addEventListener('change', () => { const v = $('sendamt').value.trim(); if (v) { try { $('sendamt').value = WL.formatAmount(WL.parseAmount(v, lastUnit), $('sendunit').value, { grouping: false }).replace(/\.?0+$/, (m) => (m.startsWith('.') ? '' : m)); } catch {} } lastUnit = $('sendunit').value; updatePreview(); });
-  $('feechoose').onclick = () => openOptions('wallet'); applyDisplay();
-  renderWallet(); if (LS.get('reef:keynew') && !ledger.size) setTimeout(() => backupNudge(), 1500); else backupNudge(); if (node.synced) askCoins();
+  let lastUnit = OPT.unit;
+  $('sendunit').value = OPT.unit;
+  $('sendunit').addEventListener('change', () => {
+    const v = $('sendamt').value.trim();
+    if (v) {
+      try {
+        $('sendamt').value = WL.formatAmount(WL.parseAmount(v, lastUnit), $('sendunit').value, { grouping: false }).replace(
+          /\.?0+$/,
+          (m) => (m.startsWith('.') ? '' : m),
+        );
+      } catch {}
+    }
+    lastUnit = $('sendunit').value;
+    updatePreview();
+  });
+  $('feechoose').onclick = () => openOptions('wallet');
+  applyDisplay();
+  renderWallet();
+  if (LS.get('reef:keynew') && !ledger.size) setTimeout(() => backupNudge(), 1500);
+  else backupNudge();
+  if (node.synced) askCoins();
 }
-function askCoins() { if (W && !IDLE) post({ type: 'coins', script: W.script }); }
-const incomingTxs = () => { if (!W || !node.mempool) return []; return node.mempool.txs.map((t) => ({ txid: t.txid, ...ourTx(t) })).filter((x) => x.toUs && !x.spendsOurs && !sent.some((s) => s.txid === x.txid)); };
-function ourTx(t) { const mine = (k) => seen.has(k) || W.coins.some((c) => c.key === k); return { spendsOurs: t.inputs.some(mine), toUs: t.outputs.reduce((a, o) => a + (o.scriptPubKey === W.script ? o.value : 0), 0) }; }
-const hitchHeld = () => { try { return new Set(JSON.parse(LS.get('hitch:held:' + scriptTag()) ?? '[]')); } catch { return new Set(); } };
-const quarantineHeld = () => new Set(loadJSON('reef:quarantine:' + scriptTag(), []).filter((q) => q.pending && !q.released && !q.abandoned && !q.refused && !q.refusedNote).flatMap((q) => q.inputs ?? []));
-const wallBal = () => WL.balances({ coins: W.coins, sent, height: W.height, reserved: new Set([...hitchHeld(), ...quarantineHeld()]), incoming: incomingTxs().reduce((a, x) => a + x.toUs, 0) });
-function carryOut(effects) { for (const e of effects) { if (e.notice) notify(e.notice, e.body.replace(/(\d+) sat\b/g, (_, v) => amt(Number(v))), !!e.bad); if (e.ask) post({ type: 'spend', key: e.input, from: e.from, req: 'sent:' + e.ask }); } }
-function onCoins(m) { if (!W || m.script !== W.script) return; const first = !W.coinsKnown; W.coins = m.coins; W.height = m.height; W.coinsKnown = true;
+function askCoins() {
+  if (W && !IDLE) post({ type: 'coins', script: W.script });
+}
+const incomingTxs = () => {
+  if (!W || !node.mempool) return [];
+  return node.mempool.txs
+    .map((t) => ({ txid: t.txid, ...ourTx(t) }))
+    .filter((x) => x.toUs && !x.spendsOurs && !sent.some((s) => s.txid === x.txid));
+};
+function ourTx(t) {
+  const mine = (k) => seen.has(k) || W.coins.some((c) => c.key === k);
+  return { spendsOurs: t.inputs.some(mine), toUs: t.outputs.reduce((a, o) => a + (o.scriptPubKey === W.script ? o.value : 0), 0) };
+}
+const hitchHeld = () => {
+  try {
+    return new Set(JSON.parse(LS.get('hitch:held:' + scriptTag()) ?? '[]'));
+  } catch {
+    return new Set();
+  }
+};
+const quarantineHeld = () =>
+  new Set(
+    loadJSON('reef:quarantine:' + scriptTag(), [])
+      .filter((q) => q.pending && !q.released && !q.abandoned && !q.refused && !q.refusedNote)
+      .flatMap((q) => q.inputs ?? []),
+  );
+const wallBal = () =>
+  WL.balances({
+    coins: W.coins,
+    sent,
+    height: W.height,
+    reserved: new Set([...hitchHeld(), ...quarantineHeld()]),
+    incoming: incomingTxs().reduce((a, x) => a + x.toUs, 0),
+  });
+function carryOut(effects) {
+  for (const e of effects) {
+    if (e.notice)
+      notify(
+        e.notice,
+        e.body.replace(/(\d+) sat\b/g, (_, v) => amt(Number(v))),
+        !!e.bad,
+      );
+    if (e.ask) post({ type: 'spend', key: e.input, from: e.from, req: 'sent:' + e.ask });
+  }
+}
+function onCoins(m) {
+  if (!W || m.script !== W.script) return;
+  const first = !W.coinsKnown;
+  W.coins = m.coins;
+  W.height = m.height;
+  W.coinsKnown = true;
   for (const c of W.coins) if (!seen.has(c.key)) seen.set(c.key, c.value);
   // a coin whose transaction spent coins of ours, with no send recorded here (the record was lost, or the send was made elsewhere with this key): our change, recovered from the chain
-  for (const c of W.coins) if (!c.coinbase && !sent.some((s) => c.key.startsWith(s.txid)) && c.inputs?.some((k) => seen.has(k))) { const known = c.inputs.filter((k) => seen.has(k)); const inSum = known.reduce((a, k) => a + seen.get(k), 0); const partial = known.length < c.inputs.length;
-    const viaHitch = c.inputs.some((k2) => hitchHeld().has(k2)); sent.push({ txid: c.key.slice(0, 64), to: viaHitch ? '(a channel funding by Hitch)' : '(recovered from the chain)', sats: Math.max(0, inSum - c.value), fee: 0, partial, at: Date.now(), pending: false, height: c.height, inputs: c.inputs, tip: c.height, recovered: true });
-    if (!first) notify(viaHitch ? 'Channel funding confirmed' : 'Payment confirmed', `${partial ? 'at least ' : ''}${amt(inSum - c.value)} spent, in block ${n(c.height)} (${viaHitch ? 'by Hitch, with this key' : 'recovered from the chain'})`); }
+  for (const c of W.coins)
+    if (!c.coinbase && !sent.some((s) => c.key.startsWith(s.txid)) && c.inputs?.some((k) => seen.has(k))) {
+      const known = c.inputs.filter((k) => seen.has(k));
+      const inSum = known.reduce((a, k) => a + seen.get(k), 0);
+      const partial = known.length < c.inputs.length;
+      const viaHitch = c.inputs.some((k2) => hitchHeld().has(k2));
+      sent.push({
+        txid: c.key.slice(0, 64),
+        to: viaHitch ? '(a channel funding by Hitch)' : '(recovered from the chain)',
+        sats: Math.max(0, inSum - c.value),
+        fee: 0,
+        partial,
+        at: Date.now(),
+        pending: false,
+        height: c.height,
+        inputs: c.inputs,
+        tip: c.height,
+        recovered: true,
+      });
+      if (!first)
+        notify(
+          viaHitch ? 'Channel funding confirmed' : 'Payment confirmed',
+          `${partial ? 'at least ' : ''}${amt(inSum - c.value)} spent, in block ${n(c.height)} (${viaHitch ? 'by Hitch, with this key' : 'recovered from the chain'})`,
+        );
+    }
   const added = WL.recordReceipts(ledger, W.coins, (t) => sent.some((s) => s.txid === t));
-  if (!first) { const mined = added.filter((r) => r.coinbase), got = added.filter((r) => !r.coinbase); for (const r of got) notify('Payment received', `${amt(WL.receiptSats(r))} in block ${n(r.height)}`); if (mined.length) notify('Mined coins', `${amt(mined.reduce((a, r) => a + WL.receiptSats(r), 0))} in ${mined.length} block${mined.length === 1 ? '' : 's'}; spendable after 100 confirmations`); }
-  const fx = S.onCoins({ sent, coins: W.coins, asked, height: W.height }); if (first) { carryOut(fx.filter((e) => !e.notice)); const news = fx.filter((e) => e.notice && e.bad); if (news.length) banner('whileclosed', 'bad', 'While Reef was closed: ' + news.map((e) => `${e.notice.toLowerCase()}: ${e.body.replace(/(\d+) sat\b/g, (_, v) => amt(Number(v)))}`).join(' — ')); } else carryOut(fx);
-  if (!IDLE) for (const r of S.recheckDue(sent, W.height)) { r.checkedAt = W.height; post({ type: 'spend', key: r.inputs[0], from: Math.max(150308, r.height - S.RECHECK_DEPTH), req: 'recheck:' + r.txid }); }
-  saveSeen(); saveLedger(); saveSent(); post({ type: 'watch', scripts: [W.script], outpoints: [...W.coins.map((c) => c.key), ...sent.filter((s) => s.pending).flatMap((s) => s.inputs ?? [])] });
-  if (W.coins.length || ledger.size) LS.del('reef:keynew'); if ((W.coins.length || ledger.size) && !backedUp()) backupNudge(true); if (first && W.coins.length) navigator.storage?.persist?.().catch(() => {});
-  renderWallet(); }
-function onSpendAnswer(m) { const txid = m.req.slice(5); asked.delete(txid); carryOut(S.onSpendAnswer(sent, txid, m)); saveSent(); renderWallet(); }
-function onRefusedTx(m) { if (!W || IDLE) return; const fx = S.onRefused(sent, m.txid, m.error, m.hex); if (fx.length) { carryOut(fx); saveSent(); renderWallet(); } }
-function walletMempool() { if (!W || !node.mempool) return; const first = !W.mpReady; W.mpReady = true; const hh = hitchHeld(); let added = false;
-  for (const t of node.mempool.txs) { const { spendsOurs, toUs } = ourTx(t); if (sent.some((x) => x.txid === t.txid)) continue;
-    if (spendsOurs && !IDLE) { const known = t.inputs.filter((k) => seen.has(k)); const inSum = known.reduce((a, k) => a + seen.get(k), 0); sent.push({ txid: t.txid, to: t.inputs.some((k2) => hh.has(k2)) ? '(a channel funding by Hitch)' : '(seen in the mempool)', sats: Math.max(0, inSum - toUs), fee: 0, change: toUs, partial: known.length < t.inputs.length, at: Date.now(), pending: true, height: null, inputs: t.inputs, tip: node.height, recovered: true }); added = true; continue; }
-    if (toUs && !mpSeen.has(t.txid)) { mpSeen.add(t.txid); if (mpSeen.size > 500) mpSeen.delete(mpSeen.values().next().value); if (!first) notify('Payment on its way', `${amt(toUs)} to you, unconfirmed`); } }
-  if (added) saveSent(); renderWallet(); }
+  if (!first) {
+    const mined = added.filter((r) => r.coinbase),
+      got = added.filter((r) => !r.coinbase);
+    for (const r of got) notify('Payment received', `${amt(WL.receiptSats(r))} in block ${n(r.height)}`);
+    if (mined.length)
+      notify(
+        'Mined coins',
+        `${amt(mined.reduce((a, r) => a + WL.receiptSats(r), 0))} in ${mined.length} block${mined.length === 1 ? '' : 's'}; spendable after 100 confirmations`,
+      );
+  }
+  const fx = S.onCoins({ sent, coins: W.coins, asked, height: W.height });
+  if (first) {
+    carryOut(fx.filter((e) => !e.notice));
+    const news = fx.filter((e) => e.notice && e.bad);
+    if (news.length)
+      banner(
+        'whileclosed',
+        'bad',
+        'While Reef was closed: ' +
+          news.map((e) => `${e.notice.toLowerCase()}: ${e.body.replace(/(\d+) sat\b/g, (_, v) => amt(Number(v)))}`).join(' — '),
+      );
+  } else carryOut(fx);
+  if (!IDLE)
+    for (const r of S.recheckDue(sent, W.height)) {
+      r.checkedAt = W.height;
+      post({ type: 'spend', key: r.inputs[0], from: Math.max(150308, r.height - S.RECHECK_DEPTH), req: 'recheck:' + r.txid });
+    }
+  saveSeen();
+  saveLedger();
+  saveSent();
+  post({
+    type: 'watch',
+    scripts: [W.script],
+    outpoints: [...W.coins.map((c) => c.key), ...sent.filter((s) => s.pending).flatMap((s) => s.inputs ?? [])],
+  });
+  if (W.coins.length || ledger.size) LS.del('reef:keynew');
+  if ((W.coins.length || ledger.size) && !backedUp()) backupNudge(true);
+  if (first && W.coins.length) navigator.storage?.persist?.().catch(() => {});
+  renderWallet();
+}
+function onSpendAnswer(m) {
+  const txid = m.req.slice(5);
+  asked.delete(txid);
+  carryOut(S.onSpendAnswer(sent, txid, m));
+  saveSent();
+  renderWallet();
+}
+function onRefusedTx(m) {
+  if (!W || IDLE) return;
+  const fx = S.onRefused(sent, m.txid, m.error, m.hex);
+  if (fx.length) {
+    carryOut(fx);
+    saveSent();
+    renderWallet();
+  }
+}
+function walletMempool() {
+  if (!W || !node.mempool) return;
+  const first = !W.mpReady;
+  W.mpReady = true;
+  const hh = hitchHeld();
+  let added = false;
+  for (const t of node.mempool.txs) {
+    const { spendsOurs, toUs } = ourTx(t);
+    if (sent.some((x) => x.txid === t.txid)) continue;
+    if (spendsOurs && !IDLE) {
+      const known = t.inputs.filter((k) => seen.has(k));
+      const inSum = known.reduce((a, k) => a + seen.get(k), 0);
+      sent.push({
+        txid: t.txid,
+        to: t.inputs.some((k2) => hh.has(k2)) ? '(a channel funding by Hitch)' : '(seen in the mempool)',
+        sats: Math.max(0, inSum - toUs),
+        fee: 0,
+        change: toUs,
+        partial: known.length < t.inputs.length,
+        at: Date.now(),
+        pending: true,
+        height: null,
+        inputs: t.inputs,
+        tip: node.height,
+        recovered: true,
+      });
+      added = true;
+      continue;
+    }
+    if (toUs && !mpSeen.has(t.txid)) {
+      mpSeen.add(t.txid);
+      if (mpSeen.size > 500) mpSeen.delete(mpSeen.values().next().value);
+      if (!first) notify('Payment on its way', `${amt(toUs)} to you, unconfirmed`);
+    }
+  }
+  if (added) saveSent();
+  renderWallet();
+}
 // the balance and the history; "…" until the node has answered, never a zero it does not know
 let lastAvail = null;
-function renderWallet() { if (!W) return; const fx = document.activeElement?.dataset?.tx ? { tx: document.activeElement.dataset.tx, act: document.activeElement.dataset.act } : null; renderWalletInner(); if (fx) document.querySelector(`#txrows button[data-tx="${fx.tx}"][data-act="${fx.act}"]`)?.focus(); }
-function renderWalletInner() { const known = W.coinsKnown;
-  if (!known) { for (const id of ['avail', 'pending', 'immature', 'total', 'sendbal']) $(id).textContent = IDLE ? (id === 'total' ? '— (other tab)' : '—') : '…'; $('ovtrust').textContent = IDLE ? IDLE_TEXT : node.notStarted ? 'the node is not started: the balance is known once it is up to date' : node.error ? 'the node stopped: see the notice above' : `balance known once the tab is up to date (${node.synced ? 'reading the coins' : ({ fetch: 'fetching the snapshot', hash: 'checking the snapshot', verify: 'verifying the snapshot', sync: 'validating the blocks since' }[node.phase] ?? 'starting') + ($('synceta').textContent ? ', ' + $('synceta').textContent : '')})`; }
-  else { const b = wallBal();  if (lastAvail != null && lastAvail !== b.available && !OPT.mask) $('announce').textContent = `Available: ${amt(b.available)}`; lastAvail = b.available; $('avail').textContent = amt(b.available); $('immature').textContent = amt(b.immature); $('pending').textContent = amt(b.pending); $('total').textContent = amt(b.total); $('sendbal').textContent = amt(b.available); $('outgoing').textContent = [b.outgoing ? `${amt(b.outgoing)} leaving in payments not yet confirmed` : '', b.elsewhere ? `${amt(b.elsewhere)} reserved elsewhere: ${hitchHeld().size ? 'a Hitch channel funding (to release it, close Reef, open Hitch and cancel the funding there)' : ''}${hitchHeld().size && quarantineHeld().size ? '; ' : ''}${quarantineHeld().size ? 'a set-aside record (see the notice above)' : ''}` : ''].filter(Boolean).join(' · '); renderStatus(); }
-  const rows = WL.history({ coins: W.coins, sent: sent.filter((s) => !s.hidden), mempoolIn: incomingTxs(), height: W.height, address: W.address, ledger });
-  const ctx = { inMempool, height: W.height, now: Date.now(), sent, idle: IDLE }; const recOf = (r) => (r.kind === 'out' ? sent.find((x) => x.txid === r.txid) : null);
-  const stateOf = (r) => { const s = recOf(r); if (s) return S.stateOf(s, ctx); return r.pending ? 'unconfirmed' : r.immature ? 'mined, spendable after 100 blocks' : r.conf != null ? `${n(r.conf)} confirmation${r.conf === 1 ? '' : 's'}${r.conf < S.RECHECK_DEPTH ? ' (a block can still be undone)' : ''}` : 'confirmed'; };
-  const icon = (r) => { const s = recOf(r); return s?.replaced || s?.failed ? '✕' : s?.abandoned ? '⊘' : r.pending ? '⏳' : r.label === 'Mined' ? '⛏' : r.kind === 'in' ? '⬇' : '⬆'; };
-  const shownSats = (r) => { const s = recOf(r); return s?.replaced || s?.failed || s?.abandoned ? -((s.self ? 0 : s.sats) + s.fee) : r.sats; }; const tag = (r) => { const s = recOf(r); return s?.failed ? ' (did not happen)' : s?.replaced ? (s.kind === 'cancel' ? ' (too late)' : ' (replaced)') : s?.abandoned ? ' (forgotten)' : ''; }; const struck = (r) => { const s = recOf(r); return !!(s?.replaced || s?.failed || s?.abandoned); };
-  if (!known && !rows.length) $('recent').innerHTML = '<div class="r"><span></span><span class="mut" style="grid-column:2/5">waiting for the node</span></div>';
-  else $('recent').setAttribute('role', 'list'); $('recent').innerHTML = rows.length ? rows.slice(0, 6).map((r) => `<div class="r" role="listitem"><span aria-hidden="true">${icon(r)}</span><span title="${esc(stateOf(r))}">${r.height && !struck(r) ? 'block ' + esc(n(r.height)) : struck(r) ? '' : esc(stateOf(r).split(':')[0])}</span><span class="addr">${txLink(r.txid, `${r.label}${r.kind === 'out' ? ' · ' + r.addr : ''}`)}${struck(r) ? `<span class="why">${esc(stateOf(r))}</span>` : ''}</span><span class="amt ${r.pending ? 'pend' : r.kind === 'in' ? 'in' : 'out'}${struck(r) ? ' struck' : ''}">${esc(amt(shownSats(r)))}</span></div>`).join('') : '<div class="r"><span></span><span class="mut" style="grid-column:2/5">no coins yet: <a href="#" data-go2="receive">your address is on the Receive page</a></span></div>';
-  $('recent').querySelectorAll('[data-go2]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); showPage(a.dataset.go2); }; });
-  const f = $('txtype').value, qy = $('txsearch').value.trim().toLowerCase(); const shown = rows.filter((r) => (f === 'all' || (f === 'in' && r.kind === 'in' && r.label !== 'Mined') || (f === 'out' && r.kind === 'out') || (f === 'mined' && r.label === 'Mined') || (f === 'pending' && r.pending && !recOf(r)?.abandoned)) && (!qy || r.txid.includes(qy) || String(r.addr).toLowerCase().includes(qy)));
-  $('txrows').innerHTML = shown.length ? shown.map((r) => { const s = recOf(r); const who = s ? `the payment of ${exact(s.sats)} to ${String(s.to).slice(0, 14)}…` : ''; const acts = !canAct() || !s ? '' : [
-      s.pending && s.hex && !s.replacedBy && !s.refused ? `${s.abandoned ? '' : `<button class="q sm" data-act="bump" data-tx="${esc(s.txid)}" aria-label="Raise the fee on ${esc(who)}">Raise the fee…</button><button class="q sm" data-act="again" data-tx="${esc(s.txid)}" aria-label="Publish ${esc(who)} again">Publish again</button>`}` : '',
-      s.pending && s.hex && s.values && !s.replacedBy && !s.refused && !(s.abandoned && S.conflictsOf(sent, s).some((x) => x.pending)) ? `<button class="q sm" data-act="cancel" data-tx="${esc(s.txid)}" aria-label="Cancel ${esc(who)}">Cancel…</button>` : '',
-      S.forgettable(sent, s, W.height, inMempool) ? `<button class="q sm" data-act="forget" data-tx="${esc(s.txid)}" aria-label="Forget ${esc(who)}">Forget…</button>` : '',
-      !s.pending && (s.replaced || s.failed || s.recovered) ? `<button class="q sm" data-act="hide" data-tx="${esc(s.txid)}" aria-label="Remove ${esc(who)} from the list">Remove</button>` : ''].join('');
-    return `<tr><td title="${esc(stateOf(r))}"><span aria-hidden="true">${icon(r)}</span><span class="state">${esc(stateOf(r))}</span></td><td>${r.height && !s?.replaced && !s?.failed ? esc(n(r.height)) : '—'}</td><td>${esc(r.label)}</td><td class="addr" style="max-width:360px">${txLink(r.txid, `${r.addr}${r.height ? ' · block ' + n(r.height) : ''}`)}</td><td class="amt ${r.kind === 'in' ? 'in' : 'out'}${struck(r) ? ' struck' : ''}">${esc(money(shownSats(r)))}<span class="cardunit"> ${esc(unit().label)}</span><span class="sr">${esc(tag(r))}</span></td><td class="acts">${acts}</td></tr>`; }).join('') : `<tr><td colspan="6" class="mut">${known ? (rows.length ? 'nothing matches' : 'no transactions since the snapshot') : 'waiting for the node'}</td></tr>`;
-  $('txrows').querySelectorAll('button[data-act]').forEach((b) => { b.onclick = () => { const s = sent.find((x) => x.txid === b.dataset.tx); if (!s || !canAct()) return; const a = b.dataset.act; (a === 'bump' ? replaceFlow(s, false) : a === 'cancel' ? replaceFlow(s, true) : a === 'again' ? publishAgain(s, true) : a === 'forget' ? forgetFlow(s) : Promise.resolve((s.hidden = true, s.vAt = S.stamp(sent), saveSent(), renderWallet()))).catch((e) => notify('Not done', e.message, true)); }; });
-  const onWay = incomingTxs(); $('rcvincoming').textContent = onWay.length ? `On its way to you: ${amt(onWay.reduce((a, x) => a + x.toUs, 0))} in ${onWay.length} unconfirmed payment${onWay.length === 1 ? '' : 's'}.` : '';
-  const bb = wallBal(), hh = hitchHeld(), qh = quarantineHeld(), rf = WL.reuseFirst(sent);
-  $('rcvrows').innerHTML = W.coins.length ? W.coins.slice().sort((a, b) => b.height - a.height).map((c) => `<tr><td>${esc(n(c.height))}</td><td class="mono">${txLink(c.key.slice(0, 64), c.key.slice(0, 20) + '…:' + c.key.slice(65))}</td><td>${W.height != null ? esc(n(W.height - c.height + 1)) : '…'}${c.coinbase && !WL.isMature(c, W.height) ? ' (mined, spendable after 100)' : ''}${sent.some((s) => c.key.startsWith(s.txid + ':')) ? ' (change)' : ''}${hh.has(c.key) ? ' (reserved by Hitch)' : qh.has(c.key) ? ' (held by a set-aside record)' : bb.held.has(c.key) ? ' (held by a waiting payment)' : rf.has(c.key) ? ' (a forgotten payment\'s: spent first)' : ''}</td><td class="amt">${esc(money(c.value))}</td></tr>`).join('') : `<tr><td colspan="4" class="mut">${known ? 'nothing received since the snapshot' : IDLE ? 'shown in the tab that runs the node' : 'waiting for the node'}</td></tr>`; }
+function renderWallet() {
+  if (!W) return;
+  const fx = document.activeElement?.dataset?.tx
+    ? { tx: document.activeElement.dataset.tx, act: document.activeElement.dataset.act }
+    : null;
+  renderWalletInner();
+  if (fx) document.querySelector(`#txrows button[data-tx="${fx.tx}"][data-act="${fx.act}"]`)?.focus();
+}
+function renderWalletInner() {
+  const known = W.coinsKnown;
+  if (!known) {
+    for (const id of ['avail', 'pending', 'immature', 'total', 'sendbal'])
+      $(id).textContent = IDLE ? (id === 'total' ? '— (other tab)' : '—') : '…';
+    $('ovtrust').textContent = IDLE
+      ? IDLE_TEXT
+      : node.notStarted
+        ? 'the node is not started: the balance is known once it is up to date'
+        : node.error
+          ? 'the node stopped: see the notice above'
+          : `balance known once the tab is up to date (${node.synced ? 'reading the coins' : ({ fetch: 'fetching the snapshot', hash: 'checking the snapshot', verify: 'verifying the snapshot', sync: 'validating the blocks since' }[node.phase] ?? 'starting') + ($('synceta').textContent ? ', ' + $('synceta').textContent : '')})`;
+  } else {
+    const b = wallBal();
+    if (lastAvail != null && lastAvail !== b.available && !OPT.mask) $('announce').textContent = `Available: ${amt(b.available)}`;
+    lastAvail = b.available;
+    $('avail').textContent = amt(b.available);
+    $('immature').textContent = amt(b.immature);
+    $('pending').textContent = amt(b.pending);
+    $('total').textContent = amt(b.total);
+    $('sendbal').textContent = amt(b.available);
+    $('outgoing').textContent = [
+      b.outgoing ? `${amt(b.outgoing)} leaving in payments not yet confirmed` : '',
+      b.elsewhere
+        ? `${amt(b.elsewhere)} reserved elsewhere: ${hitchHeld().size ? 'a Hitch channel funding (to release it, close Reef, open Hitch and cancel the funding there)' : ''}${hitchHeld().size && quarantineHeld().size ? '; ' : ''}${quarantineHeld().size ? 'a set-aside record (see the notice above)' : ''}`
+        : '',
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    renderStatus();
+  }
+  const rows = WL.history({
+    coins: W.coins,
+    sent: sent.filter((s) => !s.hidden),
+    mempoolIn: incomingTxs(),
+    height: W.height,
+    address: W.address,
+    ledger,
+  });
+  const vctx = { inMempool, height: W.height, now: Date.now(), sent, idle: IDLE, canAct: canAct() };
+  const views = new Map(rows.map((r) => [r, V.viewRow(r, vctx)]));
+  const recOf = (r) => (r.kind === 'out' ? sent.find((x) => x.txid === r.txid) : null);
+  if (!known && !rows.length)
+    $('recent').innerHTML = '<div class="r"><span></span><span class="mut" style="grid-column:2/5">waiting for the node</span></div>';
+  else $('recent').setAttribute('role', 'list');
+  $('recent').innerHTML = rows.length
+    ? rows
+        .slice(0, 6)
+        .map((r) => {
+          const v = views.get(r);
+          return `<div class="r" role="listitem"><span aria-hidden="true">${v.icon}</span><span title="${esc(v.state)}">${v.block ? 'block ' + esc(n(v.block)) : esc(v.short)}</span><span class="addr">${txLink(r.txid, `${r.label}${r.kind === 'out' ? ' · ' + r.addr : ''}`)}${v.struck ? `<span class="why">${esc(v.state)}</span>` : ''}</span><span class="amt ${r.pending ? 'pend' : r.kind === 'in' ? 'in' : 'out'}${v.struck ? ' struck' : ''}">${esc(amt(v.sats))}</span></div>`;
+        })
+        .join('')
+    : '<div class="r"><span></span><span class="mut" style="grid-column:2/5">no coins yet: <a href="#" data-go2="receive">your address is on the Receive page</a></span></div>';
+  $('recent')
+    .querySelectorAll('[data-go2]')
+    .forEach((a) => {
+      a.onclick = (e) => {
+        e.preventDefault();
+        showPage(a.dataset.go2);
+      };
+    });
+  const shown = V.filterRows(rows, { type: $('txtype').value, query: $('txsearch').value, sent });
+  $('txrows').innerHTML = shown.length
+    ? shown
+        .map((r) => {
+          const s = recOf(r);
+          const who = s ? `the payment of ${exact(s.sats)} to ${String(s.to).slice(0, 14)}…` : '';
+          const v = views.get(r);
+          const btn = {
+            bump: ['Raise the fee…', 'Raise the fee on'],
+            again: ['Publish again', 'Publish'],
+            cancel: ['Cancel…', 'Cancel'],
+            forget: ['Forget…', 'Forget'],
+            hide: ['Remove', 'Remove'],
+          };
+          const acts = v.actions
+            .map(
+              (k) =>
+                `<button class="q sm" data-act="${k}" data-tx="${esc(s.txid)}" aria-label="${esc(`${btn[k][1]} ${who}${k === 'again' ? ' again' : k === 'hide' ? ' from the list' : ''}`)}">${btn[k][0]}</button>`,
+            )
+            .join('');
+          return `<tr><td title="${esc(v.state)}"><span aria-hidden="true">${v.icon}</span><span class="state">${esc(v.state)}</span></td><td>${v.block ? esc(n(v.block)) : '—'}</td><td>${esc(r.label)}</td><td class="addr" style="max-width:360px">${txLink(r.txid, `${r.addr}${r.height ? ' · block ' + n(r.height) : ''}`)}</td><td class="amt ${r.kind === 'in' ? 'in' : 'out'}${v.struck ? ' struck' : ''}">${esc(money(v.sats))}<span class="cardunit"> ${esc(unit().label)}</span><span class="sr">${v.tag ? esc(` (${v.tag})`) : ''}</span></td><td class="acts">${acts}</td></tr>`;
+        })
+        .join('')
+    : `<tr><td colspan="6" class="mut">${known ? (rows.length ? 'nothing matches' : 'no transactions since the snapshot') : 'waiting for the node'}</td></tr>`;
+  $('txrows')
+    .querySelectorAll('button[data-act]')
+    .forEach((b) => {
+      b.onclick = () => {
+        const s = sent.find((x) => x.txid === b.dataset.tx);
+        if (!s || !canAct()) return;
+        const a = b.dataset.act;
+        (a === 'bump'
+          ? replaceFlow(s, false)
+          : a === 'cancel'
+            ? replaceFlow(s, true)
+            : a === 'again'
+              ? publishAgain(s, true)
+              : a === 'forget'
+                ? forgetFlow(s)
+                : Promise.resolve(((s.hidden = true), (s.vAt = S.stamp(sent)), saveSent(), renderWallet()))
+        ).catch((e) => notify('Not done', e.message, true));
+      };
+    });
+  const onWay = incomingTxs();
+  $('rcvincoming').textContent = onWay.length
+    ? `On its way to you: ${amt(onWay.reduce((a, x) => a + x.toUs, 0))} in ${onWay.length} unconfirmed payment${onWay.length === 1 ? '' : 's'}.`
+    : '';
+  const bb = wallBal(),
+    hh = hitchHeld(),
+    qh = quarantineHeld(),
+    rf = WL.reuseFirst(sent);
+  $('rcvrows').innerHTML = W.coins.length
+    ? W.coins
+        .slice()
+        .sort((a, b) => b.height - a.height)
+        .map(
+          (c) =>
+            `<tr><td>${esc(n(c.height))}</td><td class="mono">${txLink(c.key.slice(0, 64), c.key.slice(0, 20) + '…:' + c.key.slice(65))}</td><td>${W.height != null ? esc(n(W.height - c.height + 1)) : '…'}${esc(V.coinNote(c, { height: W.height, sent, hitch: hh, quarantine: qh, held: bb.held, first: rf, mature: WL.isMature }))}</td><td class="amt">${esc(money(c.value))}</td></tr>`,
+        )
+        .join('')
+    : `<tr><td colspan="4" class="mut">${known ? 'nothing received since the snapshot' : IDLE ? 'shown in the tab that runs the node' : 'waiting for the node'}</td></tr>`;
+}
 for (const id of ['txtype', 'txsearch']) $(id).addEventListener('input', () => renderWallet());
-$('txexport').onclick = () => { if (!W) return; const rows = WL.history({ coins: W.coins, sent: sent.filter((s) => !s.hidden), mempoolIn: incomingTxs(), height: W.height, address: W.address, ledger }); const ctx = { inMempool, height: W.height, now: Date.now(), sent }; const csv = ['block,status,type,address,amount_sat,txid', ...rows.map((r) => { const s = r.kind === 'out' ? sent.find((x) => x.txid === r.txid) : null; return [r.height ?? '', s ? S.stateOf(s, ctx) : r.pending ? 'unconfirmed' : 'confirmed', r.label, r.addr, s?.replaced ? 0 : r.sats, r.txid].map((x) => `"${String(x).replace(/"/g, '""')}"`).join(','); })].join('\n'); const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); a.download = `reef-transactions-${new Date().toISOString().slice(0, 10)}.csv`; a.click(); };
+$('txexport').onclick = () => {
+  if (!W) return;
+  const rows = WL.history({
+    coins: W.coins,
+    sent: sent.filter((s) => !s.hidden),
+    mempoolIn: incomingTxs(),
+    height: W.height,
+    address: W.address,
+    ledger,
+  });
+  const ctx = { inMempool, height: W.height, now: Date.now(), sent };
+  const csv = [
+    'block,status,type,address,amount_sat,txid',
+    ...rows.map((r) => {
+      const s = r.kind === 'out' ? sent.find((x) => x.txid === r.txid) : null;
+      return [
+        r.height ?? '',
+        s ? S.stateOf(s, ctx) : r.pending ? 'unconfirmed' : 'confirmed',
+        r.label,
+        r.addr,
+        s?.replaced ? 0 : r.sats,
+        r.txid,
+      ]
+        .map((x) => `"${String(x).replace(/"/g, '""')}"`)
+        .join(',');
+    }),
+  ].join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = `reef-transactions-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+};
 
 // ---- sending: the plan shown as it is typed, a confirmation with every figure, then build, sign, check, publish
-function sendError(m) { const out = $('sendout'); out.className = 'tiny bad'; out.setAttribute('role', 'alert'); out.textContent = m; }
-function sendInfo(m, cls = '') { const out = $('sendout'); out.className = 'tiny ' + cls; out.setAttribute('role', 'status'); out.textContent = m; }
+function sendError(m) {
+  const out = $('sendout');
+  out.className = 'tiny bad';
+  out.setAttribute('role', 'alert');
+  out.textContent = m;
+}
+function sendInfo(m, cls = '') {
+  const out = $('sendout');
+  out.className = 'tiny ' + cls;
+  out.setAttribute('role', 'status');
+  out.textContent = m;
+}
 // a payment that spends a coin of a forgotten one says so: only one of the two can happen
-function reuseNote(p) { const first = WL.reuseFirst(sent); const hit = p.picked.find((c) => first.has(c.key)); if (!hit) return ''; const f = sent.find((x) => x.pending && x.abandoned && (x.inputs ?? []).includes(hit.key)); return f ? `This uses a coin of the forgotten payment of ${exact(f.sats)} to ${String(f.to).slice(0, 14)}…, so only one of the two can happen: if that one is mined first, this one fails and Reef tells you.` : ''; }
-function readSend() { if (!W) throw new Error('the wallet is not ready'); if (IDLE) throw new Error('Reef runs in another tab of this browser: send from there'); if (!W.coinsKnown) throw new Error('wait until the tab is up to date: the balance is not known yet');
-  const to = $('sendto').value.trim(); if (!to) throw new Error('enter the address to pay'); const dec = W.addr.decodeAddress(to); const chk = WL.checkDestination(dec, { ownScript: W.script }); if (chk.error) throw new Error(chk.error);
-  const all = $('sendall').getAttribute('aria-pressed') === 'true'; const amount = all ? null : WL.parseAmount($('sendamt').value, $('sendunit').value); const rate = Math.max(1, Math.round(Number(OPT.feeRate) || 1));
-  const coins = WL.spendable(W.coins, W.height, wallBal().held, WL.reuseFirst(sent)); const p = WL.plan({ coins, amount, rate, destSpk: dec.script, changeSpk: W.script, all }); return { to, dec, self: chk.self, all, rate, p }; }
-function updatePreview() { const el = $('sendpreview'); if (!W) return; if (IDLE) { el.textContent = ''; return; } if (!W.coinsKnown) { el.className = 'tiny mut'; el.textContent = 'Sending is possible once the tab is up to date and knows the balance.'; return; } if (!$('sendto').value.trim() && !$('sendamt').value.trim() && $('sendall').getAttribute('aria-pressed') !== 'true') { el.textContent = ''; return; }
-  try { const r = readSend(); const fg = reuseNote(r.p); el.className = 'tiny'; el.textContent = `${fg ? fg + ' ' : ''}${r.all ? 'everything: ' : ''}${exact(r.p.amount)} to the address, ${exact(r.p.fee)} fee (${r.p.vsize} vB at ${r.rate} sat/vB), ${exact(r.p.amount + r.p.fee)} in all${r.p.change ? `; ${exact(r.p.change)} comes back as change` : ''}${r.self ? ' · this is your own address: only the fee leaves' : ''}`; }
-  catch (e) { el.className = 'tiny mut'; el.textContent = e.message; } }
-async function signCheck(tx, prevouts) { W.txsign.signKeyPath({ k: W.k, hash: W.hash, signer: W.signer }, tx, prevouts, W.key);
-  for (let i = 0; i < tx.inputs.length; i++) { const v = W.k.interpreter.verifyInput(tx, i, prevouts[i], prevouts, null, { unifiedSighash: W.unified }); if (v.ok !== true) throw new Error(`the transaction did not pass the script check (${v.error ?? v.reason ?? 'input ' + i}); nothing was sent`); }
-  return { hex: W.k.codec.encodeHex('Transaction', tx), txid: W.k.codec.txid(tx), vsize: WL.vsizeOf(W.k, tx) }; }
-async function publishHex(hex) { const event = W.events.parentTxEvent(W.signer.randomKey(), 'sidestr:tally', hex); let results = {}; try { results = await W.relay.publish({ relays: RELAYS(), event }); } catch (e) { results = { error: e.message }; } LS.set('reef:lastpublish', JSON.stringify({ at: Date.now(), results })); return { event, ok: Object.entries(results).filter(([, r]) => r === 'ok').map(([u]) => u) }; }
-async function sendFlow() { if (sending || !canAct()) return; const r = readSend(); const { p } = r;
+function reuseNote(p) {
+  const first = WL.reuseFirst(sent);
+  const hit = p.picked.find((c) => first.has(c.key));
+  if (!hit) return '';
+  const f = sent.find((x) => x.pending && x.abandoned && (x.inputs ?? []).includes(hit.key));
+  return f
+    ? `This uses a coin of the forgotten payment of ${exact(f.sats)} to ${String(f.to).slice(0, 14)}…, so only one of the two can happen: if that one is mined first, this one fails and Reef tells you.`
+    : '';
+}
+function readSend() {
+  if (!W) throw new Error('the wallet is not ready');
+  if (IDLE) throw new Error('Reef runs in another tab of this browser: send from there');
+  if (!W.coinsKnown) throw new Error('wait until the tab is up to date: the balance is not known yet');
+  const to = $('sendto').value.trim();
+  if (!to) throw new Error('enter the address to pay');
+  const dec = W.addr.decodeAddress(to);
+  const chk = WL.checkDestination(dec, { ownScript: W.script });
+  if (chk.error) throw new Error(chk.error);
+  const all = $('sendall').getAttribute('aria-pressed') === 'true';
+  const amount = all ? null : WL.parseAmount($('sendamt').value, $('sendunit').value);
+  const rate = Math.max(1, Math.round(Number(OPT.feeRate) || 1));
+  const coins = WL.spendable(W.coins, W.height, wallBal().held, WL.reuseFirst(sent));
+  const p = WL.plan({ coins, amount, rate, destSpk: dec.script, changeSpk: W.script, all });
+  return { to, dec, self: chk.self, all, rate, p };
+}
+function updatePreview() {
+  const el = $('sendpreview');
+  if (!W) return;
+  if (IDLE) {
+    el.textContent = '';
+    return;
+  }
+  if (!W.coinsKnown) {
+    el.className = 'tiny mut';
+    el.textContent = 'Sending is possible once the tab is up to date and knows the balance.';
+    return;
+  }
+  if (!$('sendto').value.trim() && !$('sendamt').value.trim() && $('sendall').getAttribute('aria-pressed') !== 'true') {
+    el.textContent = '';
+    return;
+  }
+  try {
+    const r = readSend();
+    const fg = reuseNote(r.p);
+    el.className = 'tiny';
+    el.textContent = `${fg ? fg + ' ' : ''}${r.all ? 'everything: ' : ''}${exact(r.p.amount)} to the address, ${exact(r.p.fee)} fee (${r.p.vsize} vB at ${r.rate} sat/vB), ${exact(r.p.amount + r.p.fee)} in all${r.p.change ? `; ${exact(r.p.change)} comes back as change` : ''}${r.self ? ' · this is your own address: only the fee leaves' : ''}`;
+  } catch (e) {
+    el.className = 'tiny mut';
+    el.textContent = e.message;
+  }
+}
+async function signCheck(tx, prevouts) {
+  W.txsign.signKeyPath({ k: W.k, hash: W.hash, signer: W.signer }, tx, prevouts, W.key);
+  for (let i = 0; i < tx.inputs.length; i++) {
+    const v = W.k.interpreter.verifyInput(tx, i, prevouts[i], prevouts, null, { unifiedSighash: W.unified });
+    if (v.ok !== true)
+      throw new Error(`the transaction did not pass the script check (${v.error ?? v.reason ?? 'input ' + i}); nothing was sent`);
+  }
+  return { hex: W.k.codec.encodeHex('Transaction', tx), txid: W.k.codec.txid(tx), vsize: WL.vsizeOf(W.k, tx) };
+}
+async function publishHex(hex) {
+  const event = W.events.parentTxEvent(W.signer.randomKey(), 'sidestr:tally', hex);
+  let results = {};
+  try {
+    results = await W.relay.publish({ relays: RELAYS(), event });
+  } catch (e) {
+    results = { error: e.message };
+  }
+  LS.set('reef:lastpublish', JSON.stringify({ at: Date.now(), results }));
+  return {
+    event,
+    ok: Object.entries(results)
+      .filter(([, r]) => r === 'ok')
+      .map(([u]) => u),
+  };
+}
+async function sendFlow() {
+  if (sending || !canAct()) return;
+  const r = readSend();
+  const { p } = r;
   if (trust().level === 'bad') throw new Error('the block source disagrees with the signed chain tip: sending waits until that clears');
-  const waitingSame = sent.filter((s) => s.pending && !s.replaced && !s.replacedBy && (s.toScript ?? W.addr.decodeAddress(s.to)?.script) === r.dec.script);
-  const lines = [`To: ${r.to}${r.self ? ' (your own address)' : ''}`, `Amount: ${exact(p.amount)}${r.all ? ' (everything spendable, after the fee)' : ''}`, `Fee: ${exact(p.fee)} — ${p.vsize} vB at ${r.rate} sat/vB`, r.self ? `Only the fee leaves the wallet; ${exact(p.amount + (p.change ?? 0))} comes back to you.` : `Total leaving the wallet: ${exact(p.amount + p.fee)}${p.change ? `; ${exact(p.change)} comes back as change` : ''}`, 'It is signed here and handed to relays for a node to broadcast. Until a block takes it, it can be replaced with a higher fee or cancelled.'];
-  if (trust().level === 'warn') lines.push(`${trust().text}: the coins may already be spent on the real chain, and this payment may never confirm.`);
-  if (p.fee > 100000 || p.fee > p.amount) lines.splice(3, 0, `The fee is ${p.fee > p.amount ? 'more than the amount' : 'high'}: check the fee rate in Options.`);
-  const fgn = reuseNote(p); if (fgn && !waitingSame.some((x) => x.abandoned)) lines.push(fgn);
+  const waitingSame = sent.filter(
+    (s) => s.pending && !s.replaced && !s.replacedBy && (s.toScript ?? W.addr.decodeAddress(s.to)?.script) === r.dec.script,
+  );
+  const lines = [
+    `To: ${r.to}${r.self ? ' (your own address)' : ''}`,
+    `Amount: ${exact(p.amount)}${r.all ? ' (everything spendable, after the fee)' : ''}`,
+    `Fee: ${exact(p.fee)} — ${p.vsize} vB at ${r.rate} sat/vB`,
+    r.self
+      ? `Only the fee leaves the wallet; ${exact(p.amount + (p.change ?? 0))} comes back to you.`
+      : `Total leaving the wallet: ${exact(p.amount + p.fee)}${p.change ? `; ${exact(p.change)} comes back as change` : ''}`,
+    'It is signed here and handed to relays for a node to broadcast. Until a block takes it, it can be replaced with a higher fee or cancelled.',
+  ];
+  if (trust().level === 'warn')
+    lines.push(`${trust().text}: the coins may already be spent on the real chain, and this payment may never confirm.`);
+  if (p.fee > 100000 || p.fee > p.amount)
+    lines.splice(3, 0, `The fee is ${p.fee > p.amount ? 'more than the amount' : 'high'}: check the fee rate in Options.`);
+  const fgn = reuseNote(p);
+  if (fgn && !waitingSame.some((x) => x.abandoned)) lines.push(fgn);
   const sameUses = (x) => p.picked.some((c) => (x.inputs ?? []).includes(c.key));
-  if (waitingSame.length) lines.unshift(waitingSame[0].abandoned && sameUses(waitingSame[0]) ? `A payment of ${exact(waitingSame[0].sats)} to this address was forgotten. This payment spends one of its coins, so only one of the two can ever go through.` : waitingSame[0].abandoned ? `A payment of ${exact(waitingSame[0].sats)} to this address was forgotten but may still be mined, and this payment does not spend its coins: this would be a second payment.` : `A payment of ${exact(waitingSame[0].sats)} to this address is still waiting. This would be a second, separate payment.`);
+  if (waitingSame.length)
+    lines.unshift(
+      waitingSame[0].abandoned && sameUses(waitingSame[0])
+        ? `A payment of ${exact(waitingSame[0].sats)} to this address was forgotten. This payment spends one of its coins, so only one of the two can ever go through.`
+        : waitingSame[0].abandoned
+          ? `A payment of ${exact(waitingSame[0].sats)} to this address was forgotten but may still be mined, and this payment does not spend its coins: this would be a second payment.`
+          : `A payment of ${exact(waitingSame[0].sats)} to this address is still waiting. This would be a second, separate payment.`,
+    );
   if (!(await ask('Confirm the payment', lines, 'Send', false, 'Back'))) return;
   // the world may have moved while the dialog was open: the same coins and the same figures, or nothing is sent
-  let again; try { again = readSend(); } catch (e) { throw new Error('the payment changed while it was being confirmed (' + e.message + '); nothing was sent'); } if (again.p.fee !== p.fee || again.p.amount !== p.amount || again.p.picked.map((c) => c.key).join() !== p.picked.map((c) => c.key).join() || sending) throw new Error('the coins or the figures changed while the payment was being confirmed; nothing was sent: check and send again');
-  sending = true; $('sendgo').disabled = true; sendInfo('signing and checking…');
-  try { const tx = WL.unsignedTx(p); const prevouts = p.picked.map((c) => ({ value: c.value, scriptPubKey: W.script })); const { hex, txid } = await signCheck(tx, prevouts);
+  let again;
+  try {
+    again = readSend();
+  } catch (e) {
+    throw new Error('the payment changed while it was being confirmed (' + e.message + '); nothing was sent');
+  }
+  if (
+    again.p.fee !== p.fee ||
+    again.p.amount !== p.amount ||
+    again.p.picked.map((c) => c.key).join() !== p.picked.map((c) => c.key).join() ||
+    sending
+  )
+    throw new Error('the coins or the figures changed while the payment was being confirmed; nothing was sent: check and send again');
+  sending = true;
+  $('sendgo').disabled = true;
+  sendInfo('signing and checking…');
+  try {
+    const tx = WL.unsignedTx(p);
+    const prevouts = p.picked.map((c) => ({ value: c.value, scriptPubKey: W.script }));
+    const { hex, txid } = await signCheck(tx, prevouts);
     // the coins are held before anything is published, so a second click or another tab cannot spend them again
-    const s = { txid, to: r.to, toScript: r.dec.script, sats: p.amount, fee: p.fee, change: p.change, all: r.all, self: r.self, at: Date.now(), hex, inputs: p.picked.map((c) => c.key), values: p.picked.map((c) => c.value), tip: W.height, pending: true, kind: 'payment', relays: [] };
+    const s = {
+      txid,
+      to: r.to,
+      toScript: r.dec.script,
+      sats: p.amount,
+      fee: p.fee,
+      change: p.change,
+      all: r.all,
+      self: r.self,
+      at: Date.now(),
+      hex,
+      inputs: p.picked.map((c) => c.key),
+      values: p.picked.map((c) => c.value),
+      tip: W.height,
+      pending: true,
+      kind: 'payment',
+      relays: [],
+    };
     if (sent.some((x) => x.txid === txid)) throw new Error('this payment was already made');
-    sent.push(s); for (const c of p.picked) seen.set(c.key, c.value); saveSeen(); if (!saveSent()) { sent = sent.filter((x) => x !== s); throw new Error('the payment could not be recorded in this browser (storage full or blocked), so it was not sent: free storage and try again'); } renderWallet(); sendInfo('handing it to the relays…');
-    $('sendto').value = ''; $('sendamt').value = ''; $('sendamt').disabled = false; $('sendall').setAttribute('aria-pressed', 'false'); updatePreview();
-    const pub = await publishHex(hex); s.relays = pub.ok; s.lastPub = Date.now(); saveSent();
-    if (!pub.ok.length) sendInfo('The payment is made and kept, but no relay took it yet. Reef keeps publishing it every few minutes: do not send it again. Check the relays in Options → Network.', 'bad');
-    else sendInfo(`Handed to ${pub.ok.length} relay${pub.ok.length === 1 ? '' : 's'}: ${exact(p.amount)} to ${r.to.slice(0, 14)}…. It shows as waiting on the Transactions page until a block carries it.`, 'good');
-    cprint(`· payment of ${amt(p.amount)} made (fee ${p.fee} sat): ${txid.slice(0, 16)}…`, 'log'); return { txid }; }
-  finally { sending = false; $('sendgo').disabled = false; renderWallet(); } }
+    sent.push(s);
+    for (const c of p.picked) seen.set(c.key, c.value);
+    saveSeen();
+    if (!saveSent()) {
+      sent = sent.filter((x) => x !== s);
+      throw new Error(
+        'the payment could not be recorded in this browser (storage full or blocked), so it was not sent: free storage and try again',
+      );
+    }
+    renderWallet();
+    sendInfo('handing it to the relays…');
+    $('sendto').value = '';
+    $('sendamt').value = '';
+    $('sendamt').disabled = false;
+    $('sendall').setAttribute('aria-pressed', 'false');
+    updatePreview();
+    const pub = await publishHex(hex);
+    s.relays = pub.ok;
+    s.lastPub = Date.now();
+    saveSent();
+    if (!pub.ok.length)
+      sendInfo(
+        'The payment is made and kept, but no relay took it yet. Reef keeps publishing it every few minutes: do not send it again. Check the relays in Options → Network.',
+        'bad',
+      );
+    else
+      sendInfo(
+        `Handed to ${pub.ok.length} relay${pub.ok.length === 1 ? '' : 's'}: ${exact(p.amount)} to ${r.to.slice(0, 14)}…. It shows as waiting on the Transactions page until a block carries it.`,
+        'good',
+      );
+    cprint(`· payment of ${amt(p.amount)} made (fee ${p.fee} sat): ${txid.slice(0, 16)}…`, 'log');
+    return { txid };
+  } finally {
+    sending = false;
+    $('sendgo').disabled = false;
+    renderWallet();
+  }
+}
 const inFlight = new Set();
-async function publishAgain(s, manual = false) { if (!canAct()) return; if (!s.hex) throw new Error('this payment was not made from this tab; nothing to publish again'); if (inFlight.has(s.txid)) return; inFlight.add(s.txid); s.lastPub = Date.now(); let pub; try { pub = await publishHex(s.hex); } finally { inFlight.delete(s.txid); } s.lastPub = Date.now(); s.relays = [...new Set([...(s.relays ?? []), ...pub.ok])]; saveSent(); renderWallet(); if (manual) notify(pub.ok.length ? 'Published again' : 'Not published', pub.ok.length ? `handed to ${pub.ok.length} relay(s)` : 'no relay took it; check Options → Network', !pub.ok.length); }
+async function publishAgain(s, manual = false) {
+  if (!canAct()) return;
+  if (!s.hex) throw new Error('this payment was not made from this tab; nothing to publish again');
+  if (inFlight.has(s.txid)) return;
+  inFlight.add(s.txid);
+  s.lastPub = Date.now();
+  let pub;
+  try {
+    pub = await publishHex(s.hex);
+  } finally {
+    inFlight.delete(s.txid);
+  }
+  s.lastPub = Date.now();
+  s.relays = [...new Set([...(s.relays ?? []), ...pub.ok])];
+  saveSent();
+  renderWallet();
+  if (manual)
+    notify(
+      pub.ok.length ? 'Published again' : 'Not published',
+      pub.ok.length ? `handed to ${pub.ok.length} relay(s)` : 'no relay took it; check Options → Network',
+      !pub.ok.length,
+    );
+}
 // replace a waiting payment (BIP 125): a higher fee from its change (from the amount, for a payment of everything), or
 // cancel it by paying everything back to this key; sized for the outputs it really has, and capped like any payment
-async function replaceFlow(s, cancel) { if (!canAct()) return; if (!s.pending || !s.values) throw new Error('only a waiting payment made from this tab can be replaced'); if (s.replacedBy) throw new Error('this version was already replaced; act on the newest one'); if (trust().level === 'bad') throw new Error('the block source disagrees with the signed chain tip: wait until that clears');
-  if (sending) return; const picked = s.inputs.map((k2, i) => ({ key: k2, value: s.values[i] })); const oldRate = s.fee / WL.estimateVsize(picked.length, [s.toScript ?? W.script, W.script]); const rate0 = Math.max(1, Math.round(Number(OPT.feeRate) || 1), Math.min(mempoolRate() ?? 1, Math.ceil(oldRate * 3)), Math.ceil(oldRate * 1.5));
-  const pr = WL.planReplace(s, { cancel, rate: rate0, ownSpk: W.script }); const { outputs, fee, amount, change, rate } = pr; const plain = !cancel && !s.all;
-  const lines = cancel ? [`A new transaction spends the same coins back to you with a fee of ${exact(fee)} (the original paid ${exact(s.fee)}). If a block takes it first, the payment is cancelled and ${exact(amount)} is yours again.`, 'If a node already has the original, the original may still be mined; the Transactions page says which one was.']
-    : plain ? [`The same payment of ${exact(amount)} to ${s.to} is sent again with a fee of ${exact(fee)} (${rate} sat/vB) instead of ${exact(s.fee)}; the ${exact(fee - s.fee)} more comes out of your change.`, 'Whichever version a block takes, the payment is made once.']
-    : [`This payment sent everything, so a higher fee comes out of what the recipient receives: ${exact(amount)} instead of ${exact(s.sats)}, with a fee of ${exact(fee)} (${rate} sat/vB) instead of ${exact(s.fee)}.`, 'Whichever version a block takes, the payment is made once.'];
+async function replaceFlow(s, cancel) {
+  if (!canAct()) return;
+  if (!s.pending || !s.values) throw new Error('only a waiting payment made from this tab can be replaced');
+  if (s.replacedBy) throw new Error('this version was already replaced; act on the newest one');
+  if (trust().level === 'bad') throw new Error('the block source disagrees with the signed chain tip: wait until that clears');
+  if (sending) return;
+  const picked = s.inputs.map((k2, i) => ({ key: k2, value: s.values[i] }));
+  const oldRate = s.fee / WL.estimateVsize(picked.length, [s.toScript ?? W.script, W.script]);
+  const rate0 = Math.max(
+    1,
+    Math.round(Number(OPT.feeRate) || 1),
+    Math.min(mempoolRate() ?? 1, Math.ceil(oldRate * 3)),
+    Math.ceil(oldRate * 1.5),
+  );
+  const pr = WL.planReplace(s, { cancel, rate: rate0, ownSpk: W.script });
+  const { outputs, fee, amount, change, rate } = pr;
+  const plain = !cancel && !s.all;
+  const lines = cancel
+    ? [
+        `A new transaction spends the same coins back to you with a fee of ${exact(fee)} (the original paid ${exact(s.fee)}). If a block takes it first, the payment is cancelled and ${exact(amount)} is yours again.`,
+        'If a node already has the original, the original may still be mined; the Transactions page says which one was.',
+      ]
+    : plain
+      ? [
+          `The same payment of ${exact(amount)} to ${s.to} is sent again with a fee of ${exact(fee)} (${rate} sat/vB) instead of ${exact(s.fee)}; the ${exact(fee - s.fee)} more comes out of your change.`,
+          'Whichever version a block takes, the payment is made once.',
+        ]
+      : [
+          `This payment sent everything, so a higher fee comes out of what the recipient receives: ${exact(amount)} instead of ${exact(s.sats)}, with a fee of ${exact(fee)} (${rate} sat/vB) instead of ${exact(s.fee)}.`,
+          'Whichever version a block takes, the payment is made once.',
+        ];
   if (fee > 100000) lines.push('The new fee is high; check the fee rate in Options.');
-  if (!(await ask(cancel ? 'Cancel the payment' : 'Raise the fee', lines, cancel ? 'Cancel the payment' : 'Raise the fee', cancel, 'Keep it as it is')) || sending || !s.pending || s.replacedBy || !canAct()) return; if (trust().level === 'bad') throw new Error('the block source disagrees with the signed chain tip: wait until that clears'); { const again = WL.planReplace(s, { cancel, rate: rate0, ownSpk: W.script }); if (again.fee !== fee || again.amount !== amount) throw new Error('the figures changed while you were deciding; nothing was sent'); } sending = true; try {
-  const tx = { version: 2, inputs: picked.map((c) => ({ prevout: { txid: c.key.slice(0, 64), vout: Number(c.key.slice(65)) }, scriptSig: '', sequence: 0xfffffffd })), outputs, lockTime: 0, witness: [] };
-  const { hex, txid } = await signCheck(tx, picked.map((c) => ({ value: c.value, scriptPubKey: W.script })));
-  const r = { txid, to: cancel ? W.address : s.to, toScript: cancel ? W.script : s.toScript, sats: cancel ? 0 : amount, fee, change: cancel ? amount : change, all: s.all, at: Date.now(), hex, inputs: s.inputs, values: s.values, tip: W.height, pending: true, kind: cancel ? 'cancel' : 'payment', replaces: s.txid, self: cancel || !!s.self, relays: [] };
-  s.replacedBy = txid; sent.push(r); if (!saveSent()) { delete s.replacedBy; sent = sent.filter((x) => x !== r); throw new Error('the replacement could not be recorded in this browser (storage full or blocked), so it was not sent'); } renderWallet(); const pub = await publishHex(hex); r.lastPub = Date.now(); r.relays = pub.ok; saveSent(); renderWallet();
-  notify(cancel ? 'Cancel sent' : 'Fee raised', pub.ok.length ? 'the replacement is with the relays; the Transactions page shows which version a block takes' : 'no relay took the replacement yet; it is published again every 10 minutes', !pub.ok.length); } finally { sending = false; } }
+  if (
+    !(await ask(
+      cancel ? 'Cancel the payment' : 'Raise the fee',
+      lines,
+      cancel ? 'Cancel the payment' : 'Raise the fee',
+      cancel,
+      'Keep it as it is',
+    )) ||
+    sending ||
+    !s.pending ||
+    s.replacedBy ||
+    !canAct()
+  )
+    return;
+  if (trust().level === 'bad') throw new Error('the block source disagrees with the signed chain tip: wait until that clears');
+  {
+    const again = WL.planReplace(s, { cancel, rate: rate0, ownSpk: W.script });
+    if (again.fee !== fee || again.amount !== amount) throw new Error('the figures changed while you were deciding; nothing was sent');
+  }
+  sending = true;
+  try {
+    const tx = {
+      version: 2,
+      inputs: picked.map((c) => ({
+        prevout: { txid: c.key.slice(0, 64), vout: Number(c.key.slice(65)) },
+        scriptSig: '',
+        sequence: 0xfffffffd,
+      })),
+      outputs,
+      lockTime: 0,
+      witness: [],
+    };
+    const { hex, txid } = await signCheck(
+      tx,
+      picked.map((c) => ({ value: c.value, scriptPubKey: W.script })),
+    );
+    const r = {
+      txid,
+      to: cancel ? W.address : s.to,
+      toScript: cancel ? W.script : s.toScript,
+      sats: cancel ? 0 : amount,
+      fee,
+      change: cancel ? amount : change,
+      all: s.all,
+      at: Date.now(),
+      hex,
+      inputs: s.inputs,
+      values: s.values,
+      tip: W.height,
+      pending: true,
+      kind: cancel ? 'cancel' : 'payment',
+      replaces: s.txid,
+      self: cancel || !!s.self,
+      relays: [],
+    };
+    s.replacedBy = txid;
+    sent.push(r);
+    if (!saveSent()) {
+      delete s.replacedBy;
+      sent = sent.filter((x) => x !== r);
+      throw new Error('the replacement could not be recorded in this browser (storage full or blocked), so it was not sent');
+    }
+    renderWallet();
+    const pub = await publishHex(hex);
+    r.lastPub = Date.now();
+    r.relays = pub.ok;
+    saveSent();
+    renderWallet();
+    notify(
+      cancel ? 'Cancel sent' : 'Fee raised',
+      pub.ok.length
+        ? 'the replacement is with the relays; the Transactions page shows which version a block takes'
+        : 'no relay took the replacement yet; it is published again every 10 minutes',
+      !pub.ok.length,
+    );
+  } finally {
+    sending = false;
+  }
+}
 // forget a payment that has waited long and is nowhere to be seen: its coins are released for other payments
-async function forgetFlow(s0) { if (!canAct() || !S.forgettable(sent, s0, W.height, inMempool)) return; const s = S.newestOf(sent, s0);
+async function forgetFlow(s0) {
+  if (!canAct() || !S.forgettable(sent, s0, W.height, inMempool)) return;
+  const s = S.newestOf(sent, s0);
   const worth = s.values ? s.values.reduce((a, v) => a + v, 0) : (s.inputs ?? []).reduce((a, k2) => a + (seen.get(k2) ?? 0), 0);
-  if (s.hex && s.values) { const a = await ask('This payment has not gone through', [`It has waited ${n(W.height - s.tip)} blocks and no node here has it. The safe way out is to cancel it: a new transaction pays its coins back to you, and once that is in a block the old one can never go through.`], 'Cancel it instead…', false, 'Other choices', true); if (a === true) return replaceFlow(s, true); if (a === null) return; }
-  if (!(await ask('Forget this payment', [`Forgetting it makes its coins (${exact(worth)}) spendable again. The signed transaction may still exist somewhere, so your next payment will spend one of these coins first: then only one of the two can ever go through, and you cannot pay twice by accident.`, 'If the forgotten one is mined after all, Reef shows it as confirmed.'], 'Forget it', true, 'Keep waiting'))) return;
-  const at = S.stamp(sent); for (const o of S.groupOf(sent, s)) if (o.pending) { o.abandoned = true; o.vAt = at; } saveSent(); renderWallet(); }
+  if (s.hex && s.values) {
+    const a = await ask(
+      'This payment has not gone through',
+      [
+        `It has waited ${n(W.height - s.tip)} blocks and no node here has it. The safe way out is to cancel it: a new transaction pays its coins back to you, and once that is in a block the old one can never go through.`,
+      ],
+      'Cancel it instead…',
+      false,
+      'Other choices',
+      true,
+    );
+    if (a === true) return replaceFlow(s, true);
+    if (a === null) return;
+  }
+  if (
+    !(await ask(
+      'Forget this payment',
+      [
+        `Forgetting it makes its coins (${exact(worth)}) spendable again. The signed transaction may still exist somewhere, so your next payment will spend one of these coins first: then only one of the two can ever go through, and you cannot pay twice by accident.`,
+        'If the forgotten one is mined after all, Reef shows it as confirmed.',
+      ],
+      'Forget it',
+      true,
+      'Keep waiting',
+    ))
+  )
+    return;
+  const at = S.stamp(sent);
+  for (const o of S.groupOf(sent, s))
+    if (o.pending) {
+      o.abandoned = true;
+      o.vAt = at;
+    }
+  saveSent();
+  renderWallet();
+}
 // every minute: payments not yet in a block are published again (relays do not keep these events)
-function tick() { if (!canAct()) return; for (const s of S.republishDue(sent, Date.now())) publishAgain(s).catch(() => {}); renderWallet(); }
+function tick() {
+  if (!canAct()) return;
+  for (const s of S.republishDue(sent, Date.now())) publishAgain(s).catch(() => {});
+  renderWallet();
+}
 setInterval(tick, 60000);
 
 // ---- the key: shown, exported in the forms other wallets read, backed up before it holds anything that matters
-function openBackup() { if (!W) return; const wif = WL.toWif(W.key, W.hash.sha256); let handled = false; const arm = () => { handled = true; $('bk-done').disabled = false; };
-  $('bk-addr').textContent = W.address; $('bk-wif').value = '•'.repeat(52); $('bk-desc').value = '•'.repeat(40); $('bk-show').textContent = 'Show'; $('bk-done').checked = backedUp(); $('bk-done').disabled = !backedUp(); $('bk-note').textContent = backedUp() ? '' : 'Show, copy or save the key first; then tick the box.';
-  $('bk-show').onclick = () => { const shown = !$('bk-wif').value.startsWith('•'); $('bk-wif').value = shown ? '•'.repeat(52) : wif; $('bk-desc').value = shown ? '•'.repeat(40) : WL.rawtrDescriptor(wif); $('bk-show').textContent = shown ? 'Show' : 'Hide'; if (!shown) arm(); };
-  $('bk-copy').onclick = async () => { try { await navigator.clipboard.writeText(wif); arm(); $('bk-note').textContent = 'the key (WIF) is on the clipboard: paste it into your password manager now, then copy something else over it'; } catch { $('bk-note').textContent = 'the browser did not allow copying: use Show and copy it by hand'; } };
-  $('bk-file').onclick = () => { const txt = `Reef wallet key — txbt4 (BLAKE2b testnet4) test coins\nKeep this private: anyone with it can spend the coins.\n\naddress:    ${W.address}\nWIF:        ${wif}\ndescriptor: ${WL.rawtrDescriptor(wif)}\nhex:        ${W.key}\n\nThe address is the key-path output of the key itself (rawtr), not a BIP 86 tr() address.\nSaved ${new Date().toISOString()} from ${location.origin}${location.pathname}\n`; const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([txt], { type: 'text/plain' })); a.download = `reef-key-${W.address.slice(0, 12)}.txt`; a.click(); arm(); $('bk-note').textContent = 'saved as a file: keep it somewhere only you can read, off this computer too'; };
-  const close = () => { $('bk-wif').value = ''; $('bk-desc').value = ''; $('backup').close(); };
-  $('bk-ok').onclick = () => { if ($('bk-done').checked && (handled || backedUp())) { LS.set(backupKey(), String(Date.now())); unbanner('backup'); } else if (!$('bk-done').checked) LS.del(backupKey()); close(); backupNudge(); };
-  $('bk-cancel').onclick = close; $('backup').onclose = () => { $('bk-wif').value = ''; $('bk-desc').value = ''; }; $('backup').showModal(); }
-function backupNudge(urgent = false) { if (!W || backedUp() || IDLE) { unbanner('backup'); return; } const has = W.coins.length > 0 || ledger.size > 0 || sent.length > 0; banner('backup', has || urgent ? 'bad' : 'warn', has ? 'Your wallet has held coins and its key is not backed up. The key lives only in this browser: clearing site data, or the browser freeing space, would lose the coins.' : 'Back up your wallet key before you receive anything: it lives only in this browser.', [['Back up now…', () => openBackup()]]); }
+function openBackup() {
+  if (!W) return;
+  const wif = WL.toWif(W.key, W.hash.sha256);
+  let handled = false;
+  const arm = () => {
+    handled = true;
+    $('bk-done').disabled = false;
+  };
+  $('bk-addr').textContent = W.address;
+  $('bk-wif').value = '•'.repeat(52);
+  $('bk-desc').value = '•'.repeat(40);
+  $('bk-show').textContent = 'Show';
+  $('bk-done').checked = backedUp();
+  $('bk-done').disabled = !backedUp();
+  $('bk-note').textContent = backedUp() ? '' : 'Show, copy or save the key first; then tick the box.';
+  $('bk-show').onclick = () => {
+    const shown = !$('bk-wif').value.startsWith('•');
+    $('bk-wif').value = shown ? '•'.repeat(52) : wif;
+    $('bk-desc').value = shown ? '•'.repeat(40) : WL.rawtrDescriptor(wif);
+    $('bk-show').textContent = shown ? 'Show' : 'Hide';
+    if (!shown) arm();
+  };
+  $('bk-copy').onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(wif);
+      arm();
+      $('bk-note').textContent =
+        'the key (WIF) is on the clipboard: paste it into your password manager now, then copy something else over it';
+    } catch {
+      $('bk-note').textContent = 'the browser did not allow copying: use Show and copy it by hand';
+    }
+  };
+  $('bk-file').onclick = () => {
+    const txt = `Reef wallet key — txbt4 (BLAKE2b testnet4) test coins\nKeep this private: anyone with it can spend the coins.\n\naddress:    ${W.address}\nWIF:        ${wif}\ndescriptor: ${WL.rawtrDescriptor(wif)}\nhex:        ${W.key}\n\nThe address is the key-path output of the key itself (rawtr), not a BIP 86 tr() address.\nSaved ${new Date().toISOString()} from ${location.origin}${location.pathname}\n`;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([txt], { type: 'text/plain' }));
+    a.download = `reef-key-${W.address.slice(0, 12)}.txt`;
+    a.click();
+    arm();
+    $('bk-note').textContent = 'saved as a file: keep it somewhere only you can read, off this computer too';
+  };
+  const close = () => {
+    $('bk-wif').value = '';
+    $('bk-desc').value = '';
+    $('backup').close();
+  };
+  $('bk-ok').onclick = () => {
+    if ($('bk-done').checked && (handled || backedUp())) {
+      LS.set(backupKey(), String(Date.now()));
+      unbanner('backup');
+    } else if (!$('bk-done').checked) LS.del(backupKey());
+    close();
+    backupNudge();
+  };
+  $('bk-cancel').onclick = close;
+  $('backup').onclose = () => {
+    $('bk-wif').value = '';
+    $('bk-desc').value = '';
+  };
+  $('backup').showModal();
+}
+function backupNudge(urgent = false) {
+  if (!W || backedUp() || IDLE) {
+    unbanner('backup');
+    return;
+  }
+  const has = W.coins.length > 0 || ledger.size > 0 || sent.length > 0;
+  banner(
+    'backup',
+    has || urgent ? 'bad' : 'warn',
+    has
+      ? 'Your wallet has held coins and its key is not backed up. The key lives only in this browser: clearing site data, or the browser freeing space, would lose the coins.'
+      : 'Back up your wallet key before you receive anything: it lives only in this browser.',
+    [['Back up now…', () => openBackup()]],
+  );
+}
 // the keys this browser used before: listed in Options, switched back to, or copied
-const oldKeys = () => loadJSON('reef:oldkeys', []).filter((x) => /^[0-9a-f]{64}$/.test(x.key ?? '') && x.key !== W?.key); const badKeys = () => loadJSON('reef:oldkeys', []).filter((x) => !/^[0-9a-f]{64}$/.test(x.key ?? ''));
-function renderOldKeys() { const list = oldKeys(); const bk = (x) => !!LS.get('reef:backup:' + (() => { try { return W.signer.pubkeyOf(x.key).slice(0, 16); } catch { return ''; } })()); $('o-oldkeys').innerHTML = list.length ? list.map((x, i) => `<div class="row wrap"><span class="mono">${esc(x.address ?? '(an address)')}</span><span class="note">${x.at ? new Date(x.at).toLocaleDateString() : ''} · ${bk(x) ? 'backed up' : 'NOT backed up'}</span><button type="button" data-ok="${i}" data-a="copy">Copy its key…</button><button type="button" data-ok="${i}" data-a="use">Use it again</button><button type="button" data-ok="${i}" data-a="del">Remove…</button></div>`).join('') : '<span class="note">none</span>'; if (badKeys().length) $('o-oldkeys').insertAdjacentHTML('beforeend', `<div class="note">${badKeys().length} unreadable stored value(s) kept in this site's storage under reef:oldkeys; they may be a damaged key: keep a copy of the site data before clearing it.</div>`);
-  $('o-oldkeys').querySelectorAll('button').forEach((b) => { b.onclick = async () => { const x = oldKeys()[b.dataset.ok]; if (!x) return; if (b.dataset.a === 'copy') { try { await navigator.clipboard.writeText(WL.toWif(x.key, W.hash.sha256)); b.textContent = 'Copied'; $('o-keywarn').textContent = 'the earlier key is on the clipboard: paste it where it belongs, then copy something else over it'; } catch {} } else if (IDLE || !RUNNING) { $('o-keywarn').textContent = 'keys are managed in the tab that runs the node'; } else if (b.dataset.a === 'use') { $('o-importkey').value = x.key; $('o-keywarn').textContent = 'press OK to switch back to this key; coins sent to the other address later will not show while this key is in use'; } else { $('options').close(); if (await ask('Remove an earlier key', [`${x.address ?? 'This key'} ${bk(x) ? 'is backed up' : 'is NOT backed up'}. Removing it from this browser loses any coins at its address unless you have a copy (Keep it, then Copy its key…). Its payment history in this browser goes with it.`, ...((() => { try { return loadJSON('reef:sent:' + W.signer.pubkeyOf(x.key).slice(0, 16), []).some((r) => r.pending); } catch { return false; } })() ? ['It still has a payment waiting or forgotten: its signed transaction may yet be mined. Keep the key until that is settled.'] : [])], 'Remove it', true, 'Keep it')) { LS.set('reef:oldkeys', JSON.stringify(loadJSON('reef:oldkeys', []).filter((y) => y.key !== x.key))); try { const pk = W.signer.pubkeyOf(x.key); const tg = pk.slice(0, 16); for (const k3 of ['sent', 'seen', 'ledger', 'quarantine']) LS.del(`reef:${k3}:${tg}`); LS.del('reef:backup:' + pk.slice(0, 16)); } catch {} } openOptions('wallet'); } }; }); }
+const oldKeys = () => loadJSON('reef:oldkeys', []).filter((x) => /^[0-9a-f]{64}$/.test(x.key ?? '') && x.key !== W?.key);
+const badKeys = () => loadJSON('reef:oldkeys', []).filter((x) => !/^[0-9a-f]{64}$/.test(x.key ?? ''));
+function renderOldKeys() {
+  const list = oldKeys();
+  const bk = (x) =>
+    !!LS.get(
+      'reef:backup:' +
+        (() => {
+          try {
+            return W.signer.pubkeyOf(x.key).slice(0, 16);
+          } catch {
+            return '';
+          }
+        })(),
+    );
+  $('o-oldkeys').innerHTML = list.length
+    ? list
+        .map(
+          (x, i) =>
+            `<div class="row wrap"><span class="mono">${esc(x.address ?? '(an address)')}</span><span class="note">${x.at ? new Date(x.at).toLocaleDateString() : ''} · ${bk(x) ? 'backed up' : 'NOT backed up'}</span><button type="button" data-ok="${i}" data-a="copy">Copy its key…</button><button type="button" data-ok="${i}" data-a="use">Use it again</button><button type="button" data-ok="${i}" data-a="del">Remove…</button></div>`,
+        )
+        .join('')
+    : '<span class="note">none</span>';
+  if (badKeys().length)
+    $('o-oldkeys').insertAdjacentHTML(
+      'beforeend',
+      `<div class="note">${badKeys().length} unreadable stored value(s) kept in this site's storage under reef:oldkeys; they may be a damaged key: keep a copy of the site data before clearing it.</div>`,
+    );
+  $('o-oldkeys')
+    .querySelectorAll('button')
+    .forEach((b) => {
+      b.onclick = async () => {
+        const x = oldKeys()[b.dataset.ok];
+        if (!x) return;
+        if (b.dataset.a === 'copy') {
+          try {
+            await navigator.clipboard.writeText(WL.toWif(x.key, W.hash.sha256));
+            b.textContent = 'Copied';
+            $('o-keywarn').textContent = 'the earlier key is on the clipboard: paste it where it belongs, then copy something else over it';
+          } catch {}
+        } else if (IDLE || !RUNNING) {
+          $('o-keywarn').textContent = 'keys are managed in the tab that runs the node';
+        } else if (b.dataset.a === 'use') {
+          $('o-importkey').value = x.key;
+          $('o-keywarn').textContent =
+            'press OK to switch back to this key; coins sent to the other address later will not show while this key is in use';
+        } else {
+          $('options').close();
+          if (
+            await ask(
+              'Remove an earlier key',
+              [
+                `${x.address ?? 'This key'} ${bk(x) ? 'is backed up' : 'is NOT backed up'}. Removing it from this browser loses any coins at its address unless you have a copy (Keep it, then Copy its key…). Its payment history in this browser goes with it.`,
+                ...((() => {
+                  try {
+                    return loadJSON('reef:sent:' + W.signer.pubkeyOf(x.key).slice(0, 16), []).some((r) => r.pending);
+                  } catch {
+                    return false;
+                  }
+                })()
+                  ? [
+                      'It still has a payment waiting or forgotten: its signed transaction may yet be mined. Keep the key until that is settled.',
+                    ]
+                  : []),
+              ],
+              'Remove it',
+              true,
+              'Keep it',
+            )
+          ) {
+            LS.set('reef:oldkeys', JSON.stringify(loadJSON('reef:oldkeys', []).filter((y) => y.key !== x.key)));
+            try {
+              const pk = W.signer.pubkeyOf(x.key);
+              const tg = pk.slice(0, 16);
+              for (const k3 of ['sent', 'seen', 'ledger', 'quarantine']) LS.del(`reef:${k3}:${tg}`);
+              LS.del('reef:backup:' + pk.slice(0, 16));
+            } catch {}
+          }
+          openOptions('wallet');
+        }
+      };
+    });
+}
 // ---- notices: a toast in the page and, if allowed, a browser notification
-function notify(title, body, bad = /not |did not|failed|stopped/i.test(title)) { cprint(`· ${title}: ${body}`, 'log'); if (!$('tray').hidden) { unseen++; $('tray-badge').textContent = unseen; $('tray-badge').hidden = false; } const el = document.createElement('div'); el.className = 'toast' + (bad ? ' badt' : ''); const b = document.createElement('b'); b.textContent = title; const x = document.createElement('button'); x.type = 'button'; x.className = 'tx'; x.textContent = '×'; x.setAttribute('aria-label', 'Dismiss'); x.onclick = () => el.remove(); el.append(x, b, document.createElement('br'), document.createTextNode(body)); (bad ? $('toasts-alert') : $('toasts')).appendChild(el);
-  let timer; const arm = () => { clearTimeout(timer); timer = setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 400); }, bad ? 30000 : 20000); }; el.onmouseenter = el.onfocusin = () => clearTimeout(timer); el.onmouseleave = el.onfocusout = arm; arm();
-  if (OPT.notify && 'Notification' in window && Notification.permission === 'granted') { try { new Notification(`Reef · ${title}`, { body: OPT.mask ? 'open Reef to see the details' : body, icon: 'og.png' }); } catch {} } }
+function notify(title, body, bad = /not |did not|failed|stopped/i.test(title)) {
+  cprint(`· ${title}: ${body}`, 'log');
+  if (!$('tray').hidden) {
+    unseen++;
+    $('tray-badge').textContent = unseen;
+    $('tray-badge').hidden = false;
+  }
+  const el = document.createElement('div');
+  el.className = 'toast' + (bad ? ' badt' : '');
+  const b = document.createElement('b');
+  b.textContent = title;
+  const x = document.createElement('button');
+  x.type = 'button';
+  x.className = 'tx';
+  x.textContent = '×';
+  x.setAttribute('aria-label', 'Dismiss');
+  x.onclick = () => el.remove();
+  el.append(x, b, document.createElement('br'), document.createTextNode(body));
+  (bad ? $('toasts-alert') : $('toasts')).appendChild(el);
+  let timer;
+  const arm = () => {
+    clearTimeout(timer);
+    timer = setTimeout(
+      () => {
+        el.classList.add('out');
+        setTimeout(() => el.remove(), 400);
+      },
+      bad ? 30000 : 20000,
+    );
+  };
+  el.onmouseenter = el.onfocusin = () => clearTimeout(timer);
+  el.onmouseleave = el.onfocusout = arm;
+  arm();
+  if (OPT.notify && 'Notification' in window && Notification.permission === 'granted') {
+    try {
+      new Notification(`Reef · ${title}`, { body: OPT.mask ? 'open Reef to see the details' : body, icon: 'og.png' });
+    } catch {}
+  }
+}
 // ---- the node window's pages
-function renderMempool() { const m = node.mempool; if (!m) return; const now = Math.floor(Date.now() / 1000); const med = mempoolRate();
-  $('mp-sum').textContent = `${n(m.count)} transaction${m.count === 1 ? '' : 's'} · ${n(m.bytes)} vB · ${n(m.fees)} sat in fees${med != null ? ` · median ${med} sat/vB` : ''} · at height ${n(m.height ?? 0)}`;
-  $('mprows').innerHTML = m.txs.length ? m.txs.map((t) => { const o = W ? ourTx(t) : { spendsOurs: false, toUs: 0 }; const age = Math.max(0, now - t.at); return `<tr><td class="mono">${txLink(t.txid, t.txid.slice(0, 16) + '…')}</td><td>${age < 60 ? age + ' s' : age < 3600 ? Math.round(age / 60) + ' min' : (age / 3600).toFixed(1) + ' h'}</td><td class="amt">${esc(n(t.vsize))}</td><td class="amt">${esc(n(t.fee))}</td><td class="amt">${Number(t.feeRate).toFixed(1)}</td><td>${o.spendsOurs ? 'from you' : o.toUs ? 'to you: ' + esc(amt(o.toUs)) : ''}</td></tr>`; }).join('') : '<tr><td colspan="6" class="mut">empty</td></tr>'; }
-function mempoolRate() { const m = node.mempool; if (!m || !m.txs.length) return null; const r = m.txs.map((t) => t.feeRate).sort((a, b) => a - b); return Math.max(1, Math.ceil(r[Math.floor(r.length / 2)])); }
+function renderMempool() {
+  const m = node.mempool;
+  if (!m) return;
+  const now = Math.floor(Date.now() / 1000);
+  const med = mempoolRate();
+  $('mp-sum').textContent =
+    `${n(m.count)} transaction${m.count === 1 ? '' : 's'} · ${n(m.bytes)} vB · ${n(m.fees)} sat in fees${med != null ? ` · median ${med} sat/vB` : ''} · at height ${n(m.height ?? 0)}`;
+  $('mprows').innerHTML = m.txs.length
+    ? m.txs
+        .map((t) => {
+          const o = W ? ourTx(t) : { spendsOurs: false, toUs: 0 };
+          const age = Math.max(0, now - t.at);
+          return `<tr><td class="mono">${txLink(t.txid, t.txid.slice(0, 16) + '…')}</td><td>${age < 60 ? age + ' s' : age < 3600 ? Math.round(age / 60) + ' min' : (age / 3600).toFixed(1) + ' h'}</td><td class="amt">${esc(n(t.vsize))}</td><td class="amt">${esc(n(t.fee))}</td><td class="amt">${Number(t.feeRate).toFixed(1)}</td><td>${o.spendsOurs ? 'from you' : o.toUs ? 'to you: ' + esc(amt(o.toUs)) : ''}</td></tr>`;
+        })
+        .join('')
+    : '<tr><td colspan="6" class="mut">empty</td></tr>';
+}
+function mempoolRate() {
+  const m = node.mempool;
+  if (!m || !m.txs.length) return null;
+  const r = m.txs.map((t) => t.feeRate).sort((a, b) => a - b);
+  return Math.max(1, Math.ceil(r[Math.floor(r.length / 2)]));
+}
 const fileReady = () => !!(node.sha || node.st?.idx > 0);
-function renderPeers() { const rows = [[BLOCKS_URL.replace(/^https?:\/\//, ''), 'mirror', 'block file, Range', `${(node.recv / 1e6).toFixed(2)} MB`], ...TIP_RELAYS.map((r) => [r.replace('wss://', ''), 'relay', 'signed chain tips (NIP-333)', '—']), ...RELAYS().map((r) => [r.replace('wss://', ''), 'relay', 'payments (kind 23503)', '—']), ...(tn.seeding?.t ? tn.seeding.t.wires.filter((w) => !w.destroyed).map((w) => [w.peerId ? w.peerId.slice(0, 20) + '…' : '(peer)', w.type === 'webSeed' ? 'webseed' : 'swarm peer', 'snapshot pieces (WebRTC)', `${(w.uploaded / 1e6).toFixed(2)} MB sent`]) : [])];
-  $('peerrows').innerHTML = rows.map((p, i) => `<tr data-i="${i}" tabindex="0"><td>${i + 1}</td><td>${Math.round((Date.now() - T0) / 60000)} min</td><td>Outbound</td><td>${esc(p[2])}</td><td>${esc(p[1])}</td><td>—</td><td>${p[1] === 'swarm peer' ? esc(p[3].replace(' sent', '')) : '0 MB'}</td><td>${p[1] === 'swarm peer' ? '—' : esc(p[3])}</td><td class="mono">${esc(p[0])}</td></tr>`).join('');
-  document.querySelectorAll('#peerrows tr').forEach((tr) => { tr.onclick = tr.onkeydown = (e) => { if (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ') return; document.querySelectorAll('#peerrows tr').forEach((x) => { x.classList.toggle('sel', x === tr); x.setAttribute('aria-selected', String(x === tr)); }); const p = rows[tr.dataset.i]; $('pd').innerHTML = `<div class="kv"><span class="l">Peer</span><span class="v">${esc(p[0])}</span><span class="l">Kind</span><span class="v">${esc(p[1])}: ${esc(p[2])}</span><span class="l">Note</span><span class="v">a tab does not speak the peer-to-peer protocol; it reads a mirror's block file and signed tip announcements, and validates everything itself</span></div>`; }; }); }
+function renderPeers() {
+  const rows = [
+    [BLOCKS_URL.replace(/^https?:\/\//, ''), 'mirror', 'block file, Range', `${(node.recv / 1e6).toFixed(2)} MB`],
+    ...TIP_RELAYS.map((r) => [r.replace('wss://', ''), 'relay', 'signed chain tips (NIP-333)', '—']),
+    ...RELAYS().map((r) => [r.replace('wss://', ''), 'relay', 'payments (kind 23503)', '—']),
+    ...(tn.seeding?.t
+      ? tn.seeding.t.wires
+          .filter((w) => !w.destroyed)
+          .map((w) => [
+            w.peerId ? w.peerId.slice(0, 20) + '…' : '(peer)',
+            w.type === 'webSeed' ? 'webseed' : 'swarm peer',
+            'snapshot pieces (WebRTC)',
+            `${(w.uploaded / 1e6).toFixed(2)} MB sent`,
+          ])
+      : []),
+  ];
+  $('peerrows').innerHTML = rows
+    .map(
+      (p, i) =>
+        `<tr data-i="${i}" tabindex="0"><td>${i + 1}</td><td>${Math.round((Date.now() - T0) / 60000)} min</td><td>Outbound</td><td>${esc(p[2])}</td><td>${esc(p[1])}</td><td>—</td><td>${p[1] === 'swarm peer' ? esc(p[3].replace(' sent', '')) : '0 MB'}</td><td>${p[1] === 'swarm peer' ? '—' : esc(p[3])}</td><td class="mono">${esc(p[0])}</td></tr>`,
+    )
+    .join('');
+  document.querySelectorAll('#peerrows tr').forEach((tr) => {
+    tr.onclick = tr.onkeydown = (e) => {
+      if (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ') return;
+      document.querySelectorAll('#peerrows tr').forEach((x) => {
+        x.classList.toggle('sel', x === tr);
+        x.setAttribute('aria-selected', String(x === tr));
+      });
+      const p = rows[tr.dataset.i];
+      $('pd').innerHTML =
+        `<div class="kv"><span class="l">Peer</span><span class="v">${esc(p[0])}</span><span class="l">Kind</span><span class="v">${esc(p[1])}: ${esc(p[2])}</span><span class="l">Note</span><span class="v">a tab does not speak the peer-to-peer protocol; it reads a mirror's block file and signed tip announcements, and validates everything itself</span></div>`;
+    };
+  });
+}
 renderPeers();
 // ---- console, answering from the tab's state in the shapes Knots uses
-const cout = $('cout'), cin = $('cin'); const chist = []; let hi = 0; const err = (code, message) => ({ __err: { code, message } });
-function cprint(s, cls) { const el = document.createElement('span'); if (cls) el.className = cls; el.textContent = s + '\n'; cout.appendChild(el); while (cout.childNodes.length > 2000) cout.removeChild(cout.firstChild); cout.scrollTop = cout.scrollHeight; }
+const cout = $('cout'),
+  cin = $('cin');
+const chist = [];
+let hi = 0;
+const err = (code, message) => ({ __err: { code, message } });
+function cprint(s, cls) {
+  const el = document.createElement('span');
+  if (cls) el.className = cls;
+  el.textContent = s + '\n';
+  cout.appendChild(el);
+  while (cout.childNodes.length > 2000) cout.removeChild(cout.firstChild);
+  cout.scrollTop = cout.scrollHeight;
+}
 const ANS = {
-  getblockchaininfo: () => ({ chain: 'testnet4', blocks: node.height, headers: node.nostr?.height ?? node.height, bestblockhash: node.hash, time: node.time, verificationprogress: node.synced ? 1 : 0, initialblockdownload: !node.synced, pruned: false, size_on_disk: node.st?.dat ?? null, warnings: [`synced from the verified UTXO snapshot at 150307 (hash_serialized_3 ${node.hs ? node.hs.slice(0, 16) + '…' : 'pending'}); BLAKE2b blocks since the fork validated in this tab`, trust().text] }),
-  getblockcount: () => node.height, getbestblockhash: () => node.hash,
-  getsnapshotinfo: () => ({ base_height: 150307, base_hash: node.st?.expect.baseHash, hash_serialized_3: node.hs ?? node.st?.expect.txoutsetHash, verified: node.hsOk ?? (node.st?.idx > 0), sha256: node.sha ?? node.st?.sha ?? null, coins: node.coins ?? node.st?.expect.coins, txids: node.txids ?? null, bytes: node.st?.expect.bytes, source: SNAP_URL, sync_history: Object.fromEntries(node.hist.map(([k, v]) => [k, +(v / 1000).toFixed(1)])) }),
-  gettxoutsetinfo: () => ({ height: node.height, bestblock: node.hash, txouts: node.coins, hash_serialized_3: node.hs ?? '(not recomputed at the tip; the snapshot base is)', note: 'the count is the snapshot\'s plus the blocks applied since; a full recount at the tip is not offered by the tab yet' }),
-  getnetworkinfo: () => ({ version: 1, subversion: `/Reef:${VERSION}/`, networkactive: true, connections: 1 + TIP_RELAYS.length, networks: [{ name: 'mirror', reachable: true, url: BLOCKS_URL }, { name: 'nostr', reachable: true, relays: TIP_RELAYS }], warnings: ['a tab reads a mirror and relays; it does not speak the peer-to-peer protocol'] }),
-  getpeerinfo: () => [{ id: 0, addr: BLOCKS_URL, kind: 'mirror', bytesrecv: node.recv }, ...TIP_RELAYS.map((r, i) => ({ id: i + 1, addr: r, kind: 'relay' }))],
-  getmempoolinfo: () => node.mempool ? { loaded: true, size: node.mempool.count, bytes: node.mempool.bytes, usage: node.mempool.bytes, total_fee: node.mempool.fees / 1e8, mempoolminfee: 0.00001, minrelaytxfee: 0.00001, refused: node.mempool.stats.refused, dropped: node.mempool.stats.dropped, note: 'this tab\'s own mempool: transactions heard on relays and validated here' } : err(-28, 'the mempool is followed once the tab is up to date'),
-  getrawmempool: (a) => node.mempool ? (a[0] === 'true' ? Object.fromEntries(node.mempool.txs.map((t) => [t.txid, { vsize: t.vsize, fees: { base: t.fee / 1e8 }, time: t.at, feerate: t.feeRate }])) : node.mempool.txs.map((t) => t.txid)) : err(-28, 'the mempool is followed once the tab is up to date'),
-  getmempoolentry: (a) => { const t = node.mempool?.txs.find((x) => x.txid === String(a[0] ?? '').toLowerCase()); return t ? { txid: t.txid, vsize: t.vsize, fees: { base: t.fee / 1e8 }, time: t.at, feerate: t.feeRate, inputs: t.inputs, outputs: t.outputs } : err(-5, 'Transaction not in mempool'); },
-  getnostrtip: () => node.nostr ? { height: node.nostr.height, hash: node.nostr.hash, relay: node.nostr.relay, created_at: node.nostr.created_at, agree: node.nostr.agree, diverged: !!node.nostr.diverged, live: !!node.nostr.live } : err(-1, 'no tip announcement seen yet'),
-  gettxout: (a) => { if (!/^[0-9a-f]{64}$/i.test(a[0] ?? '') || !/^\d+$/.test(a[1] ?? '')) return err(-8, 'gettxout "txid" n'); post({ type: 'coin', key: `${a[0].toLowerCase()}:${a[1]}` }); return '(asked the node; the answer prints when it arrives)'; },
-  getblockhash: (a) => { const h = Number(a[0]); if (!/^\d+$/.test(a[0] ?? '')) return err(-8, 'getblockhash height'); if (h === 150307) return node.st?.expect.baseHash; if (!node.synced) return err(-28, 'still syncing'); if (h < 150308 || h > node.height) return err(-8, `Block height out of range: this tab holds ${n(150308)} to ${n(node.height)} (the BLAKE2b blocks; the snapshot base is 150307)`); post({ type: 'block', height: h, req: 'hash' }); return '(reading the block file…)'; },
-  getblock: (a) => { if (!node.synced) return err(-28, 'still syncing'); if (/^[0-9a-f]{64}$/i.test(a[0] ?? '')) post({ type: 'block', hash: a[0].toLowerCase(), req: 'block' }); else if (/^\d+$/.test(a[0] ?? '')) post({ type: 'block', height: Number(a[0]), req: 'block' }); else return err(-8, 'getblock "blockhash" (or a height)'); return '(reading the block file…)'; },
+  getblockchaininfo: () => ({
+    chain: 'testnet4',
+    blocks: node.height,
+    headers: node.nostr?.height ?? node.height,
+    bestblockhash: node.hash,
+    time: node.time,
+    verificationprogress: node.synced ? 1 : 0,
+    initialblockdownload: !node.synced,
+    pruned: false,
+    size_on_disk: node.st?.dat ?? null,
+    warnings: [
+      `synced from the verified UTXO snapshot at 150307 (hash_serialized_3 ${node.hs ? node.hs.slice(0, 16) + '…' : 'pending'}); BLAKE2b blocks since the fork validated in this tab`,
+      trust().text,
+    ],
+  }),
+  getblockcount: () => node.height,
+  getbestblockhash: () => node.hash,
+  getsnapshotinfo: () => ({
+    base_height: 150307,
+    base_hash: node.st?.expect.baseHash,
+    hash_serialized_3: node.hs ?? node.st?.expect.txoutsetHash,
+    verified: node.hsOk ?? node.st?.idx > 0,
+    sha256: node.sha ?? node.st?.sha ?? null,
+    coins: node.coins ?? node.st?.expect.coins,
+    txids: node.txids ?? null,
+    bytes: node.st?.expect.bytes,
+    source: SNAP_URL,
+    sync_history: Object.fromEntries(node.hist.map(([k, v]) => [k, +(v / 1000).toFixed(1)])),
+  }),
+  gettxoutsetinfo: () => ({
+    height: node.height,
+    bestblock: node.hash,
+    txouts: node.coins,
+    hash_serialized_3: node.hs ?? '(not recomputed at the tip; the snapshot base is)',
+    note: "the count is the snapshot's plus the blocks applied since; a full recount at the tip is not offered by the tab yet",
+  }),
+  getnetworkinfo: () => ({
+    version: 1,
+    subversion: `/Reef:${VERSION}/`,
+    networkactive: true,
+    connections: 1 + TIP_RELAYS.length,
+    networks: [
+      { name: 'mirror', reachable: true, url: BLOCKS_URL },
+      { name: 'nostr', reachable: true, relays: TIP_RELAYS },
+    ],
+    warnings: ['a tab reads a mirror and relays; it does not speak the peer-to-peer protocol'],
+  }),
+  getpeerinfo: () => [
+    { id: 0, addr: BLOCKS_URL, kind: 'mirror', bytesrecv: node.recv },
+    ...TIP_RELAYS.map((r, i) => ({ id: i + 1, addr: r, kind: 'relay' })),
+  ],
+  getmempoolinfo: () =>
+    node.mempool
+      ? {
+          loaded: true,
+          size: node.mempool.count,
+          bytes: node.mempool.bytes,
+          usage: node.mempool.bytes,
+          total_fee: node.mempool.fees / 1e8,
+          mempoolminfee: 0.00001,
+          minrelaytxfee: 0.00001,
+          refused: node.mempool.stats.refused,
+          dropped: node.mempool.stats.dropped,
+          note: "this tab's own mempool: transactions heard on relays and validated here",
+        }
+      : err(-28, 'the mempool is followed once the tab is up to date'),
+  getrawmempool: (a) =>
+    node.mempool
+      ? a[0] === 'true'
+        ? Object.fromEntries(
+            node.mempool.txs.map((t) => [t.txid, { vsize: t.vsize, fees: { base: t.fee / 1e8 }, time: t.at, feerate: t.feeRate }]),
+          )
+        : node.mempool.txs.map((t) => t.txid)
+      : err(-28, 'the mempool is followed once the tab is up to date'),
+  getmempoolentry: (a) => {
+    const t = node.mempool?.txs.find((x) => x.txid === String(a[0] ?? '').toLowerCase());
+    return t
+      ? { txid: t.txid, vsize: t.vsize, fees: { base: t.fee / 1e8 }, time: t.at, feerate: t.feeRate, inputs: t.inputs, outputs: t.outputs }
+      : err(-5, 'Transaction not in mempool');
+  },
+  getnostrtip: () =>
+    node.nostr
+      ? {
+          height: node.nostr.height,
+          hash: node.nostr.hash,
+          relay: node.nostr.relay,
+          created_at: node.nostr.created_at,
+          agree: node.nostr.agree,
+          diverged: !!node.nostr.diverged,
+          live: !!node.nostr.live,
+        }
+      : err(-1, 'no tip announcement seen yet'),
+  gettxout: (a) => {
+    if (!/^[0-9a-f]{64}$/i.test(a[0] ?? '') || !/^\d+$/.test(a[1] ?? '')) return err(-8, 'gettxout "txid" n');
+    post({ type: 'coin', key: `${a[0].toLowerCase()}:${a[1]}` });
+    return '(asked the node; the answer prints when it arrives)';
+  },
+  getblockhash: (a) => {
+    const h = Number(a[0]);
+    if (!/^\d+$/.test(a[0] ?? '')) return err(-8, 'getblockhash height');
+    if (h === 150307) return node.st?.expect.baseHash;
+    if (!node.synced) return err(-28, 'still syncing');
+    if (h < 150308 || h > node.height)
+      return err(
+        -8,
+        `Block height out of range: this tab holds ${n(150308)} to ${n(node.height)} (the BLAKE2b blocks; the snapshot base is 150307)`,
+      );
+    post({ type: 'block', height: h, req: 'hash' });
+    return '(reading the block file…)';
+  },
+  getblock: (a) => {
+    if (!node.synced) return err(-28, 'still syncing');
+    if (/^[0-9a-f]{64}$/i.test(a[0] ?? '')) post({ type: 'block', hash: a[0].toLowerCase(), req: 'block' });
+    else if (/^\d+$/.test(a[0] ?? '')) post({ type: 'block', height: Number(a[0]), req: 'block' });
+    else return err(-8, 'getblock "blockhash" (or a height)');
+    return '(reading the block file…)';
+  },
   getblockheader: (a) => ANS.getblock(a),
   uptime: () => Math.floor((Date.now() - T0) / 1000),
-  getbalance: () => (W?.coinsKnown ? wallBal().available / 1e8 : err(-18, 'wallet not ready')), getwalletinfo: () => (W?.coinsKnown ? { walletname: 'reef', format: 'one key in this tab (rawtr)', balance: wallBal().available / 1e8, unconfirmed_balance: wallBal().pending / 1e8, immature_balance: wallBal().immature / 1e8, txcount: ledger.size + sent.length, keypoolsize: 1, descriptors: true, backed_up: backedUp(), note: 'coins created since the snapshot; the tab does not scan the snapshot itself for a script' } : err(-18, 'wallet not ready')),
-  getnewaddress: () => (W ? W.address : err(-18, 'wallet not ready')), getaddressinfo: (a) => { if (!W) return err(-18, 'wallet not ready'); const d = W.addr.decodeAddress(a[0] ?? ''); return d ? { address: a[0], scriptPubKey: d.script, ismine: d.script === W.script, iswitness: true, witness_version: d.version, witness_program: d.program, sendable: !WL.checkDestination(d).error } : err(-5, 'Invalid address'); },
-  listunspent: () => (W ? W.coins.map((c) => ({ txid: c.key.slice(0, 64), vout: Number(c.key.slice(65)), address: W.address, scriptPubKey: W.script, amount: c.value / 1e8, confirmations: W.height != null ? W.height - c.height + 1 : null, spendable: WL.isMature(c, W.height), coinbase: !!c.coinbase })) : err(-18, 'wallet not ready')),
+  getbalance: () => (W?.coinsKnown ? wallBal().available / 1e8 : err(-18, 'wallet not ready')),
+  getwalletinfo: () =>
+    W?.coinsKnown
+      ? {
+          walletname: 'reef',
+          format: 'one key in this tab (rawtr)',
+          balance: wallBal().available / 1e8,
+          unconfirmed_balance: wallBal().pending / 1e8,
+          immature_balance: wallBal().immature / 1e8,
+          txcount: ledger.size + sent.length,
+          keypoolsize: 1,
+          descriptors: true,
+          backed_up: backedUp(),
+          note: 'coins created since the snapshot; the tab does not scan the snapshot itself for a script',
+        }
+      : err(-18, 'wallet not ready'),
+  getnewaddress: () => (W ? W.address : err(-18, 'wallet not ready')),
+  getaddressinfo: (a) => {
+    if (!W) return err(-18, 'wallet not ready');
+    const d = W.addr.decodeAddress(a[0] ?? '');
+    return d
+      ? {
+          address: a[0],
+          scriptPubKey: d.script,
+          ismine: d.script === W.script,
+          iswitness: true,
+          witness_version: d.version,
+          witness_program: d.program,
+          sendable: !WL.checkDestination(d).error,
+        }
+      : err(-5, 'Invalid address');
+  },
+  listunspent: () =>
+    W
+      ? W.coins.map((c) => ({
+          txid: c.key.slice(0, 64),
+          vout: Number(c.key.slice(65)),
+          address: W.address,
+          scriptPubKey: W.script,
+          amount: c.value / 1e8,
+          confirmations: W.height != null ? W.height - c.height + 1 : null,
+          spendable: WL.isMature(c, W.height),
+          coinbase: !!c.coinbase,
+        }))
+      : err(-18, 'wallet not ready'),
   sendtoaddress: () => err(-4, 'send from the Send page, where the payment is shown and confirmed before it leaves'),
   listsent: () => sent.map(({ hex, ...s }) => s),
-  help: () => `== Blockchain ==\ngetbestblockhash\ngetblock "blockhash" | height\ngetblockchaininfo\ngetblockcount\ngetblockhash height\ngetsnapshotinfo\ngettxout "txid" n\ngettxoutsetinfo\n\n== Control ==\nhelp\nuptime\n\n== Mempool ==\ngetmempoolentry "txid"\ngetmempoolinfo\ngetrawmempool [true]\n\n== Network ==\ngetnetworkinfo\ngetnostrtip\ngetpeerinfo\n\n== Wallet ==\ngetaddressinfo "address"\ngetbalance\ngetnewaddress\ngetwalletinfo\nlistsent\nlistunspent`,
+  help: () =>
+    `== Blockchain ==\ngetbestblockhash\ngetblock "blockhash" | height\ngetblockchaininfo\ngetblockcount\ngetblockhash height\ngetsnapshotinfo\ngettxout "txid" n\ngettxoutsetinfo\n\n== Control ==\nhelp\nuptime\n\n== Mempool ==\ngetmempoolentry "txid"\ngetmempoolinfo\ngetrawmempool [true]\n\n== Network ==\ngetnetworkinfo\ngetnostrtip\ngetpeerinfo\n\n== Wallet ==\ngetaddressinfo "address"\ngetbalance\ngetnewaddress\ngetwalletinfo\nlistsent\nlistunspent`,
 };
-cin.onkeydown = (e) => { if (e.key === 'ArrowUp') { hi = Math.max(0, hi - 1); cin.value = chist[hi] ?? ''; } else if (e.key === 'ArrowDown') { hi = Math.min(chist.length, hi + 1); cin.value = chist[hi] ?? ''; } else if (e.ctrlKey && e.key.toLowerCase() === 'l') { e.preventDefault(); cout.textContent = ''; } else if (e.key === 'Enter') { const line = cin.value.trim(); cin.value = ''; if (!line) return; chist.push(line); hi = chist.length; cprint('> ' + line, 'cmd'); const [cmd, ...args] = line.split(/\s+/); const f = Object.hasOwn(ANS, cmd) ? ANS[cmd] : null; if (!f) return cprint('Method not found (code -32601)', 'err'); let a; try { a = f(args.map((x) => x.replace(/^"|"$/g, ''))); } catch (x) { return cprint(x.message, 'err'); } if (a && a.__err) return cprint(`${a.__err.message} (code ${a.__err.code})`, 'err'); cprint(typeof a === 'string' ? a : JSON.stringify(a, null, 2)); } };
-function drawTraffic() { const c = $('trc'), dpr = devicePixelRatio; c.width = c.clientWidth * dpr; c.height = 260 * dpr; const x = c.getContext('2d'); x.clearRect(0, 0, c.width, c.height); x.strokeStyle = getComputedStyle(document.body).getPropertyValue('--line2') || '#ddd'; for (let i = 1; i < 5; i++) { x.beginPath(); x.moveTo(0, c.height * i / 5); x.lineTo(c.width, c.height * i / 5); x.stroke(); } x.fillStyle = getComputedStyle(document.body).getPropertyValue('--mut') || '#555'; x.font = `${12 * dpr}px DejaVu Sans, sans-serif`; x.fillText(`received ${(node.recv / 1e6).toFixed(2)} MB in this session: the snapshot${node.hist.length ? ' and the block file' : ''}`, 8 * dpr, 16 * dpr); }
+cin.onkeydown = (e) => {
+  if (e.key === 'ArrowUp') {
+    hi = Math.max(0, hi - 1);
+    cin.value = chist[hi] ?? '';
+  } else if (e.key === 'ArrowDown') {
+    hi = Math.min(chist.length, hi + 1);
+    cin.value = chist[hi] ?? '';
+  } else if (e.ctrlKey && e.key.toLowerCase() === 'l') {
+    e.preventDefault();
+    cout.textContent = '';
+  } else if (e.key === 'Enter') {
+    const line = cin.value.trim();
+    cin.value = '';
+    if (!line) return;
+    chist.push(line);
+    hi = chist.length;
+    cprint('> ' + line, 'cmd');
+    const [cmd, ...args] = line.split(/\s+/);
+    const f = Object.hasOwn(ANS, cmd) ? ANS[cmd] : null;
+    if (!f) return cprint('Method not found (code -32601)', 'err');
+    let a;
+    try {
+      a = f(args.map((x) => x.replace(/^"|"$/g, '')));
+    } catch (x) {
+      return cprint(x.message, 'err');
+    }
+    if (a && a.__err) return cprint(`${a.__err.message} (code ${a.__err.code})`, 'err');
+    cprint(typeof a === 'string' ? a : JSON.stringify(a, null, 2));
+  }
+};
+function drawTraffic() {
+  const c = $('trc'),
+    dpr = devicePixelRatio;
+  c.width = c.clientWidth * dpr;
+  c.height = 260 * dpr;
+  const x = c.getContext('2d');
+  x.clearRect(0, 0, c.width, c.height);
+  x.strokeStyle = getComputedStyle(document.body).getPropertyValue('--line2') || '#ddd';
+  for (let i = 1; i < 5; i++) {
+    x.beginPath();
+    x.moveTo(0, (c.height * i) / 5);
+    x.lineTo(c.width, (c.height * i) / 5);
+    x.stroke();
+  }
+  x.fillStyle = getComputedStyle(document.body).getPropertyValue('--mut') || '#555';
+  x.font = `${12 * dpr}px DejaVu Sans, sans-serif`;
+  x.fillText(
+    `received ${(node.recv / 1e6).toFixed(2)} MB in this session: the snapshot${node.hist.length ? ' and the block file' : ''}`,
+    8 * dpr,
+    16 * dpr,
+  );
+}
 // ---- diagnostics a person can paste into an issue: no key, no addresses of others
-async function copyDiagnostics() { const est = await navigator.storage?.estimate?.().catch(() => null); const persisted = await navigator.storage?.persisted?.().catch(() => null);
-  const d = { reef: VERSION, node: NODE.slice(-40), lib: LIB.match(/@([0-9a-f]{40})/)?.[1], engine: CDN.slice(-40), ua: navigator.userAgent, embedded, storage: est ? { usage: est.usage, quota: est.quota } : null, persisted, phase: node.phase, synced: !!node.synced, height: node.height, error: node.error ?? null, lastError: node.lastError ?? null, trust: trust(), hist: node.hist, mempool: node.mempool ? { count: node.mempool.count, stats: node.mempool.stats } : null, sources: { snapshot: SNAP_URL === DEFAULT_SNAP ? 'default' : SNAP_URL, blocks: BLOCKS_URL === DEFAULT_BLOCKS ? 'default' : BLOCKS_URL }, wallet: W ? { coins: W.coins.length, pending: sent.filter((s) => s.pending).length, backedUp: backedUp() } : null, log: [...cout.childNodes].slice(-200).map((x) => x.textContent.trim().replace(/\b(tb1|bc1|bcrt1)[0-9a-z]{20,}/gi, '<address>').replace(/\b[0-9a-f]{64}\b/g, '<txid>')) };
-  try { await navigator.clipboard.writeText(JSON.stringify(d, null, 1)); notify('Diagnostics copied', 'paste them into an issue on GitHub; they hold no key'); } catch { notify('Not copied', 'the browser did not allow the clipboard'); } }
+async function copyDiagnostics() {
+  const est = await navigator.storage?.estimate?.().catch(() => null);
+  const persisted = await navigator.storage?.persisted?.().catch(() => null);
+  const d = {
+    reef: VERSION,
+    node: NODE.slice(-40),
+    lib: LIB.match(/@([0-9a-f]{40})/)?.[1],
+    engine: CDN.slice(-40),
+    ua: navigator.userAgent,
+    embedded,
+    storage: est ? { usage: est.usage, quota: est.quota } : null,
+    persisted,
+    phase: node.phase,
+    synced: !!node.synced,
+    height: node.height,
+    error: node.error ?? null,
+    lastError: node.lastError ?? null,
+    trust: trust(),
+    hist: node.hist,
+    mempool: node.mempool ? { count: node.mempool.count, stats: node.mempool.stats } : null,
+    sources: { snapshot: SNAP_URL === DEFAULT_SNAP ? 'default' : SNAP_URL, blocks: BLOCKS_URL === DEFAULT_BLOCKS ? 'default' : BLOCKS_URL },
+    wallet: W ? { coins: W.coins.length, pending: sent.filter((s) => s.pending).length, backedUp: backedUp() } : null,
+    log: [...cout.childNodes].slice(-200).map((x) =>
+      x.textContent
+        .trim()
+        .replace(/\b(tb1|bc1|bcrt1)[0-9a-z]{20,}/gi, '<address>')
+        .replace(/\b[0-9a-f]{64}\b/g, '<txid>'),
+    ),
+  };
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(d, null, 1));
+    notify('Diagnostics copied', 'paste them into an issue on GitHub; they hold no key');
+  } catch {
+    notify('Not copied', 'the browser did not allow the clipboard');
+  }
+}
 // ---- a newer Reef: checked every hour, offered, never forced
-async function checkVersion() { try { const v = await (await fetch('version.json', { cache: 'no-cache' })).json(); if (v.version && v.version !== VERSION) banner('update', 'info', `A newer Reef is available (${v.version}). Reload to use it; the node and the wallet carry on where they are. The web host can take up to ten minutes to serve it everywhere.`, [['Reload', () => { location.search = (keepQuery() ? keepQuery() + '&' : '?') + 'v=' + encodeURIComponent(v.version); }]]); } catch {} }
-setTimeout(checkVersion, 30e3); setInterval(checkVersion, 3600e3);
+async function checkVersion() {
+  try {
+    const v = await (await fetch('version.json', { cache: 'no-cache' })).json();
+    if (v.version && v.version !== VERSION)
+      banner(
+        'update',
+        'info',
+        `A newer Reef is available (${v.version}). Reload to use it; the node and the wallet carry on where they are. The web host can take up to ten minutes to serve it everywhere.`,
+        [
+          [
+            'Reload',
+            () => {
+              location.search = (keepQuery() ? keepQuery() + '&' : '?') + 'v=' + encodeURIComponent(v.version);
+            },
+          ],
+        ],
+      );
+  } catch {}
+}
+setTimeout(checkVersion, 30e3);
+setInterval(checkVersion, 3600e3);
 
 // ---- start: one tab of this origin runs the node and the wallet; the first visit asks before fetching 830 MB
-walletInit().catch((e) => { cprint('wallet could not start: ' + e.message, 'err'); $('rcvaddr').value = 'the wallet could not start: ' + e.message; banner('walleterr', 'bad', 'The wallet could not start: ' + e.message + '. Reload to try again.', [['Reload', () => location.reload()]]); });
-tn.on('message', onMessage); tn.on('sync', ({ msg, pct, eta }) => { setSync(msg, pct, eta); if (W && !W.coinsKnown) renderWallet(); }); tn.on('hist', renderHist); tn.on('log', ({ text, level }) => cprint(level === 'err' ? text : '· ' + text, level));
-tn.on('seeding', () => { if (document.querySelector('#nwtabs [aria-selected=true]')?.dataset.t === 'peers') renderPeers(); renderInfo(); });
-applyDisplay(); document.querySelectorAll('label').forEach((l) => { if (l.htmlFor || l.querySelector('input,select,textarea')) return; const nx = l.nextElementSibling; const inp = nx?.matches?.('input,textarea,select') ? nx : nx?.querySelector?.('input,textarea,select'); if (inp?.id) l.htmlFor = inp.id; });
-if (embedded && document.hasStorageAccess) document.hasStorageAccess().then((ok) => { if (!ok) banner('embedded', 'warn', 'Inside this page the browser gives Reef separate storage: a different wallet key and a second copy of the snapshot than Reef opened on its own. To use your wallet, open Reef in its own tab.', [['Open Reef', () => window.open('https://bitcoin-blake.github.io/reef/', '_blank', 'noopener')]]); }).catch(() => {});
+walletInit().catch((e) => {
+  cprint('wallet could not start: ' + e.message, 'err');
+  $('rcvaddr').value = 'the wallet could not start: ' + e.message;
+  banner('walleterr', 'bad', 'The wallet could not start: ' + e.message + '. Reload to try again.', [['Reload', () => location.reload()]]);
+});
+tn.on('message', onMessage);
+tn.on('sync', ({ msg, pct, eta }) => {
+  setSync(msg, pct, eta);
+  if (W && !W.coinsKnown) renderWallet();
+});
+tn.on('hist', renderHist);
+tn.on('log', ({ text, level }) => cprint(level === 'err' ? text : '· ' + text, level));
+tn.on('seeding', () => {
+  if (document.querySelector('#nwtabs [aria-selected=true]')?.dataset.t === 'peers') renderPeers();
+  renderInfo();
+});
+applyDisplay();
+document.querySelectorAll('label').forEach((l) => {
+  if (l.htmlFor || l.querySelector('input,select,textarea')) return;
+  const nx = l.nextElementSibling;
+  const inp = nx?.matches?.('input,textarea,select') ? nx : nx?.querySelector?.('input,textarea,select');
+  if (inp?.id) l.htmlFor = inp.id;
+});
+if (embedded && document.hasStorageAccess)
+  document
+    .hasStorageAccess()
+    .then((ok) => {
+      if (!ok)
+        banner(
+          'embedded',
+          'warn',
+          'Inside this page the browser gives Reef separate storage: a different wallet key and a second copy of the snapshot than Reef opened on its own. To use your wallet, open Reef in its own tab.',
+          [['Open Reef', () => window.open('https://bitcoin-blake.github.io/reef/', '_blank', 'noopener')]],
+        );
+    })
+    .catch(() => {});
 // the idle tab: one path, whether the probe or the loader found the node taken; it waits for the lock and offers to take over
-function goIdle() { IDLE = true; document.body.classList.add('idle'); $('nwidle').hidden = false; unbanner('backup'); $('m-wipe').setAttribute('aria-disabled', 'true'); $('m-wipe').classList.add('off'); $('m-wipe').setAttribute('aria-description', 'the node runs in another tab: wipe from there'); $('m-wipe').title = 'the node runs in another tab: wipe from there'; for (const id of ['sendto', 'sendamt', 'sendunit', 'sendall', 'sendgo', 'sendpaste']) $(id).disabled = true; sendInfo('The node and the wallet run in another tab of this browser: send from there.');
-  setSync('idle: the node runs in another tab of this browser', null); document.title = 'Reef · idle (open in another tab)'; renderWallet(); updatePreview(); renderStatus();
-  banner('twotabs', 'warn', 'Reef is already open in another tab of this browser, or Bight, Winch or Hitch runs the node there. This tab stays idle and changes nothing: two tabs would fight over the node\'s files and could spend the same coins twice. It takes over as soon as the other tab closes.', [['Check again', () => location.reload()]]);
-  const wait = () => navigator.locks?.request('bitcoin-blake:node', () => {}).then(() => setTimeout(async () => { const q2 = await navigator.locks.query().catch(() => null); if ((q2?.held ?? []).some((l) => l.name === 'bitcoin-blake:node')) return wait(); IDLE_TEXT = 'The other tab has closed: choose Run it here to run the node and the wallet in this tab.'; setSync('the other tab has closed: this tab can run the node', null); renderWallet(); renderStatus(); banner('twotabs', 'info', 'The other tab has closed: this one can run the node now.', [['Run it here', () => location.reload()]]); }, 3500)).catch(() => {}); wait(); }
-addEventListener('storage', (e) => { if (!IDLE || !W || e.key !== sentKey()) return; try { sent = JSON.parse(e.newValue ?? '[]').filter((x) => !W.validRecord || W.validRecord(x)); renderWallet(); } catch {} });
-async function startNode(force = false) { unbanner('welcome'); try { const started = await tn.start({ force }); if (started === false) { if (node.lockError) return lockFailed(node.lockError); goIdle(); } else { RUNNING = true; pendingSort?.(); pendingSort = null; } } catch (e) { showFatal(plainError(e.message)); } }
-function lockFailed(err) { setSync('not started: the browser refused the lock that keeps one node per browser', null); banner('lockfail', 'bad', `This browser refused the lock that keeps Reef to one tab (${err}). Running anyway is safe only if no other tab of Reef, Bight, Winch or Hitch is open.`, [['Run anyway in this tab', () => { unbanner('lockfail'); startNode(true); }]]); }
+function goIdle() {
+  IDLE = true;
+  document.body.classList.add('idle');
+  $('nwidle').hidden = false;
+  unbanner('backup');
+  $('m-wipe').setAttribute('aria-disabled', 'true');
+  $('m-wipe').classList.add('off');
+  $('m-wipe').setAttribute('aria-description', 'the node runs in another tab: wipe from there');
+  $('m-wipe').title = 'the node runs in another tab: wipe from there';
+  for (const id of ['sendto', 'sendamt', 'sendunit', 'sendall', 'sendgo', 'sendpaste']) $(id).disabled = true;
+  sendInfo('The node and the wallet run in another tab of this browser: send from there.');
+  setSync('idle: the node runs in another tab of this browser', null);
+  document.title = 'Reef · idle (open in another tab)';
+  renderWallet();
+  updatePreview();
+  renderStatus();
+  banner(
+    'twotabs',
+    'warn',
+    "Reef is already open in another tab of this browser, or Bight, Winch or Hitch runs the node there. This tab stays idle and changes nothing: two tabs would fight over the node's files and could spend the same coins twice. It takes over as soon as the other tab closes.",
+    [['Check again', () => location.reload()]],
+  );
+  const wait = () =>
+    navigator.locks
+      ?.request('bitcoin-blake:node', () => {})
+      .then(() =>
+        setTimeout(async () => {
+          const q2 = await navigator.locks.query().catch(() => null);
+          if ((q2?.held ?? []).some((l) => l.name === 'bitcoin-blake:node')) return wait();
+          IDLE_TEXT = 'The other tab has closed: choose Run it here to run the node and the wallet in this tab.';
+          setSync('the other tab has closed: this tab can run the node', null);
+          renderWallet();
+          renderStatus();
+          banner('twotabs', 'info', 'The other tab has closed: this one can run the node now.', [['Run it here', () => location.reload()]]);
+        }, 3500),
+      )
+      .catch(() => {});
+  wait();
+}
+addEventListener('storage', (e) => {
+  if (!IDLE || !W || e.key !== sentKey()) return;
+  try {
+    sent = JSON.parse(e.newValue ?? '[]').filter((x) => !W.validRecord || W.validRecord(x));
+    renderWallet();
+  } catch {}
+});
+async function startNode(force = false) {
+  unbanner('welcome');
+  try {
+    const started = await tn.start({ force });
+    if (started === false) {
+      if (node.lockError) return lockFailed(node.lockError);
+      goIdle();
+    } else {
+      RUNNING = true;
+      pendingSort?.();
+      pendingSort = null;
+    }
+  } catch (e) {
+    showFatal(plainError(e.message));
+  }
+}
+function lockFailed(err) {
+  setSync('not started: the browser refused the lock that keeps one node per browser', null);
+  banner(
+    'lockfail',
+    'bad',
+    `This browser refused the lock that keeps Reef to one tab (${err}). Running anyway is safe only if no other tab of Reef, Bight, Winch or Hitch is open.`,
+    [
+      [
+        'Run anyway in this tab',
+        () => {
+          unbanner('lockfail');
+          startNode(true);
+        },
+      ],
+    ],
+  );
+}
 async function begin() {
   // a reload of this same tab can find the lock still held by the page it replaces for a moment: wait up to three seconds for it
-  let sole = true, lockErr = null; if (navigator.locks) { sole = await navigator.locks.request('bitcoin-blake:node', { signal: AbortSignal.timeout(3000) }, () => true).catch((e) => { if (e?.name !== 'AbortError' && e?.name !== 'TimeoutError') lockErr = e?.message || String(e); return false; }); }
-  if (lockErr) { PROBING = false; return lockFailed(lockErr); }
-  PROBING = false; if (!sole) return goIdle();
-  if (LS.get('reef:started') || RETURNING) { LS.set('reef:started', String(Date.now())); return startNode(); }
-  const est = await navigator.storage?.estimate?.().catch(() => null); const free = est ? est.quota - est.usage : null;
-  $('wl-space').textContent = free == null ? 'The browser does not say how much space it allows.' : free < 1.2e9 ? `The browser allows ${mib(free)} more for this site, less than the 1.1 GB needed: free disk space first, or the fetch will stop part-way.` : `The browser allows ${mib(free)} for this site; 1.1 GB is needed.`;
-  $('wl-start').onclick = async () => { $('welcome').close(); node.notStarted = false; LS.set('reef:started', String(Date.now())); navigator.storage?.persist?.().catch(() => {}); if (OPT.notify && 'Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {}); startNode(); };
-  $('wl-later').onclick = () => { $('welcome').close(); node.notStarted = true; renderWallet(); setSync('not started: nothing is downloaded until you choose Start', null); banner('welcome', 'info', 'The node is not started. Nothing is downloaded until you start it.', [['Start the node…', () => $('welcome').showModal()]]); };
-  $('welcome').oncancel = (e) => { e.preventDefault(); $('wl-later').onclick(); }; $('welcome').showModal(); }
+  let sole = true,
+    lockErr = null;
+  if (navigator.locks) {
+    sole = await navigator.locks
+      .request('bitcoin-blake:node', { signal: AbortSignal.timeout(3000) }, () => true)
+      .catch((e) => {
+        if (e?.name !== 'AbortError' && e?.name !== 'TimeoutError') lockErr = e?.message || String(e);
+        return false;
+      });
+  }
+  if (lockErr) {
+    PROBING = false;
+    return lockFailed(lockErr);
+  }
+  PROBING = false;
+  if (!sole) return goIdle();
+  if (LS.get('reef:started') || RETURNING) {
+    LS.set('reef:started', String(Date.now()));
+    return startNode();
+  }
+  const est = await navigator.storage?.estimate?.().catch(() => null);
+  const free = est ? est.quota - est.usage : null;
+  $('wl-space').textContent =
+    free == null
+      ? 'The browser does not say how much space it allows.'
+      : free < 1.2e9
+        ? `The browser allows ${mib(free)} more for this site, less than the 1.1 GB needed: free disk space first, or the fetch will stop part-way.`
+        : `The browser allows ${mib(free)} for this site; 1.1 GB is needed.`;
+  $('wl-start').onclick = async () => {
+    $('welcome').close();
+    node.notStarted = false;
+    LS.set('reef:started', String(Date.now()));
+    navigator.storage?.persist?.().catch(() => {});
+    if (OPT.notify && 'Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
+    startNode();
+  };
+  $('wl-later').onclick = () => {
+    $('welcome').close();
+    node.notStarted = true;
+    renderWallet();
+    setSync('not started: nothing is downloaded until you choose Start', null);
+    banner('welcome', 'info', 'The node is not started. Nothing is downloaded until you start it.', [
+      ['Start the node…', () => $('welcome').showModal()],
+    ]);
+  };
+  $('welcome').oncancel = (e) => {
+    e.preventDefault();
+    $('wl-later').onclick();
+  };
+  $('welcome').showModal();
+}
 begin();
