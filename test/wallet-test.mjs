@@ -390,5 +390,149 @@ t(
     throws(() => W.planReplace({ ...s, sats: 100000 - s.fee - 50, change: 50 }, { rate: 1, ownSpk: spkA }), /too small/),
   );
 }
+
+// ---- round 7: a comma that could mean a thousand times more, sizes past 252 inputs, no-change payments, released coins
+t(
+  '"0,001" is a decimal comma: 0.001, never 1',
+  W.parseAmount('0,001') === 100000 && W.parseAmount('0,500') === 50000000 && W.parseAmount(',5') === 50000000,
+);
+t(
+  '"1,500" alone is refused in tBTC and mtBTC (1500 or 1.5?), read in sat, and read with a dot',
+  throws(() => W.parseAmount('1,500'), /dot for decimals/) &&
+    throws(() => W.parseAmount('2,500', 'mtbtc'), /dot/) &&
+    W.parseAmount('1,500', 'sats') === 1500 &&
+    W.parseAmount('1,000.5') === 100050000000 &&
+    W.parseAmount('12,5') === 1250000000,
+);
+{
+  // 253 inputs: the input count takes three bytes; the estimate must not be below the real size (the fee would miss 1 sat/vB)
+  const many = Array.from({ length: 253 }, (_, i) => coin(1000 + i, 1000));
+  const p = W.plan({ coins: many, amount: 0, rate: 1, destSpk: spkB, changeSpk: spkA, all: true });
+  const tx = W.unsignedTx(p);
+  txsign.signKeyPath(
+    { k, hash, signer },
+    tx,
+    p.picked.map((c) => ({ value: c.value, scriptPubKey: spkA })),
+    keyA,
+  );
+  const real = W.vsizeOf(k, tx);
+  t(
+    '253 inputs: the size estimate is not below the signed size, so the fee meets the rate',
+    p.vsize >= real && p.fee >= real,
+    `estimate ${p.vsize}, real ${real}`,
+  );
+  const few = Array.from({ length: 252 }, (_, i) => coin(2000 + i, 1000));
+  t(
+    '252 inputs: one byte less in the count (the estimate steps by the varint)',
+    W.estimateVsize(253, [spkB]) - W.estimateVsize(252, [spkB]) >= 60 && W.estimateVsize(252, [spkB]) - W.estimateVsize(251, [spkB]) <= 58,
+    String(few.length),
+  );
+}
+{
+  const one = [coin(9, 10000)];
+  const p = W.plan({ coins: one, amount: 9870, rate: 1, destSpk: spkB, changeSpk: spkA });
+  t(
+    'a payment the coins cover only without change is made without change, the rest to the fee',
+    p.outputs.length === 1 && p.change === 0 && p.fee === 130 && p.fee >= p.vsize,
+    JSON.stringify({ fee: p.fee, vsize: p.vsize }),
+  );
+  t(
+    '...and one they cannot cover even then is still refused',
+    throws(() => W.plan({ coins: one, amount: 9950, rate: 1, destSpk: spkB, changeSpk: spkA }), /not enough/),
+  );
+  t(
+    'change of exactly 330 sat is kept as an output (dust is below it)',
+    W.plan({ coins: one, amount: 10000 - 330 - 155, rate: 1, destSpk: spkB, changeSpk: spkA }).outputs.length === 2,
+  );
+  t(
+    'the smallest payment is 546 sat: 545 is refused, 546 made',
+    throws(() => W.plan({ coins: one, amount: 545, rate: 1, destSpk: spkB, changeSpk: spkA }), /at least 546/) &&
+      W.plan({ coins: one, amount: 546, rate: 1, destSpk: spkB, changeSpk: spkA }).amount === 546,
+  );
+}
+t(
+  'coins of a released set-aside record, and of a payment only refused here, go first',
+  (() => {
+    const f = W.reuseFirst(
+      [{ pending: true, refusedNote: 'x', inputs: ['r:0'] }],
+      [
+        { pending: true, released: true, inputs: ['q:0'] },
+        { pending: true, inputs: ['h:0'] },
+      ],
+    );
+    return f.has('r:0') && f.has('q:0') && !f.has('h:0');
+  })(),
+);
+t(
+  'a coinbase is mature at exactly 100 confirmations, not 99',
+  W.isMature({ coinbase: true, height: 100 }, 199) && !W.isMature({ coinbase: true, height: 100 }, 198),
+);
+{
+  const L = new Map([
+    ['m1', { txid: 'm1', outs: { 0: 5e9 }, height: 152090, coinbase: true }],
+    ['m2', { txid: 'm2', outs: { 0: 5e9 }, height: 152095, coinbase: true }],
+    ['r1', { txid: 'r1', outs: { 0: 1000 }, height: 152095, coinbase: false }],
+  ]);
+  const left = [{ key: 'm2:0', value: 5e9, height: 152095, coinbase: true }];
+  const u = W.undoneReceipts(L, left, 152100);
+  t(
+    'a mined block whose immature coin is gone was undone; one still there, and a spent receipt, are not',
+    u.length === 1 && u[0].txid === 'm1',
+    JSON.stringify(u),
+  );
+  t(
+    'a mature coinbase that is gone was spent, not undone',
+    W.undoneReceipts(L, left, 152190 + 100).every((r) => r.txid !== 'm1'),
+  );
+  const hist = W.history({
+    coins: left,
+    sent: [{ txid: 's1', to: 'me', self: true, sats: 5000, fee: 155, pending: false, height: 152099 }],
+    height: 152100,
+    address: 'me',
+    ledger: L,
+  });
+  t('a payment to yourself costs only its fee in the history', hist.find((r) => r.txid === 's1').sats === -155);
+}
+{
+  const L = new Map();
+  const tx = 'aa'.repeat(32);
+  W.recordReceipts(L, [{ key: tx + ':0', value: 10, height: 100 }], () => false);
+  W.recordReceipts(L, [{ key: tx + ':0', value: 10, height: 101 }], () => false);
+  t('a receipt mined again in another block takes the new height', L.get(tx).height === 101);
+}
+{
+  // the same 38 bytes with a valid checksum but a flag byte other than 01 (compressed): refused
+  const body = Uint8Array.from([0xef, ...hash.hexToBytes(keyA), 0x02]);
+  const sha = (b) => hash.sha256(b);
+  const all = Uint8Array.from([...body, ...sha(sha(body)).slice(0, 4)]);
+  let n = BigInt('0x' + hash.bytesToHex(all)),
+    w = '';
+  while (n > 0n) {
+    w = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'[Number(n % 58n)] + w;
+    n /= 58n;
+  }
+  t(
+    'a WIF with a valid checksum but no compressed flag is refused',
+    W.fromWif(w, sha) === null && W.fromWif(W.toWif(keyA, sha), sha) === keyA,
+  );
+}
+{
+  const s0 = { inputs: ['a:0'], values: [100000], sats: 30000, fee: 155, change: 100000 - 30000 - 155, toScript: spkB };
+  const r = W.planReplace({ ...s0, values: [10_000_000], change: 10_000_000 - 30000 - 155 }, { rate: 5000, ownSpk: spkA });
+  t('a raise is capped at the highest fee rate', r.fee === W.MAX_RATE * r.vsize, JSON.stringify({ fee: r.fee, vsize: r.vsize }));
+  t(
+    'a cancel that would leave dust is refused',
+    throws(
+      () => W.planReplace({ ...s0, values: [400], fee: 100, sats: 0, change: 300 }, { cancel: true, rate: 1, ownSpk: spkA }),
+      /cover the fee/,
+    ),
+  );
+  const r2 = W.planReplace({ ...s0, values: [30000 + 155 + 355], change: 355 }, { rate: 1, ownSpk: spkA });
+  t(
+    'a raise that would leave dust change gives it to the fee: no dust output',
+    r2.outputs.length === 1 && r2.fee === 510 && r2.change === 0,
+    JSON.stringify(r2),
+  );
+}
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

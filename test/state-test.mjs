@@ -647,5 +647,84 @@ t(
       !/cdn\.jsdelivr\.net[ ;]/.test(csp),
   );
 }
+
+// ---- round 7: refusals that only say the coins are spent, a fast clock, boundaries the mutations slipped past
+{
+  const sent = [pay()];
+  t(
+    'a refusal saying the coins are already spent (a block mined it) raises no alarm and marks nothing',
+    S.onRefused(sent, tx('1'), `input ${inA} is not an unspent coin`, '00').length === 0 && !sent[0].refusedNote,
+  );
+  t('...nor does a full mempool', S.onRefused(sent, tx('1'), 'mempool full', '00').length === 0 && !sent[0].refusedNote);
+  const first = S.onRefused(sent, tx('1'), 'fee 1 below 2 sat/vB', '00');
+  t(
+    'a real refusal is said once, not on every echo',
+    first.length === 1 && S.onRefused(sent, tx('1'), 'fee 1 below 2 sat/vB', '00').length === 0,
+  );
+}
+{
+  const now = 10_000_000;
+  t(
+    'a payment published "in the future" by a fast clock is due again now, not after the clock catches up',
+    S.republishDue([pay({ lastPub: now + 24 * 3600e3 })], now).length === 1,
+  );
+  t(
+    'republishing is due at exactly ten minutes',
+    S.republishDue([pay({ lastPub: now - S.REPUBLISH_MS })], now).length === 1 &&
+      S.republishDue([pay({ lastPub: now - S.REPUBLISH_MS + 1 })], now).length === 0,
+  );
+  const m = S.mergeSent([pay({ lastPub: 1000 })], [pay({ lastPub: 5000 })]);
+  t('two tabs merging keep the later publish time', m[0].lastPub === 5000);
+}
+{
+  const check = () => ({
+    txid: tx('1'),
+    inputs: [inA],
+    outputs: [
+      { value: 3000, scriptPubKey: '5120' + 'dd'.repeat(32) },
+      { value: 6845, scriptPubKey: '5120' + 'ee'.repeat(32) },
+    ],
+  });
+  t(
+    'a record whose address does not encode its script is dropped',
+    !S.validRecord(pay(), { check, scriptOf: () => '5120' + 'ff'.repeat(32) }) &&
+      S.validRecord(pay(), { check, scriptOf: () => '5120' + 'dd'.repeat(32) }),
+  );
+}
+{
+  const at = (h) => [pay({ pending: false, height: 152100, tip: 152100 })].map((x) => S.recheckDue([x], h).length)[0];
+  t(
+    `confirmations are checked again below ${S.RECHECK_DEPTH}, not at it`,
+    at(152100 + S.RECHECK_DEPTH - 2) === 1 && at(152100 + S.RECHECK_DEPTH - 1) === 0,
+  );
+}
+{
+  // a forgotten payment lost to its replacement-by-another; the block that mined the other is undone: the forgotten one is back as forgotten
+  const winner = pay({ txid: tx('2'), pending: false, height: 152110, inputs: [inA], to: 'tb1pother' });
+  const loser = pay({ pending: false, failed: tx('2'), wasAbandoned: true });
+  const sent = [loser, winner];
+  S.onRecheck(sent, tx('2'), { found: false }, 152111);
+  t(
+    'an undone block brings a forgotten payment back as waiting and forgotten (its coins first, not republished)',
+    loser.pending && loser.abandoned && !loser.failed && winner.pending,
+  );
+}
+{
+  const sent = [pay({ inputs: [inA, inB], values: [5000, 5000] })];
+  const asked = new Set();
+  t(
+    'the node is asked about a payment only when all its coins are gone, not one',
+    S.onCoins({ sent, coins: [{ key: inB, value: 5000, height: 1 }], asked }).length === 0 &&
+      S.onCoins({ sent, coins: [], asked }).length === 1,
+  );
+}
+{
+  const s0 = pay({ pending: false, height: 152110 });
+  const fx = S.onCoins({ sent: [s0], coins: [{ key: inA, value: 10000, height: 152000 }], height: 152110 });
+  t(
+    'a confirmed payment whose coins are back at its own height is undone',
+    s0.pending && fx.some((e) => e.notice === 'A block was undone'),
+  );
+}
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

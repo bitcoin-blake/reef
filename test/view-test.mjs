@@ -118,5 +118,83 @@ t(
       V.coinNote(c, { height: 5, sent: [{ txid: tx('7') }], mature: m }) === ' (change)',
   );
 }
+
+// ---- round 7: the details the first checks let through
+{
+  const mined = { kind: 'in', txid: tx('m'), label: 'Mined', addr: 'me', sats: 5e9, pending: false, height: 152000, conf: 101 };
+  t('a mined row has the pick icon', V.viewRow(mined, ctx([])).icon === '⛏');
+  const c = pay({ kind: 'cancel', pending: false, replaced: tx('2') });
+  t('a cancel that came too late says so', V.viewRow(row(c), ctx([c])).tag === 'too late');
+  const me = pay({ self: true, pending: false, replaced: tx('2') });
+  t('a replaced payment to yourself shows only its fee struck through', V.viewRow(row(me), ctx([me])).sats === -155);
+  const f = pay({ pending: false, failed: tx('2'), height: 152100 });
+  const vf = V.viewRow(row(f), ctx([f]));
+  t(
+    'a payment that did not happen shows no block, is struck, and says "did not happen"',
+    vf.block === null && vf.struck && vf.tag === 'did not happen',
+  );
+  const ab = pay({ abandoned: true });
+  t('a forgotten payment is struck with its own icon', V.viewRow(row(ab), ctx([ab])).struck && V.viewRow(row(ab), ctx([ab])).icon === '⊘');
+  const w = V.viewRow(row(pay()), ctx([pay()]));
+  t("a waiting row's short state is the part before the colon", w.short && !w.short.includes(':') && w.state.startsWith(w.short));
+  const rec = pay({ pending: false, recovered: true, height: 152090 });
+  t(
+    'a recovered record can be hidden once settled, not while waiting',
+    V.viewRow(row(rec), ctx([rec])).actions.includes('hide') &&
+      !V.viewRow(row(pay({ recovered: true })), ctx([pay({ recovered: true })])).actions.includes('hide'),
+  );
+  const at6 = { kind: 'in', txid: tx('6'), label: 'Received', addr: 'me', sats: 1, pending: false, height: 1, conf: 6 };
+  t(
+    'at six confirmations the undo caveat is gone',
+    V.viewRow(at6, ctx([])).state === '6 confirmations' && /undone/.test(V.viewRow({ ...at6, conf: 5 }, ctx([])).state),
+  );
+}
+{
+  const rows = [
+    { kind: 'in', txid: tx('7'), label: 'Received', addr: 'tb1pa', sats: 1, pending: false },
+    { kind: 'in', txid: tx('8'), label: 'Received', addr: 'tb1pb', sats: 1, pending: false },
+  ];
+  const hit = V.filterRows(rows, { query: '8888' });
+  t('search finds a transaction by its id, and only that one', hit.length === 1 && hit[0].txid === tx('8'));
+}
+{
+  const c = { key: tx('7') + ':0', value: 1, height: 152050, coinbase: true };
+  const k = new Set([c.key]);
+  t(
+    'an immature mined coin says when it can be spent',
+    /spendable after 100/.test(V.coinNote(c, { height: 152100, sent: [], mature: () => false })) &&
+      !/spendable/.test(V.coinNote(c, { height: 152200, sent: [], mature: () => true })),
+  );
+  t(
+    'a coin held by a set-aside record says so before a waiting payment, and a waiting payment before "spent first"',
+    V.coinNote(c, { height: 1, sent: [], quarantine: k, held: k, first: k, mature: () => true }) === ' (held by a set-aside record)' &&
+      V.coinNote(c, { height: 1, sent: [], held: k, first: k, mature: () => true }) === ' (held by a waiting payment)',
+  );
+}
+{
+  const ok1 = { kind: 'out', txid: tx('a'), label: 'Sent to', addr: 'tb1pdest', sats: -1, pending: false, height: 5 };
+  const gone = { ...ok1, txid: tx('b') };
+  const views = new Map([
+    [ok1, { struck: false }],
+    [gone, { struck: true }],
+  ]);
+  t('the Overview leaves out versions that did not happen', V.recentRows([gone, ok1], views).length === 1);
+  t(
+    'the empty Overview never claims "no coins" before the node answers, nor in an idle tab',
+    V.recentEmpty({ known: false }) === 'waiting for the node' &&
+      /other|runs/.test(V.recentEmpty({ known: true, idle: true })) &&
+      V.recentEmpty({ known: true }) === 'no coins yet',
+  );
+  const a = 'tb1pek62mqazspfx5almtzpw0nv4elkgu4s4ty95dwwlredvc527672qts7wxz';
+  t(
+    'a long address is shortened keeping both ends; grouping keeps every character',
+    V.shortAddr(a) === 'tb1pek62mq…qts7wxz' && V.grouped(a).replace(/ /g, '') === a && V.grouped('abcdefgh') === 'abcd efgh',
+  );
+  t(
+    'a payment to yourself needs no address in the Overview',
+    V.recentLabel({ kind: 'out', label: 'Payment to yourself', addr: a }) === 'Payment to yourself' &&
+      V.recentLabel({ kind: 'out', label: 'Sent to', addr: a }) === 'Sent to tb1pek62mq…qts7wxz',
+  );
+}
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

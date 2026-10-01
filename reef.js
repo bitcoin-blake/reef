@@ -4,7 +4,7 @@
 // tested against the kernel; this file is the host: storage, the node, the relays, the window. Every string that comes
 // from outside (relays, the mempool, the chain, links, options) reaches the page as text, never as markup.
 const $ = (id) => document.getElementById(id);
-export const VERSION = '2026-10-01.10';
+export const VERSION = '2026-10-01.11';
 const SCHEMA = 2; // the storage layout this version writes
 const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@448f74a64f19d5a6edabe6b02815a2c67e79374d';
 const LIB = 'https://cdn.jsdelivr.net/gh/sidestr/spec@fe689e9c723f9bf43393d2dd5b6f924a701c8a18/siding/lib',
@@ -22,6 +22,14 @@ const RETURNING = (() => {
     return false;
   }
 })(); // someone who used Reef before: no welcome step (a key made by a visit that chose Not now does not count)
+// records written by a newer Reef: this copy never starts the node or writes anything (read before anything else runs)
+const NEWER_SCHEMA = (() => {
+  try {
+    return Number(localStorage.getItem('reef:schema') ?? 0) > SCHEMA;
+  } catch {
+    return false;
+  }
+})();
 const esc = (x) => String(x ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const LS = {
   get: (k) => {
@@ -1088,12 +1096,17 @@ $('o-ok').onclick = async () => {
         `${waiting.length} payment${waiting.length === 1 ? ' is' : 's are'} still waiting with this key; switching would stop following ${waiting.length === 1 ? 'it' : 'them'}. Wait until confirmed, or cancel or forget ${waiting.length === 1 ? 'it' : 'them'} first.`;
       return;
     }
-    const b = W.coinsKnown ? WL.balances({ coins: W.coins, sent, height: W.height }).total : null;
+    if (!W.coinsKnown) {
+      optTab('wallet');
+      $('o-keywarn').textContent = 'Wait until the tab is up to date before switching: Reef does not know yet what the current key holds.';
+      return;
+    }
+    const b = WL.balances({ coins: W.coins, sent, height: W.height }).total;
     $('options').close();
     const ok = await ask(
       'Switch to another key',
       [
-        `This tab will use the new key from now on. The current key ${b ? `holds ${exact(b)}` : 'holds nothing'} is kept in this browser's list of earlier keys (Options → Wallet), but this browser is not a backup.`,
+        `This tab will use the new key from now on. The current key ${b ? `holds ${exact(b)}` : 'holds no coins this tab can see (coins from before block 150,307 are not shown)'} is kept in this browser's list of earlier keys (Options → Wallet), but this browser is not a backup.`,
         backedUp() ? 'The current key is backed up.' : 'The current key is NOT backed up. Back it up first unless it is empty.',
         'Coins sent to a key before the snapshot at block 150,307 are not shown by a tab.',
         ...(forgotten.length
@@ -1115,8 +1128,16 @@ $('o-ok').onclick = async () => {
       }
     })();
     if (!old.some((x) => x.key === W.key)) old.push({ key: W.key, address: W.address, at: Date.now() });
-    LS.set('reef:oldkeys', JSON.stringify(old.filter((x) => x.key !== key)));
-    LS.set('reef:key', key);
+    // the current key is replaced only once its copy in the earlier keys is stored and reads back
+    const kept = JSON.stringify(old.filter((x) => x.key !== key));
+    if (!LS.set('reef:oldkeys', kept) || LS.get('reef:oldkeys') !== kept || !LS.set('reef:key', key)) {
+      notify(
+        'Not switched',
+        'this browser refused to save the earlier key (storage full or blocked); the current key stays in use. Free storage, back up the key and try again.',
+        true,
+      );
+      return;
+    }
     location.search = keepQuery();
     return;
   }
@@ -1185,13 +1206,25 @@ let W = null,
 const asked = new Set();
 const canAct = () => !IDLE && !PROBING && W && W.coinsKnown; // the tab that runs the node is the only one that changes the wallet
 const scriptTag = () => W.script.slice(4, 20);
+// a stored value of the wrong shape (an object where a list belongs) would stop the wallet on every load: it is moved aside
+// to reef:corrupt:<key> (kept, not lost) and the default used
 const loadJSON = (k, d) => {
+  const raw = LS.get(k);
+  let v = null;
   try {
-    return JSON.parse(LS.get(k) ?? 'null') ?? d;
-  } catch {
+    v = JSON.parse(raw ?? 'null');
+  } catch {}
+  if (v == null) {
+    if (raw != null) LS.set('reef:corrupt:' + k, raw);
     return d;
   }
+  if (Array.isArray(d) !== Array.isArray(v) || typeof v !== typeof d) {
+    LS.set('reef:corrupt:' + k, raw);
+    return d;
+  }
+  return v;
 };
+const writable = () => !IDLE && RUNNING && !(Number(LS.get('reef:schema') ?? 0) > SCHEMA); // the running tab, not overtaken by a newer Reef
 const sentKey = () => 'reef:sent:' + scriptTag(),
   seenKey = () => 'reef:seen:' + scriptTag(),
   ledgerKey = () => 'reef:ledger:' + scriptTag(),
@@ -1213,9 +1246,14 @@ const store = (k, v) => {
 };
 // two tabs of the same origin share the storage but not their memory: merge with what is stored, field by field, before writing
 let quarantined = new Set(),
+  quarantineRecs = [],
   pendingSort = null;
 const saveSent = () => {
-  if (IDLE || !RUNNING) return false;
+  if (!writable()) return false; // an idle tab, or a newer Reef has taken over the records since this tab started
+  const qk0 = 'reef:quarantine:' + scriptTag();
+  const qStored = loadJSON(qk0, []);
+  const missing = quarantineRecs.filter((x) => quarantined.has(x.txid) && !qStored.some((y) => y.txid === x.txid));
+  if (missing.length && !store(qk0, JSON.stringify([...qStored, ...missing].slice(-500)))) return false; // set aside before dropping, or not at all
   const stored = loadJSON(sentKey(), []).filter((x) => !quarantined.has(x.txid));
   const failing = stored.filter((x) => W.validRecord && !W.validRecord(x));
   if (failing.length) {
@@ -1240,7 +1278,7 @@ const saveSent = () => {
   return store(sentKey(), JSON.stringify(S.forStorage(sent)));
 };
 const saveSeen = () => {
-  if (IDLE) return;
+  if (!writable()) return;
   for (const [k, v] of loadJSON(seenKey(), [])) if (!seen.has(k)) seen.set(k, v);
   const need = new Set([...W.coins.map((c) => c.key), ...sent.filter((s) => s.pending).flatMap((s) => s.inputs ?? [])]);
   const all = [...seen];
@@ -1248,7 +1286,7 @@ const saveSeen = () => {
   store(seenKey(), JSON.stringify(keep));
 };
 const saveLedger = () => {
-  if (!IDLE) store(ledgerKey(), JSON.stringify([...ledger.values()].slice(-2000)));
+  if (writable()) store(ledgerKey(), JSON.stringify([...ledger.values()].slice(-2000)));
 };
 const unit = () => ({ key: OPT.unit, ...WL.UNITS[OPT.unit] });
 const money = (sats) => (OPT.mask ? '•••••' : WL.formatAmount(sats, OPT.unit));
@@ -1307,7 +1345,10 @@ async function walletInit() {
       if (k2) {
         const old = loadJSON('reef:oldkeys', []);
         old.push({ key: k2, bad: true, at: Date.now() });
-        LS.set('reef:oldkeys', JSON.stringify(old));
+        if (!LS.set('reef:oldkeys', JSON.stringify(old)))
+          throw new Error(
+            'the key stored in this browser could not be read, and storage refused to keep a copy of it, so no new key was made over it: free storage and reload',
+          );
         setTimeout(
           () =>
             banner(
@@ -1385,6 +1426,7 @@ async function walletInit() {
     const fresh = r.quarantine.filter((x) => !q0.some((y) => y.txid === x.txid));
     sent = r.keep;
     quarantined = new Set(r.quarantine.map((x) => x.txid));
+    quarantineRecs = r.quarantine;
     // written only by the tab that runs the node, once it knows it does: the records first, then the quarantine without the ones restored
     pendingSort = () => {
       if (
@@ -1437,18 +1479,6 @@ async function walletInit() {
         0,
       );
   }
-  const schema = Number(LS.get('reef:schema') ?? 0);
-  if (schema > SCHEMA) {
-    setTimeout(() => {
-      goIdle();
-      banner(
-        'schema',
-        'bad',
-        "This browser's wallet records were written by a newer Reef. This older copy stays read-only so it cannot damage them: reload to get the newer version.",
-        [['Reload', () => location.reload()]],
-      );
-    }, 0);
-  } else LS.set('reef:schema', String(SCHEMA));
   W.validRecord = (x) => S.validRecord(x, { check, scriptOf, ownScript: script });
   $('rcvaddr').value = address;
   try {
@@ -1561,6 +1591,7 @@ const hitchHeld = () => {
     return new Set();
   }
 };
+const quarantineStored = () => (W ? loadJSON('reef:quarantine:' + scriptTag(), []) : []);
 const quarantineHeld = () =>
   new Set(
     loadJSON('reef:quarantine:' + scriptTag(), [])
@@ -1620,6 +1651,14 @@ function onCoins(m) {
         );
     }
   const added = WL.recordReceipts(ledger, W.coins, (t) => sent.some((s) => s.txid === t));
+  const undone = WL.undoneReceipts(ledger, W.coins, W.height);
+  for (const r of undone) ledger.delete(r.txid);
+  if (undone.length)
+    notify(
+      'A mined block was replaced',
+      `${amt(undone.reduce((a, r) => a + WL.receiptSats(r), 0))} from block ${undone.map((r) => n(r.height)).join(', ')} is no longer yours: another block took its place in the chain (this happens on a test chain).`,
+      true,
+    );
   if (!first) {
     const mined = added.filter((r) => r.coinbase),
       got = added.filter((r) => !r.coinbase);
@@ -1766,18 +1805,16 @@ function renderWalletInner() {
   const vctx = { inMempool, height: W.height, now: Date.now(), sent, idle: IDLE, canAct: canAct() };
   const views = new Map(rows.map((r) => [r, V.viewRow(r, vctx)]));
   const recOf = (r) => (r.kind === 'out' ? sent.find((x) => x.txid === r.txid) : null);
-  if (!known && !rows.length)
-    $('recent').innerHTML = '<div class="r"><span></span><span class="mut" style="grid-column:2/5">waiting for the node</span></div>';
-  else $('recent').setAttribute('role', 'list');
-  $('recent').innerHTML = rows.length
-    ? rows
-        .slice(0, 6)
+  const recent = V.recentRows(rows, views);
+  $('recent').setAttribute('role', 'list');
+  $('recent').innerHTML = recent.length
+    ? recent
         .map((r) => {
           const v = views.get(r);
-          return `<div class="r" role="listitem"><span aria-hidden="true">${v.icon}</span><span title="${esc(v.state)}">${v.block ? 'block ' + esc(n(v.block)) : esc(v.short)}</span><span class="addr">${txLink(r.txid, `${r.label}${r.kind === 'out' ? ' · ' + r.addr : ''}`)}${v.struck ? `<span class="why">${esc(v.state)}</span>` : ''}</span><span class="amt ${r.pending ? 'pend' : r.kind === 'in' ? 'in' : 'out'}${v.struck ? ' struck' : ''}">${esc(amt(v.sats))}</span></div>`;
+          return `<div class="r" role="listitem"><span aria-hidden="true">${v.icon}</span><span>${v.block ? 'block ' + esc(n(v.block)) : esc(v.short)}</span><span class="addr" title="${esc(r.addr)}">${txLink(r.txid, V.recentLabel(r))}</span><span class="amt ${r.pending ? 'pend' : r.kind === 'in' ? 'in' : 'out'}">${esc(amt(v.sats))}</span></div>`;
         })
         .join('')
-    : '<div class="r"><span></span><span class="mut" style="grid-column:2/5">no coins yet: <a href="#" data-go2="receive">your address is on the Receive page</a></span></div>';
+    : `<div class="r" role="listitem"><span></span><span class="mut" style="grid-column:2/5">${esc(V.recentEmpty({ known, idle: IDLE, any: rows.length > 0 }))}${known && !IDLE && !rows.length ? ': <a href="#" data-go2="receive">your address is on the Receive page</a>' : ''}</span></div>`;
   $('recent')
     .querySelectorAll('[data-go2]')
     .forEach((a) => {
@@ -1836,7 +1873,7 @@ function renderWalletInner() {
   const bb = wallBal(),
     hh = hitchHeld(),
     qh = quarantineHeld(),
-    rf = WL.reuseFirst(sent);
+    rf = WL.reuseFirst(sent, quarantineStored());
   $('rcvrows').innerHTML = W.coins.length
     ? W.coins
         .slice()
@@ -1897,7 +1934,7 @@ function sendInfo(m, cls = '') {
 }
 // a payment that spends a coin of a forgotten one says so: only one of the two can happen
 function reuseNote(p) {
-  const first = WL.reuseFirst(sent);
+  const first = WL.reuseFirst(sent, quarantineStored());
   const hit = p.picked.find((c) => first.has(c.key));
   if (!hit) return '';
   const f = sent.find((x) => x.pending && x.abandoned && (x.inputs ?? []).includes(hit.key));
@@ -1917,7 +1954,7 @@ function readSend() {
   const all = $('sendall').getAttribute('aria-pressed') === 'true';
   const amount = all ? null : WL.parseAmount($('sendamt').value, $('sendunit').value);
   const rate = Math.max(1, Math.round(Number(OPT.feeRate) || 1));
-  const coins = WL.spendable(W.coins, W.height, wallBal().held, WL.reuseFirst(sent));
+  const coins = WL.spendable(W.coins, W.height, wallBal().held, WL.reuseFirst(sent, quarantineStored()));
   const p = WL.plan({ coins, amount, rate, destSpk: dec.script, changeSpk: W.script, all });
   return { to, dec, self: chk.self, all, rate, p };
 }
@@ -2264,6 +2301,7 @@ async function forgetFlow(s0) {
 }
 // every minute: payments not yet in a block are published again (relays do not keep these events)
 function tick() {
+  guardKey();
   if (!canAct()) return;
   for (const s of S.republishDue(sent, Date.now())) publishAgain(s).catch(() => {});
   renderWallet();
@@ -2829,7 +2867,7 @@ setTimeout(checkVersion, 30e3);
 setInterval(checkVersion, 3600e3);
 
 // ---- start: one tab of this origin runs the node and the wallet; the first visit asks before fetching 830 MB
-walletInit().catch((e) => {
+const walletReady = walletInit().catch((e) => {
   cprint('wallet could not start: ' + e.message, 'err');
   $('rcvaddr').value = 'the wallet could not start: ' + e.message;
   banner('walleterr', 'bad', 'The wallet could not start: ' + e.message + '. Reload to try again.', [['Reload', () => location.reload()]]);
@@ -2905,6 +2943,23 @@ function goIdle() {
       .catch(() => {});
   wait();
 }
+// the key in storage gone (site data cleared, a clear-on-exit in another window) while this tab still holds it: written back,
+// and the person told to back it up now, since the next visit would otherwise make a new, empty key without a word
+function guardKey() {
+  if (!W || IDLE || !RUNNING || LS.get('reef:key') === W.key) return;
+  const back = LS.set('reef:key', W.key);
+  banner(
+    'keygone',
+    'bad',
+    back
+      ? "This browser's storage was cleared while Reef was open. The key was written back from this tab, but the payment records may be gone: back up the key now (File → Back up the key…)."
+      : "This browser's storage was cleared and refuses to keep the key. Back it up now (File → Back up the key…) before closing this tab, or the coins are lost with it.",
+    [['Back up the key…', () => openBackup()]],
+  );
+}
+addEventListener('storage', (e) => {
+  if (e.key === null || e.key === 'reef:key') guardKey();
+});
 addEventListener('storage', (e) => {
   if (!IDLE || !W || e.key !== sentKey()) return;
   try {
@@ -2920,9 +2975,14 @@ async function startNode(force = false) {
       if (node.lockError) return lockFailed(node.lockError);
       goIdle();
     } else {
+      // the stored records are sorted by walletInit, which may still be loading: write nothing until it has finished
+      await walletReady;
+      if (IDLE) return;
       RUNNING = true;
+      LS.set('reef:schema', String(SCHEMA)); // only the tab that runs the node marks the layout
       pendingSort?.();
       pendingSort = null;
+      renderWallet();
     }
   } catch (e) {
     showFatal(plainError(e.message));
@@ -2945,6 +3005,20 @@ function lockFailed(err) {
     ],
   );
 }
+function newerSchema() {
+  IDLE = true;
+  IDLE_TEXT = 'This copy of Reef is older than the one that wrote the wallet records here: reload for the newer version.';
+  document.body.classList.add('idle');
+  for (const id of ['sendto', 'sendamt', 'sendunit', 'sendall', 'sendgo', 'sendpaste']) $(id).disabled = true;
+  setSync('read-only: a newer Reef wrote the wallet records in this browser', null);
+  banner(
+    'schema',
+    'bad',
+    "This browser's wallet records were written by a newer Reef. This older copy stays read-only so it cannot damage them: reload to get the newer version.",
+    [['Reload', () => location.replace(location.pathname + '?v=' + Date.now())]],
+  );
+  walletReady.then(() => (renderWallet(), updatePreview(), renderStatus()));
+}
 async function begin() {
   // a reload of this same tab can find the lock still held by the page it replaces for a moment: wait up to three seconds for it
   let sole = true,
@@ -2960,6 +3034,10 @@ async function begin() {
   if (lockErr) {
     PROBING = false;
     return lockFailed(lockErr);
+  }
+  if (NEWER_SCHEMA) {
+    PROBING = false;
+    return newerSchema();
   }
   PROBING = false;
   if (!sole) return goIdle();
