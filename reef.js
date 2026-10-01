@@ -4,9 +4,9 @@
 // tested against the kernel; this file is the host: storage, the node, the relays, the window. Every string that comes
 // from outside (relays, the mempool, the chain, links, options) reaches the page as text, never as markup.
 const $ = (id) => document.getElementById(id);
-export const VERSION = '2026-10-01.20';
+export const VERSION = '2026-10-01.21';
 const SCHEMA = 2; // the storage layout this version writes
-const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@5550637a7f31866e61ce215e1c2bd7b30a12ab80';
+const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@c03bf56404e986bf633a44d8a7bbb530ec282cb5';
 const LIB = 'https://cdn.jsdelivr.net/gh/sidestr/spec@fe689e9c723f9bf43393d2dd5b6f924a701c8a18/siding/lib',
   CDN = 'https://cdn.jsdelivr.net/gh/bitcoin-desktop/schema@b8cbf6337c7450fe14ddc5bce00c7280059aab5d';
 // the engine's rule files by content as well as by commit: a CDN that served other rules would validate another chain
@@ -122,7 +122,8 @@ const fmt = (t) =>
         minute: '2-digit',
       })
     : '…';
-const txLink = (txid, text = txid) => `<a href="${EXPLORER}/tx/${esc(txid)}" target="_blank" rel="noopener">${esc(text)}</a>`;
+const txLink = (txid, text = txid) =>
+  `<a href="${EXPLORER}/tx/${esc(txid)}" target="_blank" rel="noopener">${esc(text)}<span class="sr"> (transaction ${esc(txid.slice(0, 8))}…, opens in a new tab)</span></a>`;
 
 // ---- banners: one line each at the top of the window, for what the person must know now
 const dismissed = new Set();
@@ -373,6 +374,7 @@ const trust = () =>
       height: node.height,
       error: node.error,
       syncedAt: node.syncedAt,
+      unresponsive: !!node.unresponsive,
     },
     Date.now(),
   );
@@ -407,6 +409,7 @@ function renderStatus() {
   else unbanner('trust');
   // the node that broadcasts payments is judged by its heartbeat (the mirror's mempool file, rewritten every pass), not by
   // how many transactions it relays: a quiet chain is not a dead broadcaster
+  // feedFileAt is this tab's own clock reading of a change it saw (after the first beat), so no skew correction applies
   const beat = node.mempool?.feedFileAt;
   if (node.synced && beat && Date.now() - beat > 10 * 60e3)
     banner(
@@ -430,12 +433,16 @@ function renderStatus() {
     unbanner('srcwait');
   }
   // a node that has not answered for a while (often a laptop waking) is a warning that clears itself, not a stop
+  // unresponsive is its own state (node.unresponsiveText); a real node.error keeps its own banner alongside
   if (node.unresponsive)
-    banner('unresponsive', 'warn', 'The node has not answered for two minutes. It usually comes back by itself; if it does not, reload.', [
-      ['Reload', () => location.reload()],
-    ]);
+    banner(
+      'unresponsive',
+      'warn',
+      `${node.unresponsiveText ?? 'The node has not answered for two minutes'}. It usually comes back by itself; if it does not, reload.`,
+      [['Reload', () => location.reload()]],
+    );
   else unbanner('unresponsive');
-  if (node.error && !passing && !node.unresponsive)
+  if (node.error && !passing)
     banner('nodeerr', 'bad', plainError(node.error), [
       ['Retry', () => location.reload()],
       ['Wipe and fetch again…', () => wipeAsk()],
@@ -1141,7 +1148,7 @@ function ask(title, lines, okLabel = 'OK', danger = false, cancelLabel = 'Cancel
   });
 }
 async function wipeAsk() {
-  if (IDLE) return notify('Not here', 'the node runs in another tab: wipe from there', true);
+  if (IDLE) return notify('Not here', 'the node runs in another tab: wipe from there', false);
   if (
     await ask(
       'Wipe the snapshot',
@@ -1392,11 +1399,13 @@ $('o-ok').onclick = async () => {
       'Switch to another key',
       [
         `This tab will use the new key from now on. The current key, which ${b ? `holds ${exact(b)}` : 'holds no coins this tab can see (coins from before block 150,307 are not shown)'}, stays in this browser's list of earlier keys (Options → Wallet), but this browser is not a backup.`,
-        fresh
-          ? 'The current key was made in this browser and has never been used.'
-          : backedUp()
-            ? 'The current key is backed up.'
-            : 'The current key is NOT backed up. Back it up first unless it is empty.',
+        fresh && !W.coinsKnown
+          ? "The current key was made in this browser. Reef doesn't know yet whether coins were sent to it (the tab is not up to date); it stays under earlier keys (Options → Wallet)."
+          : fresh
+            ? 'The current key was made in this browser and has never been used.'
+            : backedUp()
+              ? 'The current key is backed up.'
+              : 'The current key is NOT backed up. Back it up first unless it is empty.',
         'Coins sent to a key before the snapshot at block 150,307 are not shown by a tab.',
         ...(forgotten.length
           ? [
@@ -1406,7 +1415,7 @@ $('o-ok').onclick = async () => {
         ...(hitchHeld().size ? ["Hitch holds some of this key's coins for a channel funding; Hitch keeps following them."] : []),
       ],
       'Switch',
-      !backedUp() && !fresh,
+      !backedUp() && !(fresh && W.coinsKnown),
     );
     if (!ok) return;
     const old = (() => {
@@ -1920,7 +1929,7 @@ function wireWalletPage(address) {
     lastUnit = $('sendunit').value;
     updatePreview();
   });
-  $('feechoose').onclick = () => (IDLE ? sendError('The fee rate is set in the tab that runs the wallet.') : feeFlow());
+  $('feechoose').onclick = () => (IDLE ? sayOnce('The fee rate is set in the tab that runs the wallet.') : feeFlow());
   applyDisplay();
   renderWallet();
   if (LS.get('reef:keynew') && !ledger.size) setTimeout(() => backupNudge(), 1500);
@@ -1951,7 +1960,7 @@ const quarantineStored = () => (W ? loadJSON('reef:quarantine:' + scriptTag(), [
 const quarantineHeld = () =>
   new Set(
     loadJSON('reef:quarantine:' + scriptTag(), [])
-      .filter((q) => q.pending && !q.released && !q.abandoned && !q.refused && !q.refusedNote)
+      .filter(WL.quarantineHolds)
       .flatMap((q) => q.inputs ?? []),
   );
 const wallBal = () =>
@@ -2120,14 +2129,7 @@ function renderWalletInner() {
     $('pending').innerHTML = amtHtml(b.pending);
     $('total').innerHTML = amtHtml(b.total);
     $('sendbal').innerHTML = amtHtml(b.available);
-    $('outgoing').textContent = [
-      b.outgoing ? `${amtSay(b.outgoing)} leaving in payments not yet confirmed` : '',
-      b.elsewhere
-        ? `${amtSay(b.elsewhere)} reserved elsewhere: ${hitchHeld().size ? 'a Hitch channel funding (to release it, close Reef, open Hitch and cancel the funding there)' : ''}${hitchHeld().size && quarantineHeld().size ? '; ' : ''}${quarantineHeld().size ? 'a payment record Reef could not verify (see the notice above)' : ''}`
-        : '',
-    ]
-      .filter(Boolean)
-      .join(' · ');
+    $('outgoing').textContent = V.reservedText(b, { hitch: hitchHeld().size > 0, quarantine: quarantineHeld().size > 0, money: amtSay });
     renderStatus();
   }
   // an idle tab shows no history, as it shows no balance: the running tab is the one that knows
@@ -2195,7 +2197,7 @@ function renderWalletInner() {
             .join('');
           return `<tr><td class="when">${r.at ? esc(when(r.at)) : '—'}</td><td title="${esc(say(v.state))}"><span aria-hidden="true">${v.icon}</span><span class="state" aria-hidden="true">${esc(
             say(v.short),
-          )}</span><span class="sr">${esc(say(v.state))}</span></td><td>${v.block ? esc(n(v.block)) : '—'}</td><td>${esc(r.label)}</td><td class="addr" title="${esc(r.addr)}">${txLink(r.txid, r.kind === 'in' || r.label === 'Payment to yourself' ? 'your address' : V.shortAddr(r.addr))}</td><td class="amt ${r.kind === 'in' ? 'in' : 'out'}${v.struck ? ' struck' : ''}">${moneyHtml(v.sats)}<span class="cardunit"> ${esc(unit().label)}</span><span class="sr">${v.tag ? esc(` (${v.tag})`) : ''}</span></td><td class="acts">${acts}</td></tr>`;
+          )}</span><span class="sr">${esc(say(v.state))}</span></td><td>${v.block ? esc(n(v.block)) : '—'}</td><td>${esc(r.label)}</td><td class="addr" title="${esc(r.addr)}">${txLink(r.txid, r.kind === 'in' || r.label === 'Payment to yourself' ? 'your address' : V.shortAddr(r.addr))}</td><td class="amt ${r.kind === 'in' ? 'in' : 'out'}${v.struck ? ' struck' : ''}">${moneyHtml(v.sats)}<span class="cardunit"> ${esc(unit().label)}</span>${r.label === 'Payment to yourself' && !v.struck ? '<span class="mut"> (fee)</span>' : ''}<span class="sr">${v.tag ? esc(` (${v.tag})`) : ''}</span></td><td class="acts">${acts}</td></tr>`;
         })
         .join('')
     : `<tr><td colspan="7" class="mut">${IDLE ? 'shown in the tab that runs the node' : known ? (rows.length ? 'nothing matches' : 'no transactions since the snapshot') : 'waiting for the node'}</td></tr>`;
@@ -2244,7 +2246,7 @@ function renderWalletInner() {
 for (const id of ['txtype', 'txsearch']) $(id).addEventListener('input', () => renderWallet());
 $('txexport').onclick = () => {
   if (!W) return;
-  if (IDLE) return notify('Not here', 'the history is exported from the tab that runs the node', true);
+  if (IDLE) return notify('Not here', 'the history is exported from the tab that runs the node', false);
   const rows = WL.history({
     coins: W.coins,
     sent: sent.filter((s) => !s.hidden),
@@ -2292,14 +2294,7 @@ function reuseNote(p) {
 }
 // nothing spendable: say what the coins are doing instead
 function noCoinsWhy() {
-  const b = wallBal();
-  const parts = [];
-  if (b.immature) parts.push(`${amtSay(b.immature)} is mined coins, spendable after 100 blocks`);
-  const incoming = incomingTxs().reduce((a, x) => a + x.toUs, 0);
-  if (incoming) parts.push(`${amtSay(incoming)} is on its way to you and can be spent once a block includes it`);
-  if (b.outgoing || b.pending - incoming > 0) parts.push('some is held by a payment of yours still waiting (see Transactions)');
-  if (b.elsewhere) parts.push(`${amtSay(b.elsewhere)} is reserved by Hitch or by a payment record Reef could not verify`);
-  return parts.length ? `Nothing can be spent right now: ${parts.join('; ')}.` : 'No coins yet: your address is on the Receive page.';
+  return V.noCoinsWhy(wallBal(), { incoming: incomingTxs().reduce((a, x) => a + x.toUs, 0), money: amtSay });
 }
 function readSend() {
   if (!W) throw new Error('the wallet is not ready');
@@ -2324,6 +2319,24 @@ function readSend() {
   const p = WL.plan({ coins, amount, rate, destSpk: dec.script, changeSpk: W.script, all });
   return { to, dec, self: chk.self, all, rate, p };
 }
+// what Send everything would pay to this destination at the current rate, or null when it cannot be planned
+function allAmountTo(destSpk) {
+  try {
+    const coins = WL.spendable(W.coins, W.height, wallBal().held, WL.reuseFirst(sent, quarantineStored()));
+    return WL.plan({
+      coins,
+      amount: null,
+      rate: Math.max(1, Math.round(Number(OPT.feeRate) || 1)),
+      destSpk,
+      changeSpk: W.script,
+      all: true,
+    }).amount;
+  } catch {
+    return null;
+  }
+}
+// a leftover under dust that goes to the fee, in sat (0 when there is none)
+const leftoverOf = (r) => (!r.all && !r.p.change ? Math.max(0, r.p.fee - Math.ceil(r.rate * r.p.vsize)) : 0);
 function updatePreview() {
   const el = $('sendpreview');
   if (!W) return;
@@ -2346,8 +2359,14 @@ function updatePreview() {
     el.className = 'tiny';
     el.textContent = r.self
       ? `${fg ? fg + ' ' : ''}To yourself: only the fee leaves the wallet (${exact(r.p.fee)}). Nothing else changes.`
-      : `${fg ? fg + ' ' : ''}${r.all ? 'Everything: ' : ''}${exact(r.p.amount)} to the address, ${exact(r.p.fee)} fee, ${exact(r.p.amount + r.p.fee)} in all${r.p.change ? `; ${exact(r.p.change)} comes back as change` : ''}.`;
-    if (r.all) $('sendamt').value = WL.formatAmount(r.p.amount, $('sendunit').value, { grouping: false });
+      : `${fg ? fg + ' ' : ''}${r.all ? 'Everything: ' : ''}${exact(r.p.amount)} to the address, ${exact(r.p.fee)} fee, ${exact(r.p.amount + r.p.fee)} in all${r.p.change ? `; ${exact(r.p.change)} comes back as change` : ''}.` +
+        (leftoverOf(r)
+          ? ` ${exact(leftoverOf(r))} of the fee is a leftover too small to come back as change: this empties the wallet, and Send everything would pay the recipient ${exact(allAmountTo(r.dec.script) ?? r.p.amount)} instead.`
+          : '');
+    if (r.all) {
+      $('sendamt').value = WL.formatAmount(r.p.amount, $('sendunit').value, { grouping: false });
+      el.textContent += ' (The amount is set by Send everything: press it again to type an amount.)';
+    }
   } catch (e) {
     el.className = 'tiny mut';
     const m = say(e.message);
@@ -2396,6 +2415,26 @@ async function publishHex(hex) {
   };
 }
 // the fee rate from the Send page: one number, the figures follow; kept in Options (the same setting)
+// the payment typed on the Send page, at another rate: what it would cost, or that it no longer fits ('' when none is typed)
+function draftAt(rate) {
+  try {
+    const dec = W.addr.decodeAddress($('sendto').value.trim());
+    if (!dec || WL.checkDestination(dec, { ownScript: W.script }).error) return '';
+    const all = $('sendall').getAttribute('aria-pressed') === 'true';
+    const amount = all ? null : WL.parseAmount($('sendamt').value, $('sendunit').value);
+    const coins = WL.spendable(W.coins, W.height, wallBal().held, WL.reuseFirst(sent, quarantineStored()));
+    try {
+      const p = WL.plan({ coins, amount, rate, destSpk: dec.script, changeSpk: W.script, all });
+      return ` Your payment above would cost ${exact(p.fee)} in fees at this rate.`;
+    } catch (e) {
+      if (!e.short) return '';
+      const most = WL.plan({ coins, amount: null, rate, destSpk: dec.script, changeSpk: W.script, all: true }).amount;
+      return ` Your payment above would no longer fit at this rate; up to ${exact(most)} can be sent.`;
+    }
+  } catch {
+    return '';
+  }
+}
 async function feeFlow() {
   const box = document.createElement('div');
   const field = document.createElement('label');
@@ -2405,6 +2444,7 @@ async function feeFlow() {
   inp.value = Math.max(1, Math.round(Number(OPT.feeRate) || 1));
   const note = document.createElement('p');
   note.id = 'feeflow-note';
+  note.setAttribute('role', 'status');
   const typical = (r) => Math.ceil(r * WL.estimateVsize(1, ['5120' + '00'.repeat(32), '5120' + '00'.repeat(32)]));
   const paint = () => {
     const r = Number(inp.value);
@@ -2417,8 +2457,10 @@ async function feeFlow() {
         (r >= 10 && !(sug && r <= sug)
           ? ` ${r} sat/vB is much more than blocks need today, and it stays for every payment until changed.`
           : '') +
-        (avail != null && typical(r) > avail ? ' At this rate the fee alone is more than you can spend.' : '')
+        (avail != null && typical(r) > avail ? ' At this rate the fee alone is more than you can spend.' : '') +
+        draftAt(r)
       : `A whole number from 1 to ${WL.MAX_RATE}.`;
+    inp.setAttribute('aria-invalid', String(!okRate));
   };
   inp.oninput = paint;
   // the rate field has the focus, and Enter applies a valid rate
@@ -2458,6 +2500,8 @@ async function sendFlow() {
     reuse: reuseNote(p),
     waitingSame,
     settlingSame: S.settlingTo(sent, r.dec.script, W.height, (a) => W.addr.decodeAddress(a)?.script),
+    suggested: node.mempool ? suggestedRate() : null,
+    allAmount: leftoverOf(r) ? allAmountTo(r.dec.script) : null,
   });
   if (!(await ask('Confirm the payment', lines, 'Send', false, 'Back'))) return;
   // the world may have moved while the dialog was open: the same coins and the same figures, or nothing is sent
@@ -2642,7 +2686,14 @@ async function replaceFlow(s, cancel) {
     }
   };
   inp.oninput = paint;
-  box.append(text, field);
+  inp.onkeydown = (e) => {
+    if (e.key === 'Enter' && !$('ask-ok').disabled) {
+      e.preventDefault();
+      $('ask-ok').click();
+    }
+  };
+  setTimeout(() => inp.focus(), 0);
+  box.append(field, text); // the rate first, as in the fee dialog
   paint();
   if (
     !(await ask(
@@ -2690,7 +2741,7 @@ async function replaceFlow(s, cancel) {
     saveSent();
     renderWallet();
     notify(
-      cancel ? 'Cancel sent' : 'Fee raised',
+      cancel ? 'Cancel requested' : 'Fee raised',
       pub.ok.length
         ? 'the replacement is with the relays; the Transactions page shows which version a block takes'
         : 'no relay took the replacement yet; it is published again every 10 minutes',
@@ -3410,7 +3461,7 @@ async function copyDiagnostics() {
   }
 }
 // ---- a newer Reef: checked every hour, offered, never forced
-// "2026-10-01.20" → comparable: a stale copy at the web host never offers an older version as newer
+// "2026-10-01.21" → comparable: a stale copy at the web host never offers an older version as newer
 const versionKey = (v) => {
   const m = /^(\d{4})-(\d{2})-(\d{2})\.(\d+)$/.exec(String(v ?? ''));
   return m ? [+m[1], +m[2], +m[3], +m[4]] : null;
@@ -3517,6 +3568,8 @@ function readOnlyPage() {
   }
   $('cin').disabled = true;
   $('cin').placeholder = 'the node runs in another tab: use its console';
+  $('cin').setAttribute('aria-describedby', 'nwidle');
+  for (const id of ['txsearch', 'txtype']) $(id).disabled = true; // no history here to search
 }
 function goIdle() {
   IDLE = true;

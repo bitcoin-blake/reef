@@ -276,7 +276,7 @@ t(
   const hi = V.confirmLines({ to, rate: 20, p: { ...p, fee: 200000, amount: 1000 }, money });
   t(
     'a high rate and a fee above the amount are said right after the fee line',
-    /more than the amount/.test(hi[4]) && /much higher than txbt4 blocks need/.test(hi[5]),
+    /more than the amount: even a small payment/.test(hi[4]) && /much higher than txbt4 blocks need/.test(hi[5]),
   );
   t(
     'a chain-status warning is added at the end',
@@ -316,7 +316,7 @@ t(
   const r = { kind: 'in', txid: tx('u'), label: 'Received', addr: 'me', sats: 5, pending: false, height: 152105, conf: 3 };
   t(
     'a receipt in a block above the signed chain tip is not counted as confirmed',
-    /signed chain tip has not reached/.test(V.viewRow(r, { ...ctx([]), signedHeight: 152104 }).state) &&
+    /has not reached it yet/.test(V.viewRow(r, { ...ctx([]), signedHeight: 152104 }).state) &&
       /confirming/.test(V.viewRow(r, { ...ctx([]), signedHeight: 152105 }).state),
   );
 }
@@ -343,7 +343,10 @@ t(
     V.viewRow(row(rn), ctx([rn])).short === 'not accepted here' && V.viewRow(row(rf), ctx([rf])).short === 'higher fee not accepted',
   );
   const above = V.viewRow(conf, { ...ctx([]), signedHeight: 152099 });
-  t('a block above the signed tip reads "not yet vouched for" in a list', above.short === 'not yet vouched for');
+  t(
+    'a block above the signed tip reads "in a block, being double-checked" in a list, flagged',
+    above.short === 'in a block, being double-checked' && above.unvouched === true,
+  );
   const struck = pay({ pending: false, replaced: tx('e') });
   t(
     'a struck row keeps its own words even above the signed tip',
@@ -353,6 +356,62 @@ t(
   t(
     'the "sent" filter shows only payments out',
     V.filterRows(rows, { type: 'out' }).length === 1 && V.filterRows(rows, { type: 'out' })[0].kind === 'out',
+  );
+}
+{
+  // round 11: the confirm dialog's leftover line, and the balance sentences
+  const money = (x) => `${x} sat`;
+  const to = 'tb1pdestinationaddressxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
+  const dust = V.confirmLines({ to, rate: 1, p: { amount: 9000, fee: 362, change: 0, vsize: 200, picked: [{ key: inA }] }, money });
+  t(
+    'a leftover too small for change is said, with its amount',
+    dust.some((l) => /162 sat of that fee is a leftover/.test(l)),
+  );
+  t(
+    '...not when the fee is exactly the rate',
+    !V.confirmLines({ to, rate: 1, p: { amount: 9000, fee: 200, change: 0, vsize: 200, picked: [] }, money }).some((l) =>
+      /leftover/.test(l),
+    ),
+  );
+  t(
+    '...not for a payment of everything',
+    !V.confirmLines({ to, all: true, rate: 1, p: { amount: 9000, fee: 362, change: 0, vsize: 200, picked: [] }, money }).some((l) =>
+      /leftover/.test(l),
+    ),
+  );
+  t(
+    '...not when there is change',
+    !V.confirmLines({ to, rate: 1, p: { amount: 9000, fee: 362, change: 500, vsize: 200, picked: [] }, money }).some((l) =>
+      /leftover/.test(l),
+    ),
+  );
+  const b = { immature: 0, outgoing: 0, pending: 3000, elsewhere: 0, unvouched: 3000 };
+  t(
+    'nothing spendable names money in blocks still being double-checked, and does not blame a waiting payment for it',
+    /double check|second check/.test(V.noCoinsWhy(b, { money })) && !/payment of yours/.test(V.noCoinsWhy(b, { money })),
+  );
+  t('nothing at all: no coins yet', /No coins yet/.test(V.noCoinsWhy({ immature: 0, outgoing: 0, pending: 0, elsewhere: 0 }, { money })));
+  t(
+    'the balance line names what is leaving, double-checked and reserved',
+    V.reservedText({ outgoing: 10, unvouched: 20, elsewhere: 30 }, { hitch: true, quarantine: true, money }) ===
+      '10 sat leaving in payments not yet confirmed · 20 sat in blocks still being double-checked (the signed chain tip has not reached them) · 30 sat reserved elsewhere: a Hitch channel funding (to release it, close Reef, open Hitch and cancel the funding there); a payment record Reef could not verify (see the notice above)',
+  );
+}
+{
+  const money = (x) => `${x} sat`;
+  const to = 'tb1pdestinationaddressxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
+  const L = V.confirmLines({ to, rate: 1, p: { amount: 9000, fee: 362, change: 0, vsize: 200, picked: [] }, money, allAmount: 9150 });
+  t(
+    'the fee line splits rate and leftover, and says what Send everything would pay instead',
+    L.some((l) => l === 'Fee: 362 sat — 200 sat (200 vB at 1 sat/vB) + 162 sat leftover') &&
+      L.some((l) => /Send everything would pay the recipient 9150 sat instead/.test(l)),
+  );
+  const hiOk = V.confirmLines({ to, rate: 20, p: { amount: 9000, fee: 300, change: 100, vsize: 15, picked: [] }, money, suggested: 25 });
+  t('a high rate is not called high when payments waiting pay as much', !hiOk.some((l) => /much higher/.test(l)));
+  const hi = V.confirmLines({ to, rate: 40, p: { amount: 9000, fee: 600, change: 100, vsize: 15, picked: [] }, money, suggested: 25 });
+  t(
+    '...and is, against what they pay, when above it',
+    hi.some((l) => /payments waiting now pay \(about 25 sat\/vB\)/.test(l)),
   );
 }
 console.log(`\n${ok} passed, ${bad} failed`);

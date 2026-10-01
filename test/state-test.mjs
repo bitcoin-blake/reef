@@ -318,7 +318,7 @@ t(
         B.failed === tx('a') &&
         !B.replaced &&
         fx.some((e) => e.bad && /was not made/.test(e.body) && /Pay again/.test(e.body)) &&
-        /pay again/.test(S.stateOf(B, { inMempool: () => false, height: 152110, now: 0, sent })),
+        /pay(ing)? again/.test(S.stateOf(B, { inMempool: () => false, height: 152110, now: 0, sent })),
     );
   }
   {
@@ -1119,6 +1119,22 @@ t(
     w = pay({ txid: tx('w'), pending: false, height: null, inputs: [inA] });
   const fx = S.onRecheck([r, w], r.txid, { found: true, txid: tx('w'), height: 152106 }, 152106, 152104);
   t('a recheck whose winner is above the signed tip changes nothing yet', fx.length === 0 && !r.pending && r.height === 152100);
+}
+{
+  const w = pay({ txid: tx('w'), pending: false, height: 152100 });
+  const f = pay({ pending: false, failed: tx('w') });
+  t(
+    'did not happen, while the winner is shallow: wait before paying again',
+    /wait for 6 confirmations \(now 2\)/.test(S.stateOf(f, { inMempool: () => false, height: 152101, now: 0, sent: [f, w] })),
+  );
+  t(
+    '...and once it is deep: pay again',
+    /pay again if you still mean to/.test(S.stateOf(f, { inMempool: () => false, height: 152105, now: 0, sent: [f, w] })),
+  );
+  t(
+    'shallow: under six confirmations, and not with an unknown height',
+    S.shallow(152100, 152104) && !S.shallow(152100, 152105) && !S.shallow(null, 152100) && !S.shallow(152100, null),
+  );
 }
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

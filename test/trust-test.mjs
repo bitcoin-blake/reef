@@ -75,5 +75,35 @@ t(
 t('vouched: a disagreeing tip holds to the last vouched height', T.vouchedHeight(tip({ diverged: true }), 152090, 150307) === 152090);
 t('vouched: no tip at all is no limit (said as a warning elsewhere)', T.vouchedHeight(null, 152090, 150307) === null);
 t('vouched: a lower agreeing tip does not lower the bar', T.vouchedHeight(tip({ height: 152080 }), 152090, 150307) === 152090);
+// round 11: the boundaries the mutants slipped past
+t(
+  'an unresponsive node is a warning that reaches the confirm dialog, a disagreement still outranks it',
+  L({ unresponsive: true }).level === 'warn' && L({ unresponsive: true }, tip({ diverged: true })).level === 'bad',
+);
+t('the source quiet exactly three minutes is not yet a warning', L({ lastSync: NOW - 180e3 }).level === 'ok');
+t(
+  'no new block for exactly 90 minutes is not yet a warning, and the tip being ahead keeps it quiet',
+  L({ time: NOW / 1000 - 5400 }).level === 'ok' && L({ time: NOW / 1000 - 6000 }, tip({ height: 152101 })).level !== 'warn',
+);
+t(
+  'two blocks behind the tip is not yet "behind"; three is',
+  L({}, tip({ height: 152102 })).level !== 'warn' && L({}, tip({ height: 152103 })).level === 'warn',
+);
+t(
+  'a tip trailing by two: recent by its time (not live) still warns',
+  L({}, tip({ height: 152098, live: false, created_at: NOW / 1000 - 600 })).level === 'warn',
+);
+t('a tip trailing by exactly one is not a "trailing" warning', L({}, tip({ height: 152099, live: true })).level !== 'warn');
+t(
+  'a tip three hours old but at the same height as the tab is not "not refreshed"',
+  !/not been refreshed/.test(L({}, tip({ live: false, created_at: NOW / 1000 - 4 * 3600 })).text),
+);
+t('no tip at exactly two minutes is still quiet', T.trustOf({ ...base, nostr: null, syncedAt: NOW - 120e3 }, NOW).level === 'none');
+t(
+  "vouched: the node's own vouchedTo wins over the page's record, even when lower (a disagreement caps it)",
+  T.vouchedHeight(tip({ vouchedTo: 152095 }), 152100, 150307) === 152095 &&
+    T.vouchedHeight(tip({ vouchedTo: 152101, diverged: true }), 152090, 150307) === 152101,
+);
+t("vouched: without vouchedTo the page's record is the fallback", T.vouchedHeight(tip({ agree: 0 }), 152090, 150307) === 152090);
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);
