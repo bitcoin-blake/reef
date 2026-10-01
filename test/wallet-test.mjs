@@ -695,5 +695,75 @@ t(
       })[0].immature === false,
   );
 }
+{
+  // the records the page writes for what it signs pass the stored-record check against their own signed transactions
+  const S = await import('../lib/state.mjs');
+  const check = (hex) => {
+    const t2 = k.codec.decode('Transaction', hex);
+    return {
+      txid: k.codec.txid(t2),
+      inputs: t2.inputs.map((i) => `${i.prevout.txid}:${i.prevout.vout}`),
+      outputs: t2.outputs.map((o) => ({ value: o.value, scriptPubKey: o.scriptPubKey })),
+    };
+  };
+  const scriptOf = (a) => addr.decodeAddress(a)?.script ?? null;
+  const toB = addr.scriptToAddress(spkB, 'tb');
+  const p = W.plan({ coins: [coin(77, 100000)], amount: 30000, rate: 1, destSpk: spkB, changeSpk: spkA });
+  const tx = W.unsignedTx(p);
+  txsign.signKeyPath(
+    { k, hash, signer },
+    tx,
+    p.picked.map((c) => ({ value: c.value, scriptPubKey: spkA })),
+    keyA,
+  );
+  const hex = k.codec.encodeHex('Transaction', tx);
+  const rec = S.paymentRecord(p, { txid: k.codec.txid(tx), hex, to: toB, toScript: spkB, tip: 152100 });
+  t(
+    'a payment record built from a signed payment passes the stored-record check',
+    S.validRecord({ ...rec }, { check, scriptOf, ownScript: spkA }),
+    JSON.stringify({ to: toB }),
+  );
+  const pr = W.planReplace(rec, { cancel: true, rate: 3, ownSpk: spkA });
+  const tx2 = W.unsignedTx({ picked: p.picked, outputs: pr.outputs });
+  txsign.signKeyPath(
+    { k, hash, signer },
+    tx2,
+    p.picked.map((c) => ({ value: c.value, scriptPubKey: spkA })),
+    keyA,
+  );
+  const ownAddr = addr.scriptToAddress(spkA, 'tb');
+  const cx = S.replacementRecord(rec, pr, {
+    cancel: true,
+    txid: k.codec.txid(tx2),
+    hex: k.codec.encodeHex('Transaction', tx2),
+    address: ownAddr,
+    script: spkA,
+    tip: 152101,
+  });
+  t(
+    'a cancel record built from a signed cancel passes the check, as a cancel to yourself',
+    S.validRecord({ ...cx }, { check, scriptOf, ownScript: spkA }) && cx.kind === 'cancel' && cx.self && cx.replaces === rec.txid,
+  );
+  const pr2 = W.planReplace(rec, { rate: 3, ownSpk: spkA });
+  const tx3 = W.unsignedTx({ picked: p.picked, outputs: pr2.outputs });
+  txsign.signKeyPath(
+    { k, hash, signer },
+    tx3,
+    p.picked.map((c) => ({ value: c.value, scriptPubKey: spkA })),
+    keyA,
+  );
+  const up = S.replacementRecord(rec, pr2, {
+    cancel: false,
+    txid: k.codec.txid(tx3),
+    hex: k.codec.encodeHex('Transaction', tx3),
+    address: ownAddr,
+    script: spkA,
+    tip: 152101,
+  });
+  t(
+    'a fee-raise record passes the check and keeps the recipient',
+    S.validRecord({ ...up }, { check, scriptOf, ownScript: spkA }) && up.to === toB && up.sats === 30000 && up.fee > rec.fee,
+  );
+}
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

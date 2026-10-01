@@ -26,8 +26,10 @@ const t = (name, cond, detail = '') => {
 };
 const MAP = [
   [/^https:\/\/cdn\.jsdelivr\.net\/gh\/bitcoin-blake\/blaketestnode@[0-9a-f]+\/browser\/tabnode\.js$/, () => `${ROOT}test/fake/tabnode.js`],
+  // relays: the fake (nothing leaves the test), which serves the real module's other exports from ?real
+  [/^https:\/\/cdn\.jsdelivr\.net\/gh\/sidestr\/spec@[0-9a-f]+\/siding\/lib\/relay\.mjs$/, () => `${ROOT}test/fake/relay.mjs`],
   // the libraries at the commit the page pins (git show), as the CDN serves them: the page checks the engine's files by hash
-  [/^https:\/\/cdn\.jsdelivr\.net\/gh\/sidestr\/spec@([0-9a-f]+)\/(.*)$/, (m) => ({ dir: SPEC, sha: m[1], path: m[2] })],
+  [/^https:\/\/cdn\.jsdelivr\.net\/gh\/sidestr\/spec@([0-9a-f]+)\/([^?]*)(\?real)?$/, (m) => ({ dir: SPEC, sha: m[1], path: m[2] })],
   [/^https:\/\/cdn\.jsdelivr\.net\/gh\/bitcoin-desktop\/schema@([0-9a-f]+)\/(.*)$/, (m) => ({ dir: SCHEMA, sha: m[1], path: m[2] })],
   [/^http:\/\/localhost:8799\/seed$/, () => null],
   [/^http:\/\/localhost:8799\/([^?]*)/, (m) => `${ROOT}${m[1] || 'index.html'}`],
@@ -60,7 +62,7 @@ async function profile({ libDelay = 0, startMs = 50, seed = {} } = {}) {
       return route.fulfill({ status: 200, contentType: type(name), body, headers: { 'access-control-allow-origin': '*' } });
     }
     if (/^https:\/\/cdn\.jsdelivr\.net\/npm\//.test(u)) return route.continue(); // qrcode, webtorrent: pinned with SRI where loaded
-    return route.fulfill({ status: 404, body: '' }); // the mirror, relays over http: nothing leaves the test
+    return route.fulfill({ status: 404, body: '' }); // the mirror over http: nothing leaves the test (relays are faked above)
   });
   await ctx.addInitScript((ms) => (window.__START_MS = ms), startMs);
   const s = await ctx.newPage();
@@ -220,6 +222,72 @@ for (const [name, opts] of [
   await a.waitForTimeout(200);
   t('restoring from the tray puts focus on the page toolbar', await a.evaluate(() => !!document.activeElement?.closest('.tool')));
   t('no page errors', !p.errors.length, p.errors.join(' | '));
+  await p.ctx.close();
+}
+// 6: a payment end to end: typed, confirmed, signed, recorded, published; then its coins spent by another transaction
+{
+  const p = await profile({ seed: { 'reef:started': '1', 'reef:key': KEY } });
+  const a = await p.open();
+  await a.waitForFunction(() => /^tb1p/.test(document.getElementById('rcvaddr').value), null, { timeout: 30000 });
+  await a.waitForTimeout(800);
+  const COIN = 'cd'.repeat(32) + ':0';
+  await a.evaluate(
+    ({ script, COIN }) => {
+      window.__fake.emit('message', { type: 'synced', height: 152100, applied: true });
+      window.__fake.emit('message', { type: 'coins', script, height: 152100, coins: [{ key: COIN, value: 50000, height: 152000 }] });
+    },
+    { script: SCRIPT, COIN },
+  );
+  await a.waitForFunction(() => /0\.00050000/.test(document.getElementById('avail').textContent), null, { timeout: 5000 });
+  await a.evaluate(() => document.querySelector('[data-p=send]').click());
+  await a.fill('#sendto', 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx');
+  await a.fill('#sendamt', '0.0001');
+  await a.click('#sendgo');
+  await a.waitForSelector('#ask[open]', { timeout: 5000 });
+  const confirmText = await a.textContent('#ask-b');
+  t(
+    'the confirm dialog shows the address in fours, the amount and the fee',
+    /tb1q w508/.test(confirmText) && /0\.00010000 tBTC/.test(confirmText) && /Fee:/.test(confirmText),
+    confirmText.slice(0, 160),
+  );
+  await a.click('#ask-ok');
+  await a.waitForFunction(() => (window.__relay ?? []).length === 1, null, { timeout: 15000 }).catch(() => {});
+  const rec = JSON.parse((await ls(a, 'reef:sent:' + TAG)) ?? '[]');
+  const ev = await a.evaluate(() => window.__relay?.[0] ?? null);
+  t(
+    'the payment is recorded before it leaves, and the published event carries its signed transaction',
+    rec.length === 1 && rec[0].pending && rec[0].sats === 10000 && ev?.kind === 23503 && ev?.content === rec[0].hex,
+    JSON.stringify({ n: rec.length, kind: ev?.kind }),
+  );
+  const avail = await a.textContent('#avail');
+  t('its coin is held: nothing is available while it waits', /^0\.00000000/.test(avail), avail);
+  t(
+    'it reads as waiting, with a fee raise and a cancel on offer',
+    (await a.evaluate(() => [...document.querySelectorAll('#txrows button')].map((b) => b.dataset.act).join())) === 'bump,again,cancel',
+  );
+  // the coin spent by something else, no change back: the page asks the node which transaction spent it
+  const txid = rec[0].txid;
+  await a.evaluate(({ script }) => window.__fake.emit('message', { type: 'coins', script, height: 152102, coins: [] }), { script: SCRIPT });
+  await a.waitForTimeout(200);
+  const asked = await a.evaluate((txid) => window.__fake.posts.find((m) => m.type === 'spend' && m.req === 'sent:' + txid), txid);
+  t(
+    'with its coin gone and no change back, the node is asked which transaction spent it',
+    !!asked && asked.key === COIN,
+    JSON.stringify(asked),
+  );
+  await a.evaluate(
+    (txid) => window.__fake.emit('message', { type: 'spend', req: 'sent:' + txid, found: true, txid: 'ee'.repeat(32), height: 152101 }),
+    txid,
+  );
+  await a.waitForTimeout(300);
+  const toast = await a.evaluate(() => [...document.querySelectorAll('.toast')].map((x) => x.textContent).join(' | '));
+  const row = await a.evaluate(() => document.querySelector('#txrows tr')?.textContent ?? '');
+  t(
+    'another transaction spent it: "did not happen" is said and the row is struck',
+    /did not happen/i.test(toast) && /did not happen/.test(row),
+    toast.slice(0, 120),
+  );
+  t('no page errors in the payment path', !p.errors.length, p.errors.join(' | '));
   await p.ctx.close();
 }
 await browser.close();

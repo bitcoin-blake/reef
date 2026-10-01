@@ -74,7 +74,7 @@ t(
 }
 {
   const s = pay({ pending: false, replaced: tx('2'), vAt: 1 });
-  const v = V.viewRow(row(s), ctx([s]));
+  const v = V.viewRow(row(s), ctx([s, pay({ txid: tx('2'), replaces: tx('1'), pending: false, height: 152101 })]));
   t(
     'a version that did not happen is struck, says why, shows what it would have cost, and can be removed',
     v.struck && v.tag === 'replaced' && v.sats === -3155 && v.actions.join() === 'hide' && v.block === null,
@@ -199,7 +199,10 @@ t(
 }
 {
   const s = pay({ pending: false, replaced: tx('2') });
-  const line = V.exportRow({ ...row(s), sats: 0, label: '=HYPERLINK("x")' }, ctx([s]));
+  const line = V.exportRow(
+    { ...row(s), sats: 0, label: '=HYPERLINK("x")' },
+    ctx([s, pay({ txid: tx('2'), replaces: tx('1'), pending: false, height: 152101 })]),
+  );
   t(
     'the export says what the lists say, counts a replaced version as 0, and quotes a formula',
     /replaced: another version/.test(line) && /\(replaced\)/.test(line) && line.includes(',"0",') && line.includes(`"'=HYPERLINK(""x"")"`),
@@ -241,6 +244,62 @@ t(
   t(
     'a forgotten payment can still be cancelled once the payment that took its coins has settled',
     V.viewRow(row(f), ctx([f, settled])).actions.includes('cancel'),
+  );
+}
+{
+  const s = pay({ pending: false, replaced: tx('e') });
+  const v = V.viewRow(row(s), ctx([s]));
+  t(
+    'a payment whose coins another (not ours) transaction spent reads "did not happen", not "replaced"',
+    /^did not happen/.test(v.state) && v.tag === 'did not happen' && v.struck,
+  );
+}
+{
+  // the confirm dialog's lines
+  const money = (x) => `${x} sat`;
+  const p = { amount: 3000, fee: 155, change: 6845, vsize: 155, picked: [{ key: inA }] };
+  const to = 'tb1pdestinationaddressxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
+  const L = V.confirmLines({ to, rate: 1, p, money });
+  t(
+    'the plain case: address in fours, a check of its ends, amount, fee, total',
+    L[0].startsWith('To: tb1p dest') &&
+      /start \(tb1pdest\)/.test(L[1]) &&
+      /Amount: 3000 sat/.test(L[2]) &&
+      /Fee: 155 sat/.test(L[3]) &&
+      /Total leaving the wallet: 3155 sat; 6845 sat comes back/.test(L[4]),
+  );
+  const me = V.confirmLines({ to, self: true, rate: 1, p, money });
+  t(
+    'to yourself: no check of the ends, and only the fee leaves',
+    !me.some((l) => /Check the start/.test(l)) && me.some((l) => /Only the fee leaves the wallet; 9845 sat comes back/.test(l)),
+  );
+  const hi = V.confirmLines({ to, rate: 20, p: { ...p, fee: 200000, amount: 1000 }, money });
+  t(
+    'a high rate and a fee above the amount are said right after the fee line',
+    /more than the amount/.test(hi[4]) && /much higher than txbt4 blocks need/.test(hi[5]),
+  );
+  t(
+    'a chain-status warning is added at the end',
+    /may never confirm/.test(V.confirmLines({ to, rate: 1, p, money, trustWarn: 'behind' }).at(-1)),
+  );
+  const w = V.confirmLines({ to, rate: 1, p, money, waitingSame: [{ sats: 500, inputs: [inB] }] });
+  t(
+    'a payment still waiting to the same address comes first: a second, separate payment',
+    /still waiting\. This would be a second, separate payment/.test(w[0]),
+  );
+  const f1 = V.confirmLines({ to, rate: 1, p, money, waitingSame: [{ sats: 500, abandoned: true, inputs: [inA] }], reuse: 'note' });
+  t(
+    'a forgotten one whose coin this spends: only one can go through, and the reuse note is not repeated',
+    /only one of the two can ever go through/.test(f1[0]) && !f1.includes('note'),
+  );
+  const f2 = V.confirmLines({ to, rate: 1, p, money, waitingSame: [{ sats: 500, abandoned: true, inputs: [inB] }] });
+  t(
+    'a forgotten one whose coins this does not spend: this would be a second payment',
+    /does not spend its coins: this would be a second payment/.test(f2[0]),
+  );
+  t(
+    'the reuse note is added when no forgotten payment to the same address',
+    V.confirmLines({ to, rate: 1, p, money, reuse: 'note' }).includes('note'),
   );
 }
 console.log(`\n${ok} passed, ${bad} failed`);

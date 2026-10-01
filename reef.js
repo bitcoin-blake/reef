@@ -4,7 +4,7 @@
 // tested against the kernel; this file is the host: storage, the node, the relays, the window. Every string that comes
 // from outside (relays, the mempool, the chain, links, options) reaches the page as text, never as markup.
 const $ = (id) => document.getElementById(id);
-export const VERSION = '2026-10-01.15';
+export const VERSION = '2026-10-01.16';
 const SCHEMA = 2; // the storage layout this version writes
 const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@5781862729a165e3f225010122cfdc4ec41e9de4';
 const LIB = 'https://cdn.jsdelivr.net/gh/sidestr/spec@fe689e9c723f9bf43393d2dd5b6f924a701c8a18/siding/lib',
@@ -1529,7 +1529,9 @@ function applyDisplay() {
       `about ${exact(Math.ceil(rate * WL.estimateVsize(1, ['5120' + '00'.repeat(32), '5120' + '00'.repeat(32)])))} for a typical payment (${rate} sat/vB)`;
   if (W) renderWallet();
 }
-async function walletInit() {
+// the wallet's code and the chain's rules: the sidestr library and the engine at their pinned commits, the rule files
+// checked by hash before use
+async function loadKernel() {
   const [{ makeSigner }, txsign, addr, relay, secp, hash, { createKernel }, { knotsBlake2b }] = await Promise.all([
     import(`${LIB}/schnorr.mjs`),
     import(`${LIB}/txsign.mjs`),
@@ -1562,6 +1564,10 @@ async function walletInit() {
     network: 'btc:testnet4-blake2b',
     overlays: [knotsBlake2b(await j('schema/overlays/knots-blake2b.jsonld'))],
   });
+  return { makeSigner, txsign, addr, relay, secp, hash, k };
+}
+async function walletInit() {
+  const { makeSigner, txsign, addr, relay, secp, hash, k } = await loadKernel();
   const signer = makeSigner({ hash, secp });
   const valid = (x) => {
     try {
@@ -1724,6 +1730,10 @@ async function walletInit() {
       );
   }
   W.validRecord = (x) => S.validRecord(x, { check, scriptOf, ownScript: script });
+  wireWalletPage(address);
+}
+// the Receive page and the Send form, once the wallet has its address
+function wireWalletPage(address) {
   $('rcvaddr').value = address;
   $('rcvfull').textContent = V.grouped(address); // the whole address, in fours, to read against the payer's copy
   try {
@@ -2270,37 +2280,17 @@ async function sendFlow() {
   const waitingSame = sent.filter(
     (s) => s.pending && !s.replaced && !s.replacedBy && (s.toScript ?? W.addr.decodeAddress(s.to)?.script) === r.dec.script,
   );
-  const lines = [
-    `To: ${V.grouped(r.to)}${r.self ? ' (your own address)' : ''}`,
-    ...(r.self ? [] : [`Check the start (${r.to.slice(0, 8)}) and the end (${r.to.slice(-6)}) against where you got the address.`]),
-    `Amount: ${exact(p.amount)}${r.all ? ' (everything spendable, after the fee)' : ''}`,
-    `Fee: ${exact(p.fee)} — ${p.vsize} vB at ${r.rate} sat/vB`,
-    r.self
-      ? `Only the fee leaves the wallet; ${exact(p.amount + (p.change ?? 0))} comes back to you.`
-      : `Total leaving the wallet: ${exact(p.amount + p.fee)}${p.change ? `; ${exact(p.change)} comes back as change` : ''}`,
-    'It is signed here and handed to relays for a node to broadcast. Until a block takes it, it can be replaced with a higher fee or cancelled.',
-  ];
-  if (trust().level === 'warn')
-    lines.push(`${trust().text}: the coins may already be spent on the real chain, and this payment may never confirm.`);
-  if (r.rate >= 10)
-    lines.splice(
-      3,
-      0,
-      `This fee rate (${r.rate} sat/vB) is much higher than txbt4 blocks need today (1 sat/vB). Lower it in Settings → Options → Wallet unless you mean it.`,
-    );
-  if (p.fee > 100000 || p.fee > p.amount)
-    lines.splice(3, 0, `The fee is ${p.fee > p.amount ? 'more than the amount' : 'high'}: check the fee rate in Options.`);
-  const fgn = reuseNote(p);
-  if (fgn && !waitingSame.some((x) => x.abandoned)) lines.push(fgn);
-  const sameUses = (x) => p.picked.some((c) => (x.inputs ?? []).includes(c.key));
-  if (waitingSame.length)
-    lines.unshift(
-      waitingSame[0].abandoned && sameUses(waitingSame[0])
-        ? `A payment of ${exact(waitingSame[0].sats)} to this address was forgotten. This payment spends one of its coins, so only one of the two can ever go through.`
-        : waitingSame[0].abandoned
-          ? `A payment of ${exact(waitingSame[0].sats)} to this address was forgotten but may still be mined, and this payment does not spend its coins: this would be a second payment.`
-          : `A payment of ${exact(waitingSame[0].sats)} to this address is still waiting. This would be a second, separate payment.`,
-    );
+  const lines = V.confirmLines({
+    to: r.to,
+    self: r.self,
+    all: r.all,
+    rate: r.rate,
+    p,
+    money: exact,
+    trustWarn: trust().level === 'warn' ? trust().text : null,
+    reuse: reuseNote(p),
+    waitingSame,
+  });
   if (!(await ask('Confirm the payment', lines, 'Send', false, 'Back'))) return;
   // the world may have moved while the dialog was open: the same coins and the same figures, or nothing is sent
   let again;
@@ -2328,24 +2318,7 @@ async function sendFlow() {
         `the signed payment came out larger than estimated (${vsize} vB), so the fee is below the rate; nothing was sent: send again`,
       );
     // the coins are held before anything is published, so a second click or another tab cannot spend them again
-    const s = {
-      txid,
-      to: r.to,
-      toScript: r.dec.script,
-      sats: p.amount,
-      fee: p.fee,
-      change: p.change,
-      all: r.all,
-      self: r.self,
-      at: Date.now(),
-      hex,
-      inputs: p.picked.map((c) => c.key),
-      values: p.picked.map((c) => c.value),
-      tip: W.height,
-      pending: true,
-      kind: 'payment',
-      relays: [],
-    };
+    const s = S.paymentRecord(p, { txid, hex, to: r.to, toScript: r.dec.script, self: r.self, all: r.all, tip: W.height });
     if (sent.some((x) => x.txid === txid)) throw new Error('this payment was already made');
     sent.push(s);
     for (const c of p.picked) seen.set(c.key, c.value);
@@ -2531,25 +2504,7 @@ async function replaceFlow(s, cancel) {
       throw new Error(
         `the signed replacement came out larger than estimated (${vsize} vB), so its fee is too low to replace; nothing was sent`,
       );
-    const r = {
-      txid,
-      to: cancel ? W.address : s.to,
-      toScript: cancel ? W.script : s.toScript,
-      sats: cancel ? 0 : amount,
-      fee,
-      change: cancel ? amount : change,
-      all: s.all,
-      at: Date.now(),
-      hex,
-      inputs: s.inputs,
-      values: s.values,
-      tip: W.height,
-      pending: true,
-      kind: cancel ? 'cancel' : 'payment',
-      replaces: s.txid,
-      self: cancel || !!s.self,
-      relays: [],
-    };
+    const r = S.replacementRecord(s, pr, { cancel, txid, hex, address: W.address, script: W.script, tip: W.height });
     s.replacedBy = txid;
     sent.push(r);
     if (!saveSent()) {
@@ -3253,7 +3208,7 @@ async function copyDiagnostics() {
   }
 }
 // ---- a newer Reef: checked every hour, offered, never forced
-// "2026-10-01.15" → comparable: a stale copy at the web host never offers an older version as newer
+// "2026-10-01.16" → comparable: a stale copy at the web host never offers an older version as newer
 const versionKey = (v) => {
   const m = /^(\d{4})-(\d{2})-(\d{2})\.(\d+)$/.exec(String(v ?? ''));
   return m ? [+m[1], +m[2], +m[3], +m[4]] : null;
