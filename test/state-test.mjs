@@ -182,7 +182,7 @@ t(
       /cancel it/.test(st(pay({ refusedNote: 'fee' }))) &&
       /next payment/.test(st(pay({ abandoned: true }))) &&
       /made elsewhere/.test(st(pay({ hex: undefined }))) &&
-      st(pay({ pending: false, height: 1 })) === 'confirmed' &&
+      /^[0-9,]+ confirmations$/.test(st(pay({ pending: false, height: 1 }))) &&
       /confirming \(2 of 6\)/.test(st(pay({ pending: false, height: 152100 }))) &&
       /every 10 minutes/.test(st(pay(), { now: 2000 + 11 * 60e3 })),
   );
@@ -910,6 +910,110 @@ t(
   t(
     'a mempool transaction spending none of our coins is not ours; one with some is partial, and a Hitch coin makes it a funding',
     mp.length === 1 && mp[0].txid === tx('7') && mp[0].partial && /Hitch/.test(mp[0].to),
+  );
+}
+{
+  t(
+    'one rule says what may be announced: waiting, signed here, not replaced, refused or forgotten',
+    S.publishable(pay()) &&
+      !S.publishable(pay({ refusedNote: 'x' })) &&
+      !S.publishable(pay({ refused: 'x' })) &&
+      !S.publishable(pay({ abandoned: true })) &&
+      !S.publishable(pay({ replacedBy: tx('2') })) &&
+      !S.publishable(pay({ pending: false })) &&
+      !S.publishable(pay({ hex: null })),
+  );
+}
+{
+  // a cancel that won, then a block undone and the payment mined instead, after paying the same address again
+  const dest = '5120' + 'dd'.repeat(32);
+  const P = pay({ txid: tx('a'), pending: false, replaced: tx('c'), replacedBy: tx('c'), at: 1, toScript: dest });
+  const C = pay({
+    txid: tx('c'),
+    kind: 'cancel',
+    replaces: tx('a'),
+    pending: false,
+    height: 152101,
+    sats: 0,
+    change: 9600,
+    at: 2,
+    toScript: '5120' + 'ee'.repeat(32),
+    self: true,
+  });
+  const P2 = pay({ txid: tx('b'), pending: true, at: 3, inputs: [inB], toScript: dest });
+  const fx = S.onCoins({ sent: [P, C, P2], coins: [{ key: tx('a') + ':1', value: 6845, height: 152101 }], height: 152102 });
+  const n = fx.find((e) => e.notice);
+  t(
+    'a cancel undone by a reorganisation is said, and paying the same address since is flagged as maybe twice',
+    n?.notice === 'The cancel was undone' && n.bad && /paid twice/.test(n.body),
+    JSON.stringify(n),
+  );
+  const st = S.stateOf(pay({ pending: false, replaced: tx('c') }), {
+    inMempool: () => false,
+    height: 152102,
+    now: 1,
+    sent: [pay({ txid: tx('c'), kind: 'cancel', replaces: tx('a'), pending: false, height: 152101, self: true })],
+  });
+  t(
+    'a cancel still settling says to wait six confirmations before paying again',
+    /confirming 2 of 6: wait for 6 before paying again/.test(st),
+    st,
+  );
+}
+{
+  const d = '5120' + 'dd'.repeat(32);
+  const w = S.waitingTo(
+    [
+      pay({ txid: tx('1'), at: 1 }),
+      pay({ txid: tx('2'), at: 5 }),
+      pay({ txid: tx('3'), refused: 'x', replaces: tx('1'), at: 9 }),
+      pay({ txid: tx('4'), pending: false }),
+      pay({ txid: tx('5'), toScript: null, to: 'old', at: 3 }),
+    ],
+    d,
+    (a) => (a === 'old' ? d : null),
+  );
+  t(
+    'payments waiting to an address: newest first, refused replacements and settled ones left out, old records decoded',
+    w.map((x) => x.txid[0]).join('') === '251',
+  );
+  // stamps: a later change always wins a merge
+  const a = [pay({ vAt: 5, pending: true })];
+  const b = [pay({ vAt: 9, pending: false, height: 152101 })];
+  t(
+    "of two tabs' copies, the later stamped verdict wins",
+    S.mergeSent(a, b)[0].pending === false && S.mergeSent(b, [pay({ vAt: 5, pending: true })])[0].pending === false,
+  );
+  t(
+    'a stamp is always later than any already given and than now',
+    (() => {
+      const s0 = [pay({ vAt: Date.now() + 1e6 })];
+      return S.stamp(s0) > s0[0].vAt;
+    })(),
+  );
+  // the shapes: a cancel's figures and the order of coins
+  const p2 = {
+    amount: 3000,
+    fee: 200,
+    change: 1000,
+    picked: [
+      { key: inB, value: 2500 },
+      { key: inA, value: 1700 },
+    ],
+  };
+  const pr = S.paymentRecord(p2, { txid: tx('9'), hex: '00', to: 'x', toScript: d, tip: 7, now: 1 });
+  t(
+    'a payment record keeps the coins in the order signed',
+    pr.inputs.join() === [inB, inA].join() && pr.values.join() === '2500,1700' && pr.tip === 7,
+  );
+  const cx = S.replacementRecord(
+    { ...pr, all: true },
+    { amount: 4000, fee: 200, change: 0 },
+    { cancel: true, txid: tx('8'), hex: '00', address: 'me', script: 'ms', tip: 8, now: 2 },
+  );
+  t(
+    "a cancel record: nothing to the recipient, the coins back as change, the payment's all flag and the new tip",
+    cx.sats === 0 && cx.change === 4000 && cx.all === true && cx.tip === 8 && cx.to === 'me' && cx.toScript === 'ms',
   );
 }
 console.log(`\n${ok} passed, ${bad} failed`);

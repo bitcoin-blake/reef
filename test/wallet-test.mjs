@@ -446,7 +446,7 @@ t(
   );
   t(
     'the smallest payment is 546 sat: 545 is refused, 546 made',
-    throws(() => W.plan({ coins: one, amount: 545, rate: 1, destSpk: spkB, changeSpk: spkA }), /at least 546/) &&
+    throws(() => W.plan({ coins: one, amount: 545, rate: 1, destSpk: spkB, changeSpk: spkA }), /smallest payment is 546 sat/) &&
       W.plan({ coins: one, amount: 546, rate: 1, destSpk: spkB, changeSpk: spkA }).amount === 546,
   );
 }
@@ -765,5 +765,40 @@ t(
     S.validRecord({ ...up }, { check, scriptOf, ownScript: spkA }) && up.to === toB && up.sats === 30000 && up.fee > rec.fee,
   );
 }
+{
+  const T = 'ab'.repeat(32);
+  const mk = () => new Map([[T, { txid: T, outs: { 0: 5 }, height: 100, checkedAt: 105 }]]);
+  let L = mk();
+  t(
+    'a receipt found spent elsewhere is kept and not asked about again',
+    W.onReceiptAnswer(L, T, { found: true }, 105) === 'spent' && L.get(T).spentElsewhere,
+  );
+  L = mk();
+  t(
+    '"not found" from a search that reached our height removes it as undone',
+    W.onReceiptAnswer(L, T, { found: false, to: 105 }, 105) === 'removed' && !L.has(T),
+  );
+  L = mk();
+  t(
+    '"not found" from a search that stopped short proves nothing: kept, asked again',
+    W.onReceiptAnswer(L, T, { found: false, to: 104 }, 105) === 'ignore' && L.has(T) && L.get(T).checkedAt == null,
+  );
+  L = mk();
+  t('...nor does an answer without how far it searched', W.onReceiptAnswer(L, T, { found: false }, 105) === 'ignore' && L.has(T));
+}
+t(
+  'coins of a set-aside record that was forgotten or refused here go first too (its transaction may still be mined)',
+  (() => {
+    const f = W.reuseFirst(
+      [],
+      [
+        { pending: true, abandoned: true, inputs: ['f:0'] },
+        { pending: true, refusedNote: 'x', inputs: ['g:0'] },
+        { pending: true, inputs: ['h:0'] },
+      ],
+    );
+    return f.has('f:0') && f.has('g:0') && !f.has('h:0');
+  })(),
+);
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

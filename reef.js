@@ -4,9 +4,9 @@
 // tested against the kernel; this file is the host: storage, the node, the relays, the window. Every string that comes
 // from outside (relays, the mempool, the chain, links, options) reaches the page as text, never as markup.
 const $ = (id) => document.getElementById(id);
-export const VERSION = '2026-10-01.16';
+export const VERSION = '2026-10-01.17';
 const SCHEMA = 2; // the storage layout this version writes
-const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@5781862729a165e3f225010122cfdc4ec41e9de4';
+const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@cebed0bb2fcf2157e32e8411a5594fb48d878a81';
 const LIB = 'https://cdn.jsdelivr.net/gh/sidestr/spec@fe689e9c723f9bf43393d2dd5b6f924a701c8a18/siding/lib',
   CDN = 'https://cdn.jsdelivr.net/gh/bitcoin-desktop/schema@b8cbf6337c7450fe14ddc5bce00c7280059aab5d';
 // the engine's rule files by content as well as by commit: a CDN that served other rules would validate another chain
@@ -126,8 +126,13 @@ function sayOnce(text, urgent = false) {
     r.setAttribute('role', urgent ? 'alert' : 'status');
     document.body.appendChild(r);
   }
-  r.textContent = '';
-  setTimeout(() => (r.textContent = text), 50);
+  // one child per message, removed after a while: two notices close together are both read, neither overwrites the other
+  const m = document.createElement('p');
+  setTimeout(() => {
+    m.textContent = text;
+    r.appendChild(m);
+  }, 50);
+  setTimeout(() => m.remove(), 15e3);
 }
 function banner(id, cls, text, actions = []) {
   if (dismissed.has(id)) return;
@@ -214,9 +219,11 @@ try {
 }
 {
   const asked = document.querySelector('script[src*="reef.js"]')?.src.match(/v=([^&]+)/)?.[1];
-  if (asked && decodeURIComponent(asked) !== VERSION && !SS.get('reef:mixed')) {
-    SS.set('reef:mixed', '1');
+  const mixKey = 'reef:mixed:' + decodeURIComponent(asked ?? '') + '>' + VERSION; // once per pair of versions, not once per tab
+  if (asked && decodeURIComponent(asked) !== VERSION && !SS.get(mixKey)) {
+    SS.set(mixKey, '1');
     location.replace(location.pathname + (keepQuery() ? keepQuery() + '&' : '?') + 'v=' + encodeURIComponent(VERSION));
+    await new Promise(() => {}); // nothing more runs in a page being replaced (no lock, no worker)
   }
 }
 const T0 = Date.now();
@@ -361,6 +368,12 @@ function trust() {
       level: 'none',
       text: `Up to date (block ${n(node.height)}). The signed chain tip that double-checks it has not been refreshed for ${ago(now - t.created_at)}; its publisher may be down. This is usually harmless.`,
     };
+  // a live signed tip should not trail the block source by two blocks: if it does, those blocks are the source's word alone
+  if (t.height < node.height - 1 && (t.live || (t.created_at && now - t.created_at < 1800)))
+    return {
+      level: 'warn',
+      text: `the block source is ${n(node.height - t.height)} blocks ahead of the signed chain tip (${n(t.height)}): those blocks, and payments in them, are not yet vouched for`,
+    };
   if (t.height < node.height - 1)
     return {
       level: 'none',
@@ -398,6 +411,15 @@ function renderStatus() {
   else unbanner('trustbad');
   if (node.synced && !node.error && tr.level === 'warn') banner('trust', 'warn', tr.text);
   else unbanner('trust');
+  // the node that broadcasts payments speaks through the estate's mempool feed: a silent feed is a silent broadcaster
+  const fedAt = node.mempool?.lastFeedAt;
+  if (node.synced && node.mempool?.following && fedAt && Date.now() - fedAt > 15 * 60e3)
+    banner(
+      'feed',
+      'warn',
+      `The txbt4 node that broadcasts payments has not been heard from since ${new Date(fedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. Payments made now may wait; raising the fee will not help until it is back.`,
+    );
+  else unbanner('feed');
   // after the tab is up to date, a failed fetch from the block source is retried every 30 s by the node: a warning, not a
   // stop, and no reload (a reload would index the snapshot again for nothing)
   const passing = srcPassing();
@@ -465,7 +487,11 @@ function onMessage(m) {
   else if (m.type === 'coins') onCoins(m);
   else if (m.type === 'spend' && typeof m.req === 'string' && m.req.startsWith('sent:')) onSpendAnswer(m);
   else if (m.type === 'spend' && typeof m.req === 'string' && m.req.startsWith('recheck:')) {
-    if (W && !IDLE) {
+    // "not found" is believed only from a search that reached this wallet's height; a short one is asked again next block
+    if (W && !IDLE && !m.found && !(Number.isInteger(m.to) && m.to >= W.height)) {
+      const r = sent.find((x) => x.txid === m.req.slice(8));
+      if (r) delete r.checkedAt;
+    } else if (W && !IDLE) {
       carryOut(S.onRecheck(sent, m.req.slice(8), m, W.height));
       saveSent();
       renderWallet();
@@ -473,20 +499,25 @@ function onMessage(m) {
   } else if (m.type === 'spend' && typeof m.req === 'string' && m.req.startsWith('rcpt:')) {
     const r = ledger.get(m.req.slice(5));
     if (W && !IDLE && r) {
-      if (m.found) r.spentElsewhere = true;
-      else {
-        ledger.delete(r.txid);
+      if (WL.onReceiptAnswer(ledger, r.txid, m, W.height) === 'removed')
         notify(
           'A received payment was undone',
           `${amt(WL.receiptSats(r))} received in block ${n(r.height)} is no longer in the chain: a reorganisation removed it, and the balance never counted it after that.`,
           true,
         );
-      }
       saveLedger();
       renderWallet();
     }
   } else if (m.type === 'refused') onRefusedTx(m);
-  else if (m.type === 'block') {
+  else if (m.type === 'block' && typeof m.req === 'string' && m.req.startsWith('time:')) {
+    // a received payment's date: its block's own time
+    const r = ledger.get(m.req.slice(5));
+    if (r && m.header?.time && !IDLE) {
+      r.time = m.header.time * 1000;
+      saveLedger();
+      renderWallet();
+    }
+  } else if (m.type === 'block') {
     const b = {
       hash: m.hash,
       confirmations: m.confirmations,
@@ -562,6 +593,7 @@ function toggleZoom() {
   win.classList.toggle('max', max);
   if (!max) applyGeometry(clampGeometry(geom.get()?.g ?? defaultGeometry()));
   saveGeometry();
+  setTimeout(() => fitNode(), 0);
 }
 if (!embedded) {
   layoutWindow();
@@ -778,6 +810,7 @@ function tabs(listId, onSelect, panelPrefix) {
     const panel = $(panelPrefix + name);
     if (panel) {
       panel.setAttribute('role', 'tabpanel');
+      panel.tabIndex = 0; // a panel taller than its window scrolls with the keyboard
       panel.setAttribute('aria-labelledby', t.id);
       t.setAttribute('aria-controls', panel.id);
     }
@@ -865,10 +898,10 @@ const fitNode = () => {
 addEventListener('resize', fitNode);
 const openNode = () => {
   if (win.style.display === 'none') showWindow(); // from the tray: the window comes back first
-  if (narrow())
-    behind().forEach((c) => {
-      c.inert = true;
-    });
+  // modal at every width: Tab stays in it, so what it covers is inert too (a reader's cursor no longer wanders under it)
+  behind().forEach((c) => {
+    c.inert = true;
+  });
   nodeOpener = document.activeElement?.closest?.('.dd') ? document.querySelector('#menu > [data-m=window]') : document.activeElement;
   $('nw').classList.add('open');
   fitNode();
@@ -920,8 +953,9 @@ $('nw').addEventListener('keydown', (e) => {
     const sx = e.clientX - nw.offsetLeft,
       sy = e.clientY - nw.offsetTop;
     const move = (ev) => {
-      nw.style.left = Math.max(0, Math.min(ev.clientX - sx, innerWidth - 120)) + 'px';
-      nw.style.top = Math.max(0, Math.min(ev.clientY - sy, innerHeight - 40)) + 'px';
+      // inside the main window, whose edges clip it
+      nw.style.left = Math.max(0, Math.min(ev.clientX - sx, win.clientWidth - nw.offsetWidth - 2)) + 'px';
+      nw.style.top = Math.max(0, Math.min(ev.clientY - sy, win.clientHeight - nw.offsetHeight - 2)) + 'px';
     };
     const up = () => {
       removeEventListener('pointermove', move);
@@ -938,8 +972,8 @@ $('nw').addEventListener('keydown', (e) => {
       w0 = nw.offsetWidth,
       h0 = nw.offsetHeight;
     const move = (ev) => {
-      nw.style.width = Math.max(560, w0 + ev.clientX - x0) + 'px';
-      nw.style.height = Math.max(320, h0 + ev.clientY - y0) + 'px';
+      nw.style.width = Math.max(560, Math.min(w0 + ev.clientX - x0, win.clientWidth - nw.offsetLeft - 2)) + 'px';
+      nw.style.height = Math.max(320, Math.min(h0 + ev.clientY - y0, win.clientHeight - nw.offsetTop - 2)) + 'px';
     };
     const up = () => {
       removeEventListener('pointermove', move);
@@ -1043,7 +1077,7 @@ document.addEventListener('keydown', (e) => {
   if (e.altKey && e.shiftKey && !e.ctrlKey && !typing && (e.code === 'KeyM' || k === 'm')) {
     e.preventDefault();
     $('m-mask').onclick();
-  } else if (e.ctrlKey && !e.shiftKey && k === 'm') {
+  } else if (e.ctrlKey && !e.shiftKey && !typing && k === 'm') {
     e.preventDefault();
     $('m-main').onclick();
   } else if (e.altKey && e.shiftKey && !e.ctrlKey && !typing && (e.code === 'KeyN' || k === 'n')) {
@@ -1053,9 +1087,12 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ---- a question in the page (never a browser dialog): resolves true on the confirming button
-function ask(title, lines, okLabel = 'OK', danger = false, cancelLabel = 'Cancel', escNull = false, focusOk = false) {
+// third: an optional third button { label, value, focus } (a choice that is neither yes nor no, like "Keep waiting")
+function ask(title, lines, okLabel = 'OK', danger = false, cancelLabel = 'Cancel', escNull = false, focusOk = false, third = null) {
   return new Promise((resolve) => {
     $('ask-cancel').textContent = cancelLabel;
+    $('ask-third').hidden = !third;
+    $('ask-third').textContent = third?.label ?? '';
     const d = $('ask');
     $('ask-t').textContent = title;
     const b = $('ask-b');
@@ -1076,15 +1113,17 @@ function ask(title, lines, okLabel = 'OK', danger = false, cancelLabel = 'Cancel
     const done = (v) => {
       ok.onclick = null;
       $('ask-cancel').onclick = null;
+      $('ask-third').onclick = null;
       d.onclose = null;
       d.close();
       resolve(v);
     };
     ok.onclick = () => done(true);
     $('ask-cancel').onclick = () => done(false);
+    if (third) $('ask-third').onclick = () => done(third.value);
     d.onclose = () => resolve(escNull ? null : false);
     d.showModal();
-    (focusOk ? ok : $('ask-cancel')).focus();
+    (third?.focus ? $('ask-third') : focusOk ? ok : $('ask-cancel')).focus();
   });
 }
 async function wipeAsk() {
@@ -1140,6 +1179,16 @@ function fillOptions(
       ? `the tab's mempool: ${node.mempool.count} transactions waiting, a middle rate of ${mr} sat/vB`
       : '1 sat/vB is what txbt4 blocks take today (too few waiting transactions to suggest more)';
   $('o-seed').checked = !!o.seed;
+  // seeding needs two readers on the snapshot file at once, which only some browsers allow
+  tn.seedSupported?.()
+    .then((yes) => {
+      if (yes === false) {
+        $('o-seed').checked = false;
+        $('o-seed').disabled = true;
+        $('o-seednote').textContent = 'this browser cannot share the snapshot while the node reads it, so it cannot seed';
+      }
+    })
+    .catch(() => {});
   $('o-seednote').textContent = tn.seeding?.t
     ? `seeding now: ${tn.seeding.t.wires.filter((w) => !w.destroyed).length} peer(s), ${mib(tn.seeding.t.uploaded)} uploaded`
     : fileReady()
@@ -1503,13 +1552,16 @@ const saveLedger = () => {
 const unit = () => ({ key: OPT.unit, ...WL.UNITS[OPT.unit] });
 const money = (sats) => (OPT.mask ? '•••••' : WL.formatAmount(sats, OPT.unit)); // where shown as HTML, maskedHtml says "hidden" to a reader
 const amt = (sats) => `${money(sats)} ${unit().label}`;
-const when = (ms) => new Date(ms).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-const say = (text) => String(text ?? '').replace(/(\d+) sat\b(?!\/)/g, (_, v) => amt(Number(v))); // "N sat" from the libraries, in the person's unit
+const when = (ms) =>
+  new Date(ms).toLocaleString([], { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+const amtSay = (sats) => (OPT.mask ? 'amount hidden' : amt(sats)); // what a screen reader hears for an amount
+const say = (text) => String(text ?? '').replace(/(\d+) sat\b(?!\/)/g, (_, v) => amtSay(Number(v))); // "N sat" from the libraries, in the person's unit
 const HIDDEN = '<span aria-hidden="true">•••••</span><span class="sr">amount hidden</span>';
 const moneyHtml = (sats) => (OPT.mask ? HIDDEN : esc(WL.formatAmount(sats, OPT.unit)));
 const amtHtml = (sats) => (OPT.mask ? HIDDEN + ' ' + esc(unit().label) : esc(amt(sats)));
 const exact = (sats) => `${WL.formatAmount(sats, OPT.unit)} ${unit().label}`; // what a person confirms is never masked
-const inMempool = (txid) => !!node.mempool?.txs.some((t) => t.txid === txid);
+// in the tab's mempool *from a node* (the estate's feed), not merely echoed back by a relay: only that says a node has it
+const inMempool = (txid) => !!node.mempool?.txs.some((t) => t.txid === txid && (t.fed ?? true));
 function applyDisplay() {
   document.querySelectorAll('.unit').forEach((e) => {
     e.textContent = unit().label;
@@ -1521,9 +1573,11 @@ function applyDisplay() {
   // the hint follows the tab's mempool when enough is waiting to say something
   const sug = node?.mempool ? suggestedRate() : null;
   $('feehint').textContent =
-    sug && sug > rate
-      ? `Payments waiting now pay about ${sug} sat/vB; choose Change… to match, or keep ${rate} and wait longer.`
-      : 'A block comes about every 20 minutes; the lowest rate, 1 sat/vB, is enough today.';
+    rate > 1 && !(sug && sug >= rate)
+      ? `You pay ${rate} sat/vB; ${sug ? `payments waiting now pay about ${sug}` : '1 sat/vB is enough today'}. Change… to lower it.`
+      : sug && sug > rate
+        ? `Payments waiting now pay about ${sug} sat/vB; choose Change… to match, or keep ${rate} and wait longer.`
+        : 'A block comes about every 20 minutes; the lowest rate, 1 sat/vB, is enough today.';
   if (WL)
     $('feerate').textContent =
       `about ${exact(Math.ceil(rate * WL.estimateVsize(1, ['5120' + '00'.repeat(32), '5120' + '00'.repeat(32)])))} for a typical payment (${rate} sat/vB)`;
@@ -1632,6 +1686,7 @@ async function walletInit() {
     coinsKnown: false,
     unified: k?.params?.unifiedSighashParam != null,
   };
+  W.backedUpAtLoad = backedUp(); // remembered, so a storage clear while open can write the mark back
   // element by element too: one malformed entry is dropped, not the reason the wallet cannot start
   seen = new Map(
     loadJSON(seenKey(), []).filter((e) => Array.isArray(e) && e.length === 2 && typeof e[0] === 'string' && Number.isFinite(e[1])),
@@ -1731,6 +1786,11 @@ async function walletInit() {
   }
   W.validRecord = (x) => S.validRecord(x, { check, scriptOf, ownScript: script });
   wireWalletPage(address);
+  // the node may have started first and waited: once loaded, the stored records are sorted and written (never skipped)
+  if (RUNNING && pendingSort) {
+    pendingSort();
+    pendingSort = null;
+  }
 }
 // the Receive page and the Send form, once the wallet has its address
 function wireWalletPage(address) {
@@ -1827,7 +1887,7 @@ function wireWalletPage(address) {
     lastUnit = $('sendunit').value;
     updatePreview();
   });
-  $('feechoose').onclick = () => openOptions('wallet');
+  $('feechoose').onclick = () => feeFlow();
   applyDisplay();
   renderWallet();
   if (LS.get('reef:keynew') && !ledger.size) setTimeout(() => backupNudge(), 1500);
@@ -1918,6 +1978,12 @@ function onCoins(m) {
       r.checkedAt = W.height;
       post({ type: 'spend', key: r.inputs[0], from: Math.max(S.FIRST_BLAKE_HEIGHT, r.height - S.RECHECK_DEPTH), req: 'recheck:' + r.txid });
     }
+    // received payments without a date: their block's time, asked once each per load
+    for (const r of ledger.values())
+      if (!r.time && !timeAsked.has(r.txid)) {
+        timeAsked.add(r.txid);
+        post({ type: 'block', height: r.height, req: 'time:' + r.txid });
+      }
     // received payments whose coins went without a payment of ours: spent elsewhere, or undone (asked once per block)
     for (const q of WL.receiptsToCheck(ledger, W.coins, sent, W.height)) {
       ledger.get(q.txid).checkedAt = W.height;
@@ -1938,6 +2004,7 @@ function onCoins(m) {
   renderWallet();
 }
 function onSpendAnswer(m) {
+  if (!W || IDLE) return;
   const txid = m.req.slice(5);
   asked.delete(txid);
   carryOut(S.onSpendAnswer(sent, txid, m));
@@ -2015,9 +2082,9 @@ function renderWalletInner() {
     $('total').innerHTML = amtHtml(b.total);
     $('sendbal').innerHTML = amtHtml(b.available);
     $('outgoing').textContent = [
-      b.outgoing ? `${amt(b.outgoing)} leaving in payments not yet confirmed` : '',
+      b.outgoing ? `${amtSay(b.outgoing)} leaving in payments not yet confirmed` : '',
       b.elsewhere
-        ? `${amt(b.elsewhere)} reserved elsewhere: ${hitchHeld().size ? 'a Hitch channel funding (to release it, close Reef, open Hitch and cancel the funding there)' : ''}${hitchHeld().size && quarantineHeld().size ? '; ' : ''}${quarantineHeld().size ? 'a payment record Reef could not verify (see the notice above)' : ''}`
+        ? `${amtSay(b.elsewhere)} reserved elsewhere: ${hitchHeld().size ? 'a Hitch channel funding (to release it, close Reef, open Hitch and cancel the funding there)' : ''}${hitchHeld().size && quarantineHeld().size ? '; ' : ''}${quarantineHeld().size ? 'a payment record Reef could not verify (see the notice above)' : ''}`
         : '',
     ]
       .filter(Boolean)
@@ -2035,7 +2102,15 @@ function renderWalletInner() {
         address: W.address,
         ledger,
       });
-  const vctx = { inMempool, height: W.height, now: Date.now(), sent, idle: IDLE, canAct: canAct() };
+  const vctx = {
+    inMempool,
+    height: W.height,
+    now: Date.now(),
+    sent,
+    idle: IDLE,
+    canAct: canAct(),
+    signedHeight: node.nostr?.agree > 0 && !node.nostr?.diverged ? node.nostr.height : null,
+  };
   const views = new Map(rows.map((r) => [r, V.viewRow(r, vctx)]));
   const recOf = (r) => (r.kind === 'out' ? sent.find((x) => x.txid === r.txid) : null);
   const recent = V.recentRows(rows, views);
@@ -2064,7 +2139,7 @@ function renderWalletInner() {
           const v = views.get(r);
           // what a screen reader hears names the row as it is shown: its kind, where to, and the amount in the row
           const who = s
-            ? `the ${v.tag ? v.tag + ' ' : ''}${r.label.toLowerCase()}${r.label === 'Payment to yourself' ? '' : ' ' + V.shortAddr(s.to)} (${amt(v.sats)})`
+            ? `the ${v.tag ? v.tag + ' ' : ''}${r.label.toLowerCase()}${r.label === 'Payment to yourself' ? '' : ' ' + V.shortAddr(s.to)} (${amtSay(v.sats)})`
             : '';
           const btn = {
             bump: ['Raise the fee…', 'Raise the fee on', 'Pay a higher fee so a block takes it sooner'],
@@ -2079,7 +2154,13 @@ function renderWalletInner() {
                 `<button class="q sm" data-act="${k}" data-tx="${esc(s.txid)}" title="${esc(btn[k][2])}" aria-label="${esc(k === 'hide' ? `Hide ${who} from the list` : `${btn[k][1]} ${who}`)}">${btn[k][0]}</button>`,
             )
             .join('');
-          return `<tr><td class="when">${r.at ? esc(when(r.at)) : '—'}</td><td><span aria-hidden="true">${v.icon}</span><span class="state">${esc(say(v.state))}</span></td><td>${v.block ? esc(n(v.block)) : '—'}</td><td>${esc(r.label)}</td><td class="addr" style="max-width:360px">${txLink(r.txid, `${r.addr}${r.height ? ' · block ' + n(r.height) : ''}`)}</td><td class="amt ${r.kind === 'in' ? 'in' : 'out'}${v.struck ? ' struck' : ''}">${moneyHtml(v.sats)}<span class="cardunit"> ${esc(unit().label)}</span><span class="sr">${v.tag ? esc(` (${v.tag})`) : ''}</span></td><td class="acts">${acts}</td></tr>`;
+          return `<tr><td class="when">${r.at ? esc(when(r.at)) : '—'}</td><td title="${esc(say(v.state))}"><span aria-hidden="true">${v.icon}</span><span class="state" aria-hidden="true">${esc(
+            v.struck
+              ? v.tag
+              : say(v.state)
+                  .split(':')[0]
+                  .replace(/\s*\(details.*$/, ''),
+          )}</span><span class="sr">${esc(say(v.state))}</span></td><td>${v.block ? esc(n(v.block)) : '—'}</td><td>${esc(r.label)}</td><td class="addr" style="max-width:360px">${txLink(r.txid, r.kind === 'in' ? 'your address' : r.addr)}</td><td class="amt ${r.kind === 'in' ? 'in' : 'out'}${v.struck ? ' struck' : ''}">${moneyHtml(v.sats)}<span class="cardunit"> ${esc(unit().label)}</span><span class="sr">${v.tag ? esc(` (${v.tag})`) : ''}</span></td><td class="acts">${acts}</td></tr>`;
         })
         .join('')
     : `<tr><td colspan="7" class="mut">${IDLE ? 'shown in the tab that runs the node' : known ? (rows.length ? 'nothing matches' : 'no transactions since the snapshot') : 'waiting for the node'}</td></tr>`;
@@ -2128,6 +2209,7 @@ function renderWalletInner() {
 for (const id of ['txtype', 'txsearch']) $(id).addEventListener('input', () => renderWallet());
 $('txexport').onclick = () => {
   if (!W) return;
+  if (IDLE) return notify('Not here', 'the history is exported from the tab that runs the node', true);
   const rows = WL.history({
     coins: W.coins,
     sent: sent.filter((s) => !s.hidden),
@@ -2181,7 +2263,7 @@ function noCoinsWhy() {
   const incoming = incomingTxs().reduce((a, x) => a + x.toUs, 0);
   if (incoming) parts.push(`${amt(incoming)} is on its way to you and can be spent once a block includes it`);
   if (b.outgoing || b.pending - incoming > 0) parts.push('some is held by a payment of yours still waiting (see Transactions)');
-  if (b.elsewhere) parts.push(`${amt(b.elsewhere)} is reserved by Hitch or by a payment record Reef could not verify`);
+  if (b.elsewhere) parts.push(`${amtSay(b.elsewhere)} is reserved by Hitch or by a payment record Reef could not verify`);
   return parts.length ? `Nothing can be spent right now: ${parts.join('; ')}.` : 'No coins yet: your address is on the Receive page.';
 }
 function readSend() {
@@ -2272,14 +2354,43 @@ async function publishHex(hex) {
       .map(([u]) => u),
   };
 }
+// the fee rate from the Send page: one number, the figures follow; kept in Options (the same setting)
+async function feeFlow() {
+  const box = document.createElement('div');
+  const field = document.createElement('label');
+  field.className = 'row';
+  field.innerHTML = `<span>Fee rate:</span><input type="number" min="1" max="${WL.MAX_RATE}" step="1" style="width:90px;flex:none" aria-describedby="feeflow-note"><span>sat/vB</span>`;
+  const inp = field.querySelector('input');
+  inp.value = Math.max(1, Math.round(Number(OPT.feeRate) || 1));
+  const note = document.createElement('p');
+  note.id = 'feeflow-note';
+  const typical = (r) => Math.ceil(r * WL.estimateVsize(1, ['5120' + '00'.repeat(32), '5120' + '00'.repeat(32)]));
+  const paint = () => {
+    const r = Number(inp.value);
+    const okRate = Number.isInteger(r) && r >= 1 && r <= WL.MAX_RATE;
+    $('ask-ok').disabled = !okRate;
+    const sug = node.mempool ? suggestedRate() : null;
+    note.textContent = okRate
+      ? `About ${exact(typical(r))} for a typical payment. ${sug ? `Payments waiting now pay about ${sug} sat/vB.` : 'A block comes about every 20 minutes; 1 sat/vB is enough today.'}`
+      : `A whole number from 1 to ${WL.MAX_RATE}.`;
+  };
+  inp.oninput = paint;
+  box.append(field, note);
+  setTimeout(paint, 0);
+  if (!(await ask('Fee rate', [box], 'Use this rate', false, 'Cancel'))) return;
+  const r = Number(inp.value);
+  if (!(Number.isInteger(r) && r >= 1 && r <= WL.MAX_RATE)) return;
+  OPT.feeRate = r;
+  saveOptions();
+  applyDisplay();
+  updatePreview();
+}
 async function sendFlow() {
   if (sending || !canAct()) return;
   const r = readSend();
   const { p } = r;
   if (trust().level === 'bad') throw new Error('the block source disagrees with the signed chain tip: sending waits until that clears');
-  const waitingSame = sent.filter(
-    (s) => s.pending && !s.replaced && !s.replacedBy && (s.toScript ?? W.addr.decodeAddress(s.to)?.script) === r.dec.script,
-  );
+  const waitingSame = S.waitingTo(sent, r.dec.script, (a) => W.addr.decodeAddress(a)?.script);
   const lines = V.confirmLines({
     to: r.to,
     self: r.self,
@@ -2290,6 +2401,10 @@ async function sendFlow() {
     trustWarn: trust().level === 'warn' ? trust().text : null,
     reuse: reuseNote(p),
     waitingSame,
+    settlingSame: sent.filter((s) => {
+      const w = !s.pending && (s.replaced || s.failed) ? sent.find((x) => x.txid === (s.replaced || s.failed)) : null;
+      return w?.height != null && W.height != null && W.height - w.height + 1 < S.RECHECK_DEPTH && s.toScript === r.dec.script && !s.self;
+    }),
   });
   if (!(await ask('Confirm the payment', lines, 'Send', false, 'Back'))) return;
   // the world may have moved while the dialog was open: the same coins and the same figures, or nothing is sent
@@ -2299,6 +2414,7 @@ async function sendFlow() {
   } catch (e) {
     throw new Error('the payment changed while it was being confirmed (' + e.message + '); nothing was sent');
   }
+  if (trust().level === 'bad') throw new Error('the block source disagrees with the signed chain tip; nothing was sent');
   if (
     again.p.fee !== p.fee ||
     again.p.amount !== p.amount ||
@@ -2389,8 +2505,10 @@ function offerNotify() {
   );
 }
 const inFlight = new Set();
+const timeAsked = new Set();
 async function publishAgain(s, manual = false) {
   if (!canAct()) return;
+  if (!S.publishable(s)) throw new Error('this payment is no longer one to announce (replaced, refused, forgotten or settled)');
   if (!s.hex) throw new Error('this payment was not made from this tab; nothing to publish again');
   if (inFlight.has(s.txid)) return;
   inFlight.add(s.txid);
@@ -2527,6 +2645,7 @@ async function replaceFlow(s, cancel) {
     );
   } finally {
     sending = false;
+    renderWallet();
   }
 }
 // forget a payment that has waited long and is nowhere to be seen: its coins are released for other payments
@@ -2539,13 +2658,14 @@ async function forgetFlow(s0) {
       'This payment has not gone through',
       [
         `It has waited ${n(W.height - s.tip)} blocks and no node here has it. The safe way out is to cancel it: a new transaction pays its coins back to you, and once that is in a block the old one can never go through.`,
-        'Forgetting it instead frees its coins at once, without a new transaction. To keep waiting, press Esc.',
+        'Forgetting it instead frees its coins at once, without a new transaction.',
       ],
       'Cancel the payment (safe)…',
       false,
-      'Forget it instead…',
+      'Forget it…',
       true,
-      true, // Enter takes the safe way
+      false,
+      { label: 'Keep waiting', value: null, focus: true },
     );
     if (a === true) return replaceFlow(s, true);
     if (a === null) return;
@@ -2654,7 +2774,7 @@ function backupNudge(urgent = false) {
     'backup',
     has || urgent ? 'bad' : 'warn',
     has
-      ? 'Your wallet has held coins and its key is not backed up. The key lives only in this browser: clearing site data, or the browser freeing space, would lose the coins.'
+      ? `This wallet holds coins and its key is not backed up. The key lives only in this browser: clearing site data, or the browser freeing space, would lose the coins.`
       : 'Back up your wallet key before you receive anything: it lives only in this browser.',
     [['Back up now…', () => openBackup()]],
   );
@@ -3208,7 +3328,7 @@ async function copyDiagnostics() {
   }
 }
 // ---- a newer Reef: checked every hour, offered, never forced
-// "2026-10-01.16" → comparable: a stale copy at the web host never offers an older version as newer
+// "2026-10-01.17" → comparable: a stale copy at the web host never offers an older version as newer
 const versionKey = (v) => {
   const m = /^(\d{4})-(\d{2})-(\d{2})\.(\d+)$/.exec(String(v ?? ''));
   return m ? [+m[1], +m[2], +m[3], +m[4]] : null;
@@ -3257,8 +3377,10 @@ setTimeout(checkVersion, 5e3);
 setInterval(checkVersion, 3600e3);
 
 // ---- start: one tab of this origin runs the node and the wallet; the first visit asks before fetching 830 MB
+const walletStarting = walletInit();
+walletStarting.then(() => unbanner('walleterr')).catch(() => {}); // a slow CDN that answers after all: the notice goes
 const walletReady = Promise.race([
-  walletInit(),
+  walletStarting,
   new Promise((_, no) =>
     setTimeout(() => no(new Error('its code did not load in 30 seconds (the CDN, cdn.jsdelivr.net, may be unreachable)')), 30e3),
   ),
@@ -3301,6 +3423,12 @@ if (embedded && document.hasStorageAccess)
 // the idle tab: one path, whether the probe or the loader found the node taken; it waits for the lock and offers to take over
 function goIdle() {
   IDLE = true;
+  // the key is shared: an idle tab can still say whether it is backed up, next to the address it shows
+  walletReady.then(() => {
+    if (W && !backedUp())
+      $('rcvpersist').textContent =
+        'This key is not backed up: back it up in the tab that runs the node (Settings → Back up the wallet key).';
+  });
   document.body.classList.add('idle');
   $('nwidle').hidden = false;
   unbanner('backup');
@@ -3346,6 +3474,15 @@ function goIdle() {
 function guardKey() {
   if (!W || IDLE || !RUNNING || LS.get('reef:key') === W.key) return;
   const back = LS.set('reef:key', W.key);
+  // everything this tab still holds goes back too: the records, what it has seen, the layout marker, that it has started
+  if (back) {
+    LS.set('reef:started', String(Date.now()));
+    LS.set('reef:schema', String(SCHEMA));
+    if (W.backedUpAtLoad) LS.set(backupKey(), String(Date.now()));
+    saveSent();
+    saveSeen();
+    saveLedger();
+  }
   banner(
     'keygone',
     'bad',
@@ -3379,6 +3516,19 @@ async function startNode(force = false) {
       if (IDLE) return;
       RUNNING = true;
       LS.set('reef:schema', String(SCHEMA)); // only the tab that runs the node marks the layout
+      // ask on every start, not only the first: a browser under disk pressure evicts a site it was not asked to keep
+      navigator.storage
+        ?.persist?.()
+        .then((kept) => {
+          if (kept === false && W && !backedUp())
+            banner(
+              'evictable',
+              'warn',
+              "This browser may clear the wallet and the node's files when the disk gets full. Back up the key, and if the browser offers it, allow this site to keep its data.",
+              [['Back up the key…', () => openBackup()]],
+            );
+        })
+        .catch(() => {});
       pendingSort?.();
       pendingSort = null;
       renderWallet();
@@ -3463,12 +3613,25 @@ async function begin() {
     PROBING = false;
     return lockFailed('this browser has no Web Locks');
   }
+  try {
+    await navigator.storage.getDirectory();
+  } catch (e) {
+    PROBING = false;
+    node.notStarted = true;
+    setSync('not started: this window cannot keep files', null);
+    return banner(
+      'nofeature',
+      'bad',
+      `This window cannot keep the node's files (${e?.name || e}): a private window cannot run the node, and its key would be gone when it closes. Open Reef in an ordinary window.`,
+    );
+  }
   // Safari deletes a site's storage after seven days without a visit, the key with it
-  if (/^((?!chrome|chromium|android|crios|fxios|edg).)*safari/i.test(navigator.userAgent))
+  // (every browser on an iPhone or iPad is Safari underneath, with the same rule)
+  if (/^((?!chrome|chromium|android|crios|fxios|edg).)*safari/i.test(navigator.userAgent) || /iPhone|iPad|iPod/.test(navigator.userAgent))
     banner(
       'safari',
       'warn',
-      "Safari deletes this site's data, the wallet key included, after seven days without a visit. Back the key up before you receive anything.",
+      "Safari deletes this site's data after seven days without a visit: the wallet key, and the 830 MB the node fetched. Back the key up before you receive anything.",
       [['Back up the key…', () => openBackup()]],
     );
   // a reload of this same tab can find the lock still held by the page it replaces for a moment: wait up to three seconds for it

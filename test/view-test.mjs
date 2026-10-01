@@ -302,5 +302,32 @@ t(
     V.confirmLines({ to, rate: 1, p, money, reuse: 'note' }).includes('note'),
   );
 }
+{
+  const money = (x) => `${x} sat`;
+  const p = { amount: 3000, fee: 155, change: 6845, vsize: 155, picked: [{ key: inA }] };
+  const L = V.confirmLines({
+    to: 'tb1pdestinationaddressxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+    rate: 1,
+    p,
+    money,
+    settlingSame: [{ sats: 3000 }],
+  });
+  t('paying an address whose payment was cancelled only recently is warned first', /cancelled or did not happen only recently/.test(L[0]));
+  const r = { kind: 'in', txid: tx('u'), label: 'Received', addr: 'me', sats: 5, pending: false, height: 152105, conf: 3 };
+  t(
+    'a receipt in a block above the signed chain tip is not counted as confirmed',
+    /signed chain tip has not reached/.test(V.viewRow(r, { ...ctx([]), signedHeight: 152104 }).state) &&
+      /confirming/.test(V.viewRow(r, { ...ctx([]), signedHeight: 152105 }).state),
+  );
+}
+{
+  for (const bad of ['-1+1', '\tcmd', '+SUM(1)', '@x'])
+    t(
+      `the export quotes a cell starting with ${JSON.stringify(bad[0])}`,
+      V.exportRow({ kind: 'in', txid: tx('q'), label: bad, addr: 'a', sats: 1, pending: false }, ctx([])).includes(
+        `"'${bad.replace(/"/g, '""')}"`,
+      ),
+    );
+}
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

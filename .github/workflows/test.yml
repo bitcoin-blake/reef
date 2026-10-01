@@ -9,14 +9,12 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-  pages: write
-  id-token: write
 concurrency:
   group: pages-${{ github.ref }}
   cancel-in-progress: false
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
@@ -46,6 +44,11 @@ jobs:
           base="${{ github.event.before }}"
           if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then base=$(git rev-parse HEAD~1 2>/dev/null || true); fi
           [ -z "$base" ] || node tools/version-up.mjs "$base"
+      - name: the site to deploy, and every file it refers to is in it
+        run: |
+          node tools/site.mjs _site
+      - uses: actions/upload-artifact@v4
+        with: { name: site, path: _site, retention-days: 7 }
       - name: smoke (the page in headless Chromium, fake node)
         run: |
           npm i --no-save playwright-core@1.61.1
@@ -58,21 +61,25 @@ jobs:
   deploy:
     needs: test
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.d.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - name: the site, without the tests and the workflow
-        run: mkdir _site && cp -r index.html reef.js reef-app.js version.json og.html og.png lib README.md LICENSE _site/ && ls _site
+      - uses: actions/download-artifact@v4
+        with: { name: site, path: _site }
       - uses: actions/upload-pages-artifact@v3
         with: { path: _site }
       - id: d
         uses: actions/deploy-pages@v4
   pins:
     needs: deploy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: the four published apps pin the same node (after this deploy is served)
@@ -82,10 +89,12 @@ jobs:
             got=$(curl -fsSL "https://bitcoin-blake.github.io/reef/version.json?nocache=$RANDOM" | node -pe 'JSON.parse(require("fs").readFileSync(0)).version' || true)
             [ "$got" = "$want" ] && break; sleep 10
           done
+          if [ "$got" != "$want" ]; then echo "::error::the deployed version.json is $got, not $want, after five minutes"; exit 1; fi
           declare -A pin
           for f in reef/reef.js bight/bight.js winch/winch.js hitch/hitch.js; do
             p=$(curl -fsSL "https://bitcoin-blake.github.io/$f?nocache=$RANDOM" | grep -o 'blaketestnode@[0-9a-f]\{40\}' | sort -u)
             echo "$f: $p"; pin[$f]=$p
+            if [ "$(echo "$p" | grep -c .)" != 1 ]; then echo "::error::$f pins more or fewer than one node version"; exit 1; fi
           done
           if [ "$(printf '%s\n' "${pin[@]}" | sort -u | wc -l)" != 1 ]; then echo "::error::the apps pin different node versions"; exit 1; fi
 
