@@ -57,15 +57,35 @@ const cspDiff = (csp, want) => {
   return out.join('; ');
 };
 const cspMatches = (csp, want) => cspDiff(csp, want) === '';
+// the page as the browser acts on it: a policy in a comment, a <template> or a <noscript> is text, not a policy in force
+const liveHtml = (html) =>
+  html
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<template[\s>][\s\S]*?<\/template>/gi, '')
+    .replace(/<noscript[\s>][\s\S]*?<\/noscript>/gi, '');
+// a policy meta however its attribute is quoted (double, single, none)
+const CSP_META = /<meta\b[^>]*\bhttp-equiv\s*=\s*(["']?)Content-Security-Policy\1[^>]*>/gi;
+// the one policy in force: its content, or '' when there is none or more than one (two metas: the browser enforces both)
+const cspOf = (html) => {
+  const metas = liveHtml(html).match(CSP_META) ?? [];
+  if (metas.length !== 1) return '';
+  return (
+    metas[0]
+      .match(/\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)')/i)
+      ?.slice(1)
+      .find((x) => x != null) ?? ''
+  );
+};
 // the policy meta sits in <head>, before the first <script (a meta policy governs only what is parsed after it)
-const cspPlaced = (html) => {
+const cspPlaced = (html0) => {
+  const html = liveHtml(html0);
   const head = html.search(/<head[\s>]/i),
     endHead = html.search(/<\/head>/i),
-    meta = html.search(/<meta[^>]+http-equiv="Content-Security-Policy"/i),
+    meta = html.search(new RegExp(CSP_META.source, 'i')),
     script = html.search(/<script[\s>]/i);
   return head >= 0 && meta > head && (endHead < 0 || meta < endHead) && (script < 0 || meta < script);
 };
-const { pinsOf, judge, cdnRefs, offCdn, pageVerdict } = await import('../tools/pins.mjs');
+const { pinsOf, judge, cdnRefs, offCdn, pageVerdict, hasPolicy } = await import('../tools/pins.mjs');
 // ---- the page's version and version.json agree (a release that forgets one shows a false update banner)
 {
   const src = readFileSync(new URL('../reef.js', import.meta.url), 'utf8');
@@ -83,7 +103,7 @@ const { pinsOf, judge, cdnRefs, offCdn, pageVerdict } = await import('../tools/p
     'the security policy is the first thing in <head> that can matter: before any script (a policy only covers what comes after it)',
     cspPlaced(html),
   );
-  const csp = html.match(/Content-Security-Policy" content="([^"]+)"/)?.[1] ?? '';
+  const csp = cspOf(html);
   {
     // the engine's rule files: the hashes in reef.js are those of the files at the pinned commit
     const want = Object.fromEntries([...src.matchAll(/'(schema\/[a-z0-9/-]+\.jsonld)': '([0-9a-f]{64})'/g)].map((m) => [m[1], m[2]]));
@@ -187,7 +207,7 @@ const { pinsOf, judge, cdnRefs, offCdn, pageVerdict } = await import('../tools/p
   // the checker itself refuses each policy a release could drift to (a stale pin, a bare prefix, unsafe-eval, a wildcard, a
   // dropped directive, another version of a script)
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-  const csp = html.match(/Content-Security-Policy" content="([^"]+)"/)?.[1] ?? '';
+  const csp = cspOf(html);
   const want = Object.fromEntries(Object.entries(parseCsp(csp)).map(([k, v]) => [k, [...v]]));
   const drifts = [
     (c) =>
@@ -220,6 +240,23 @@ const { pinsOf, judge, cdnRefs, offCdn, pageVerdict } = await import('../tools/p
   t(
     'the placement check refuses a policy moved into <body> or after a script',
     cspPlaced(html) && !cspPlaced(inBody) && !cspPlaced(afterScript),
+  );
+  // a policy written but not in force: in a comment (with a weak real one, or none), in a <template>, in a <noscript>
+  const weak = `<meta http-equiv='Content-Security-Policy' content="script-src *">`;
+  const notInForce = [
+    html.replace(meta, `<!--${meta}-->${weak}`),
+    html.replace(meta, `<!--${meta}-->`),
+    html.replace(meta, `<template>${meta}</template>`),
+    html.replace(meta, `<noscript>${meta}</noscript>`),
+    html.replace(meta, meta + weak), // a second policy beside it
+  ];
+  t(
+    'a policy that is in the file but not in force (a comment, a template, a noscript) or a second one beside it is refused',
+    cspMatches(cspOf(html), want) && notInForce.every((h) => !(cspPlaced(h) && cspMatches(cspOf(h), want))),
+    notInForce
+      .map((h, i) => (cspPlaced(h) && cspMatches(cspOf(h), want) ? `case ${i} passed` : ''))
+      .filter(Boolean)
+      .join(', '),
   );
 }
 {
@@ -265,6 +302,44 @@ const { pinsOf, judge, cdnRefs, offCdn, pageVerdict } = await import('../tools/p
       offCdn("new Worker('//fastly.jsdelivr.net/gh/a/b@main/w.js')").length === 1 &&
       offCdn(`import('${pinned}'); import('https://bitcoin-blake.github.io/reef/x.js')`).length === 0,
   );
+  {
+    // every way a page with no policy can name another host, each found (the reviewer's probes)
+    const E = 'evil.example';
+    const ways = [
+      `import "https://${E}/x.js";`, // an import with no from
+      `<script src=https://${E}/x.js></script>`, // unquoted
+      `<script src="\\\\${E}/x.js"></script>`, // \\ for // (the browser reads \ as / here)
+      `import('https:\\\\${E}/x.js')`,
+      `el.src = 'https://${E}/x.js';`,
+      `importScripts('./a.js', 'https://${E}/b.js');`, // the second argument
+      `new Worker(new URL('https://${E}/w.js'));`,
+      `<script src="ht&#x74;ps://${E}/x.js"></script>`, // an entity inside the scheme
+      `<script src="htt\tps://${E}/x.js"></script>`, // a tab inside the scheme
+      `fetch('wss://${E}/')`,
+    ];
+    const missed = ways.filter((w) => offCdn(w).length !== 1);
+    t(
+      'on a page without a policy, any other host is found however it is written (no from, no quotes, \\, a property, a worker, an entity or tab in the scheme)',
+      missed.length === 0,
+      missed.join(' | '),
+    );
+    t(
+      'the hosts the apps connect to by name pass: the relays, the mirror and the explorer read from reef.js, github.com, w3.org',
+      offCdn(
+        "new WebSocket('wss://nos.lol'); fetch(DEFAULT_BLOCKS); x = 'https://mempool.guide/testnet4'; a = 'https://github.com/x'; ns = 'http://www.w3.org/2000/svg'",
+      ).length === 0,
+    );
+    const meta = '<meta http-equiv="Content-Security-Policy" content="default-src \'self\'">';
+    t(
+      'a page has a policy only when one is in force in its head (not in a comment, a template or a noscript; the head tag may be left out)',
+      hasPolicy(`<html><head>${meta}</head><body></body>`) &&
+        hasPolicy(`<!doctype html>${meta}<title>x</title><body>`) &&
+        !hasPolicy(`<head><!--${meta}--></head>`) &&
+        !hasPolicy(`<head><template>${meta}</template></head>`) &&
+        !hasPolicy(`<head><noscript>${meta}</noscript></head>`) &&
+        !hasPolicy(`<head></head><body>${meta}</body>`),
+    );
+  }
   t(
     'pinsOf: the first pin of each repository, as CI reads them',
     pinsOf(`'${pinned}'; 'https://cdn.jsdelivr.net/gh/a/b@${'cd'.repeat(20)}/y.js'`)['a/b'] === 'ab'.repeat(20),

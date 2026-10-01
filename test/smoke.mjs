@@ -150,7 +150,7 @@ async function profile({
     page.on('pageerror', (e) => errors.push(e.message));
     page.on(
       'console',
-      (m) => m.type() === 'error' && !/Content Security Policy|WebSocket|ERR_|404/.test(m.text()) && errors.push(m.text()),
+      (m) => m.type() === 'error' && !/WebSocket|ERR_|404/.test(m.text()) && errors.push(m.text()), // a policy refusal is an error here
     );
     await page.goto('http://localhost:8799/index.html');
     if (ready) await page.waitForFunction(() => window.__fake, null, { timeout: 30000 });
@@ -280,8 +280,8 @@ for (const [name, opts] of [
   t('the running tab is not marked idle', !(await a.evaluate(() => document.body.classList.contains('idle'))));
   const twotabs = (pg) => pg.evaluate(() => document.querySelector('#banners [data-b=twotabs] .bt')?.textContent ?? '');
   t(
-    'the idle tab names what holds the node: Reef and its version, in another tab',
-    /^Reef \d{4}-\d{2}-\d{2}\.\d+ already runs the node in another tab/.test(await twotabs(b)),
+    'the idle tab names what holds the node (another Reef tab, the version said only when it differs), and is short',
+    /^Another Reef tab runs the node\. This one is view-only/.test(await twotabs(b)),
     await twotabs(b),
   );
   t(
@@ -436,8 +436,31 @@ for (const [name, opts] of [
   t('its coin is held: nothing is available while it waits', /^0\.00000000/.test(avail), avail);
   t(
     'it reads as waiting, with a fee raise and a cancel on offer',
-    (await a.evaluate(() => [...document.querySelectorAll('#txrows button')].map((b) => b.dataset.act).join())) === 'bump,again,cancel',
+    (await a.evaluate(() => [...document.querySelectorAll('#txrows button[data-act]')].map((b) => b.dataset.act).join())) ===
+      'bump,again,cancel',
   );
+  {
+    // on a phone the row keeps its main actions and folds "Announce again" behind More…
+    await a.setViewportSize({ width: 360, height: 740 });
+    await a.evaluate(() => document.querySelector('[data-p=tx]').click());
+    const seen = () =>
+      a.evaluate(() =>
+        [...document.querySelectorAll('#txrows button')]
+          .filter((b) => b.offsetParent)
+          .map((b) => b.dataset.act ?? 'more')
+          .join(),
+      );
+    const before = await seen();
+    await a.click('#txrows button.rowmore');
+    const after = await seen();
+    await a.setViewportSize({ width: 1280, height: 800 });
+    await a.evaluate(() => document.querySelector('[data-p=send]').click());
+    t(
+      'on a phone a crowded row shows its main actions and More…, which shows the rest',
+      before === 'bump,cancel,more' && after === 'bump,again,cancel',
+      `${before} → ${after}`,
+    );
+  }
   // its change in a block above the signed chain tip: counted once, as coming back, and the payment still waits
   const changeSats = rec[0].change;
   await a.evaluate(
@@ -481,8 +504,24 @@ for (const [name, opts] of [
   // the question fails in the node (a busy or unreadable file): it is asked again with the next coins, not forgotten for good
   await a.evaluate((txid) => {
     window.__fake.posts.length = 0;
-    window.__fake.emit('message', { type: 'error', text: 'NoModificationAllowedError', req: 'sent:' + txid });
+    // as the real worker sends it: the kind in name, the browser's own words in text
+    window.__fake.emit('message', {
+      type: 'error',
+      name: 'NoModificationAllowedError',
+      text: 'An attempt was made to modify an object where modifications are not allowed.',
+      req: 'sent:' + txid,
+    });
   }, txid);
+  await a.waitForSelector('#banners [data-b="nodeerr"]', { timeout: 5000 }).catch(() => {});
+  const busy = await a.evaluate(() => {
+    const b = document.querySelector('#banners [data-b="nodeerr"]');
+    return b && { cls: b.className, text: b.textContent, wipe: [...b.querySelectorAll('button')].some((x) => /Wipe/.test(x.textContent)) };
+  });
+  t(
+    "a busy file (the node's error even though a request met it) is a warning that it passes by itself, with no offer to wipe",
+    !!busy && /warn/.test(busy.cls) && /busy/.test(busy.text) && !busy.wipe,
+    JSON.stringify(busy),
+  );
   await a.evaluate(({ script }) => window.__fake.emit('message', { type: 'coins', script, height: 152102, coins: [] }), { script: SCRIPT });
   const again = await a
     .waitForFunction((txid) => window.__fake.posts.some((m) => m.type === 'spend' && m.req === 'sent:' + txid), txid, { timeout: 5000 })
@@ -1101,8 +1140,8 @@ async function wallet(coins, extra = {}) {
   await a.click('#ask-ok');
   let e = await w.said();
   t(
-    'a signed tip that disagrees while the confirm dialog is open: nothing is sent',
-    /nothing was sent/.test(e) && (await w.relays()) === 0,
+    'a signed tip that disagrees while the confirm dialog is open: nothing is sent, and the disagreement is the reason given',
+    /disagrees with the signed chain tip; nothing was sent/.test(e) && (await w.relays()) === 0,
     e,
   );
   await w.tipAgrees();
@@ -1334,6 +1373,138 @@ async function wallet(coins, extra = {}) {
     `${pv} / ${notices} notices`,
   );
   t('no page errors in the waits and masks', !p.errors.length, p.errors.join(' | '));
+  await p.ctx.close();
+}
+// 19: the policy is in force (not only written); files gone stop sending until a sync succeeds; a coinbase mature at the source's
+// height but not at the vouched height is not spent; storage that refuses a replacement leaves the original as it was; an idle
+// tab does not switch keys
+{
+  const w = await wallet([{ key: CA, value: 50000, height: 152000 }]);
+  const { a } = w;
+  const csp = await a.evaluate(async () => {
+    // a string timer is the page's own eval (code typed into devtools is exempt from the policy, a page's timer is not)
+    setTimeout('window.__evald = 1');
+    await new Promise((r) => setTimeout(r, 300));
+    const evalRefused = window.__evald !== 1;
+    const seen = new Promise((r) => document.addEventListener('securitypolicyviolation', (e) => r(e.violatedDirective), { once: true }));
+    const sc = document.createElement('script');
+    sc.textContent = 'window.__inline = 1';
+    document.head.append(sc);
+    const v = await Promise.race([seen, new Promise((r) => setTimeout(() => r(null), 2000))]);
+    return { evalRefused, ran: window.__inline === 1, v };
+  });
+  t(
+    'the page runs under its policy: eval is refused, and an injected inline script does not run and is reported',
+    csp.evalRefused && !csp.ran && /script-src/.test(csp.v ?? ''),
+    JSON.stringify(csp),
+  );
+  // the node's files gone (site data cleared): sending stops until a sync succeeds again
+  await a.evaluate(() =>
+    window.__fake.emit('message', {
+      type: 'error',
+      name: 'NotFoundError',
+      text: 'A requested file or directory could not be found at the time an operation was processed.',
+      req: 'coins',
+    }),
+  );
+  await a.waitForTimeout(300);
+  await a.evaluate(() => (document.getElementById('senderr').textContent = ''));
+  await a.fill('#sendto', DEST);
+  await a.fill('#sendamt', '0.0001');
+  await a.click('#sendgo');
+  const e1 = await w.said();
+  const gone = await a.evaluate(() => document.querySelector('#banners [data-b="nodeerr"]')?.textContent ?? '');
+  t(
+    "the node's files gone while it says it is up to date: nothing can be sent, and the notice says to reload",
+    /stopped/.test(e1) && !(await a.$('#ask[open]')) && /gone or unreadable/.test(gone) && (await w.relays()) === 0,
+    `${e1} / ${gone.slice(0, 80)}`,
+  );
+  await w.feed([{ key: CA, value: 50000, height: 152000 }]);
+  await a.waitForTimeout(300);
+  const reopened = await w
+    .confirm('0.0001')
+    .then(() => true)
+    .catch(() => false);
+  if (reopened) await a.click('#ask-cancel');
+  t('a sync that succeeds clears it: the confirm dialog opens again', reopened);
+  await w.p.ctx.close();
+}
+{
+  // vouched at 152,099: a coinbase at 152,001 has 100 confirmations by the source's height (152,100) but 99 by the vouched one
+  const w = await wallet(
+    [
+      { key: CA, value: 50000, height: 152000 },
+      { key: CB, value: 5000000000, height: 152001, coinbase: true },
+    ],
+    { 'reef:vouched': JSON.stringify({ height: 152099, at: 1 }) },
+  );
+  const { a } = w;
+  await a.fill('#sendto', DEST);
+  await a.click('#sendall');
+  await a.waitForFunction(() => Number(document.getElementById('sendamt').value) > 0, null, { timeout: 5000 }).catch(() => {});
+  const amt = await a.inputValue('#sendamt');
+  t(
+    'Send everything leaves out a mined coin that is mature by the source but not by the signed chain tip',
+    Number(amt) > 0 && Number(amt) < 0.0005,
+    amt,
+  );
+  await w.p.ctx.close();
+}
+{
+  const w = await wallet([{ key: CA, value: 50000, height: 152000 }]);
+  const { a } = w;
+  await w.confirm('0.0001');
+  await a.click('#ask-ok');
+  await a.waitForFunction(() => (window.__relay ?? []).length === 1, null, { timeout: 15000 });
+  await a.evaluate(() => document.querySelector('[data-p=tx]').click());
+  await a.waitForSelector('#txrows button[data-act=bump]', { timeout: 5000 });
+  await a.click('#txrows button[data-act=bump]');
+  await a.waitForSelector('#ask[open]', { timeout: 5000 });
+  await a.evaluate(() => {
+    const orig = Storage.prototype.setItem;
+    window.__setItem = orig;
+    Storage.prototype.setItem = function (k, v) {
+      if (String(k).startsWith('reef:sent:')) throw new DOMException('full', 'QuotaExceededError');
+      return orig.call(this, k, v);
+    };
+  });
+  await a.click('#ask-ok');
+  await a.waitForTimeout(600);
+  await a.evaluate(() => (Storage.prototype.setItem = window.__setItem));
+  const toasts = await a.evaluate(() => [...document.querySelectorAll('.toast')].map((x) => x.textContent).join(' | '));
+  await a.evaluate(() => document.querySelector('[data-p=tx]').click());
+  await a.waitForTimeout(300);
+  const canRaise = !!(await a.$('#txrows button[data-act=bump]'));
+  t(
+    'storage that refuses a replacement: nothing more goes out, and the original can still be raised (it is not marked replaced)',
+    (await w.relays()) === 1 && canRaise && !(await w.records())[0].replacedBy,
+    `${toasts.slice(0, 120)} / raise offered: ${canRaise}`,
+  );
+  await w.p.ctx.close();
+}
+{
+  const p = await profile({ seed: { 'reef:started': '1', 'reef:key': KEY, 'reef:keynew': '1', 'reef:vouched': VOUCHED } });
+  const a = await p.open();
+  await a.waitForFunction(() => /^tb1p/.test(document.getElementById('rcvaddr').value), null, { timeout: 30000 });
+  await a.waitForFunction(() => window.__fake.starts > 0, null, { timeout: 15000 }); // this tab holds the node's lock first
+  await a.waitForTimeout(500);
+  const b = await p.open();
+  await b.waitForFunction(() => document.body.classList.contains('idle'), null, { timeout: 15000 });
+  await b.evaluate(() => {
+    document.getElementById('m-options').click();
+    document.querySelector('[data-o=wallet]').click();
+  });
+  const disabled = await b.evaluate(() => document.getElementById('o-importkey').disabled);
+  // the field is disabled here; a value put in anyway (a script, an extension) is still refused by the handler
+  await b.evaluate(() => (document.getElementById('o-importkey').value = '22'.repeat(32)));
+  await b.click('#o-ok');
+  await b.waitForTimeout(400);
+  const warn = await b.textContent('#o-keywarn');
+  t(
+    'an idle tab does not switch keys, even a key never used here: the field is disabled, and a value forced in is refused',
+    disabled && (await ls(b, 'reef:key')) === KEY && /another tab/.test(warn),
+    `${disabled} / ${warn}`,
+  );
   await p.ctx.close();
 }
 await browser.close();

@@ -196,6 +196,10 @@ t(
       ' (held: a payment record Reef could not verify)' &&
       V.coinNote(c, { height: 1, sent: [], held: k, first: k, mature: () => true }) === ' (held by a waiting payment)',
   );
+  t(
+    'a coin above the signed chain tip says it waits for the tip, never that a payment holds it (held lists it too)',
+    V.coinNote(c, { height: 1, sent: [], held: k, above: k, mature: () => true }) === ` (${V.ABOVE_TIP_SHORT})`,
+  );
 }
 {
   const ok1 = { kind: 'out', txid: tx('a'), label: 'Sent to', addr: 'tb1pdest', sats: -1, pending: false, height: 5 };

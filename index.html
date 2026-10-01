@@ -190,7 +190,9 @@ fieldset { min-inline-size:0 }
 @media (max-width:760px) { #otabs { flex-wrap:wrap } #otabs div { flex:none } }
 @media (max-width:420px) { #rcvtbl th:nth-child(2), #rcvtbl td:nth-child(2) { display:none } #rcvtbl td:nth-child(3) { white-space:normal } }
 .banner button .sh { display:none }
-@media (max-width:400px) { .banner button .lg { display:none } .banner button .sh { display:inline } }
+@media (max-width:400px) { .banner button .lg { display:none } .banner button .sh { display:inline } #banners:not(.all) > .banner ~ .banner { display:none } #bmore:not([hidden]) { display:block } }
+.acts .rowmore { display:none } @media (max-width:400px) { .acts:not(.open) .sec { display:none } .acts:not(.open) .rowmore { display:inline-block } }
+#bmore { display:none; width:100%; text-align:left; border-radius:0; border-width:0 0 1px; font-size:12px }
 </style>
 </head>
 <body>
@@ -212,6 +214,7 @@ fieldset { min-inline-size:0 }
     <span class="testchip">TEST COINS</span><div class="logo" aria-hidden="true"><svg width="30" height="30" viewBox="0 0 30 30"><circle cx="15" cy="15" r="14" fill="#1f9a5a"/><text x="15" y="20" text-anchor="middle" font-size="16" font-weight="700" fill="#fff" font-family="DejaVu Sans,Arial">₿</text></svg></div>
   </div>
   <div id="banners"></div>
+  <button id="bmore" class="q sm" type="button" aria-expanded="false" aria-controls="banners" hidden></button>
   <main id="pages" tabindex="-1" style="display:contents">
   <h1 class="sr">Reef, a Bitcoin node and wallet in this tab</h1>
   <div class="page on" id="p-overview" role="region" aria-labelledby="h-overview"><h2 class="sr" id="h-overview">Overview</h2>
@@ -271,7 +274,7 @@ The node answers from this tab's own validated state; wallet commands answer for
   </div>
 </div>
 <script defer src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js" integrity="sha384-8FWZA6BGMXhsfO+BLtrJK0We6gg5o1JyO8xQm6peWDEUs17ACA5ziE/NIAkl9z2k" crossorigin="anonymous"></script>
-<script type="module" src="reef.js?v=2026-10-01.36"></script>
+<script type="module" src="reef.js?v=2026-10-01.37"></script>
 <dialog id="about" aria-labelledby="about-title"><div class="t" id="about-title">About Reef</div><div class="b"><div><img src="og.png" alt="" style="width:64px;height:64px;object-fit:cover;border-radius:12px;border:1px solid var(--line2)"></div><div>
 <p><b>Reef</b> · a Bitcoin node in a browser tab, for txbt4, the BLAKE2b testnet4.</p>
 <p>It looks like Knots and runs a chain Knots defined, but it is not Knots. The tab fetches the fork-point UTXO snapshot, recomputes its hashes, validates every block since the fork and follows the chain tip. The wallet is one key kept in this tab.</p>
@@ -325,7 +328,7 @@ The node answers from this tab's own validated state; wallet commands answer for
 <p>Reef is a Bitcoin node and wallet that runs in this tab, on <b>txbt4</b>, a test network (the BLAKE2b testnet4). Its coins are test coins with no value.</p>
 <p>To start, the tab downloads the chain's state at block 150,307 (<b>830 MB</b>), checks it, and then validates every block since. That takes a few minutes on a fast connection (about 2 to 3 at 100 Mbit/s) and longer on a slow one; it is kept for next time, and resumes if interrupted. Avoid starting on a metered connection.</p>
 <p id="wl-space" class="tiny"></p>
-<p class="tiny mut">Nothing leaves the tab except requests for the chain and, when you pay, the signed payment. The wallet key is made here and stays in this browser: back it up before you receive coins. With Not now, the key and your address are still made, so you can receive; only the balance waits until the node runs.</p>
+<p class="tiny mut">Nothing leaves the tab except requests for the chain and, when you pay, the signed payment. Your key is made here and stays in this browser: back it up. Not now still gives you an address; only the balance waits for the node.</p>
 </div><div class="f"><button id="wl-later" type="button">Not now</button><button id="wl-start" type="button" class="p">Start</button></div></dialog>
 <div id="toastwrap"><div id="toasts-alert" role="alert" aria-live="assertive"></div><div id="toasts" role="status" aria-live="polite"></div></div>
 </body>

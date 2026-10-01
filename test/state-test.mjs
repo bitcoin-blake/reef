@@ -1280,5 +1280,65 @@ t(
   );
 }
 
+// ---- round 16: the original read through its replacement, a block undone under another group, and the set-aside rules
+{
+  const R = pay({ txid: tx('r'), replaces: tx('o'), fee: 400 });
+  const withOrig = [pay({ txid: tx('o'), pending: false, replaced: tx('r'), replacedBy: tx('r') }), R];
+  const fx = S.confirm(withOrig, R, 152120);
+  const alone = pay({ txid: tx('q'), replaces: tx('z') }); // its original was forgotten long ago: no record of it here
+  const fx2 = S.confirm([alone], alone, 152121);
+  t(
+    'a confirmed replacement says "the version with the higher fee" only when its original is on record',
+    fx.some((f) => /higher fee/.test(f.body)) && !fx2.some((f) => /higher fee/.test(f.body)),
+    JSON.stringify([fx.map((f) => f.body), fx2.map((f) => f.body)]),
+  );
+}
+{
+  const s1 = pay({ txid: tx('s'), pending: false, height: 152110, checkedAt: 152110 });
+  const other = pay({ txid: tx('v'), inputs: [tx('e') + ':0'], pending: false, replaced: tx('s'), vAt: 1 }); // not a version of s
+  const sent = [s1, other];
+  S.onRecheck(sent, tx('s'), { found: false, to: 152112 }, 152112);
+  t(
+    "a block undone under a payment brings back only that payment's own versions, not another record that names it",
+    s1.pending === true && other.pending === false && other.replaced === tx('s'),
+  );
+}
+{
+  const foreign = 'fe'.repeat(32) + ':1';
+  const found = pay({ txid: tx('f'), hex: undefined, recovered: true, inputs: [inA, foreign] });
+  const made = pay({ txid: tx('g'), hex: undefined, inputs: [inA, foreign] });
+  const r = S.sortStored({ sent: [found, made], ok: () => true, seenHas: (k) => k === inA });
+  t(
+    'a payment found on the chain needs one coin of ours; one made here (no transaction kept) needs every coin to be ours',
+    r.keep.some((x) => x.txid === tx('f')) && r.quarantine.some((x) => x.txid === tx('g')),
+  );
+  const bad = pay({ txid: tx('h'), hex: undefined, inputs: [foreign], quarantinedAt: 7 });
+  const r2 = S.sortStored({ sent: [], quarantine: [bad], ok: () => true, seenHas: (k) => k === inA });
+  const r3 = S.sortStored({
+    sent: [pay({ txid: tx('h'), pending: true })],
+    quarantine: [bad],
+    ok: () => true,
+    seenHas: (k) => k === inA,
+  });
+  const r4 = S.sortStored({
+    sent: [pay({ txid: tx('h'), pending: false, tomb: true })],
+    quarantine: [bad],
+    ok: () => true,
+    seenHas: (k) => k === inA,
+  });
+  const r5 = S.sortStored({ sent: [pay({ txid: tx('h'), pending: false })], quarantine: [bad], ok: () => true, seenHas: (k) => k === inA });
+  t(
+    'a set-aside record stays set aside while its payment waits or is only a forgotten stub; it goes once the payment settles',
+    r2.quarantine.length === 1 && r3.quarantine.length === 1 && r4.quarantine.length === 1 && r5.quarantine.length === 0,
+    [r2, r3, r4, r5].map((r) => r.quarantine.length).join(),
+  );
+  const back = pay({ txid: tx('k'), quarantinedAt: 9 });
+  const r6 = S.sortStored({ sent: [pay({ txid: tx('k') })], quarantine: [back], ok: () => true, seenHas: (k) => k === inA });
+  t(
+    'a set-aside record that now passes, already back in the records, is not added twice',
+    r6.keep.filter((x) => x.txid === tx('k')).length === 1 && r6.quarantine.length === 0,
+  );
+}
+
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

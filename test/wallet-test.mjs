@@ -208,6 +208,60 @@ function signAndCheck(p) {
   return { tx, verified, vsize: W.vsizeOf(k, tx) };
 }
 {
+  // round 16: the boundaries of coin choice, "send everything", a replacement's change and the size estimate
+  const A = 20000,
+    feeOf = (n, outs = [spkB, spkA]) => Math.ceil(W.estimateVsize(n, outs));
+  const three = [coin(31, A + 50), coin(32, 30000), coin(33, 5000)];
+  const p3 = W.plan({ coins: three, amount: A, rate: 1, destSpk: spkB, changeSpk: spkA });
+  t(
+    'a coin that covers the amount less the fee but not the amount plus the fee: a second coin is taken',
+    p3.picked.length === 2 && p3.outputs[0].value === A,
+    `${p3.picked.length} picked`,
+  );
+  const exact = [coin(34, A + feeOf(1)), coin(35, 9000)];
+  const pe = W.plan({ coins: exact, amount: A, rate: 1, destSpk: spkB, changeSpk: spkA });
+  t(
+    'a coin that is exactly the amount plus the fee: it alone is taken, no change',
+    pe.picked.length === 1 && pe.change === 0 && pe.outputs.length === 1,
+    `${pe.picked.length} picked, change ${pe.change}`,
+  );
+  const allFee = feeOf(1, [spkB]);
+  const pa = W.plan({ coins: [coin(36, W.MIN_SEND + allFee)], rate: 1, destSpk: spkB, all: true });
+  t(
+    'send everything that leaves exactly the smallest payment is allowed; one satoshi less is not',
+    pa.amount === W.MIN_SEND &&
+      throws(() => W.plan({ coins: [coin(36, W.MIN_SEND + allFee - 1)], rate: 1, destSpk: spkB, all: true }), /does not cover/),
+  );
+  const rv = W.estimateVsize(1, [spkB, spkA]);
+  const rs = {
+    sats: A,
+    toScript: spkB,
+    inputs: ['ab'.repeat(32) + ':0'],
+    values: [A + 200 + Math.ceil(rv) + W.DUST],
+    fee: 200,
+    change: 400,
+  };
+  const rr = W.planReplace(rs, { rate: 1, ownSpk: spkA });
+  t(
+    'a replacement whose change is exactly DUST keeps the change output',
+    rr.change === W.DUST && rr.outputs.length === 2,
+    `change ${rr.change}, ${rr.outputs.length} outputs`,
+  );
+  const sizes = [];
+  for (const nIn of [1, 2, 8])
+    for (const outs of [[spkB], [spkB, spkA]]) {
+      const picked = Array.from({ length: nIn }, (_, i) => coin(40 + i, 100000));
+      const outputs = outs.map((spk) => ({ value: 1000, scriptPubKey: spk }));
+      const real = signAndCheck({ picked, outputs }).vsize;
+      sizes.push([nIn, outs.length, W.estimateVsize(nIn, outs), real]);
+    }
+  t(
+    'the size estimate is the signed size, or at most one vbyte over (1, 2 and 8 inputs, 1 and 2 outputs)',
+    sizes.every(([, , e, r]) => e - r >= 0 && e - r <= 1),
+    JSON.stringify(sizes),
+  );
+}
+{
   const p = W.plan({ coins: W.spendable(coins, height), amount: 30000, rate: 1, destSpk: spkB, changeSpk: spkA });
   const s = signAndCheck(p);
   t(
@@ -316,6 +370,14 @@ t(
     'immature coinbase and unconfirmed incoming are counted apart and in the total',
     b2.available === 10000 && b2.immature === 500000 && b2.pending === 4000 && b2.total === 514000,
   );
+  {
+    const up = coin(23, 7000, { height: height - 1 });
+    const b3 = W.balances({ coins: [c1, up], sent: [], height, vouched: height - 5 });
+    t(
+      'a coin above the signed chain tip is held and listed apart as above (no payment holds it)',
+      b3.above.has(up.key) && b3.held.has(up.key) && !b3.above.has(c1.key) && b3.unvouched === 7000,
+    );
+  }
   {
     const self = W.balances({ coins: [c1], sent: [{ ...sent[0], self: true }], height });
     t(

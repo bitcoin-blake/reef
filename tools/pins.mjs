@@ -5,7 +5,10 @@
 // .. segments (or their %2e forms: the browser resolves them to another package), a user name before the host, and every
 // other script CDN host (unpkg, esm.sh, cdnjs, …) fail. Hosts are matched in any case, and URLs written with \/ (as in JSON)
 // are read as the browser would. A page with no content security policy (Winch, Hitch) has only this check, so there every
-// absolute script URL (import, from, importScripts, new Worker, <script src>) off cdn.jsdelivr.net fails too. The four apps
+// absolute URL written in it fails unless its host is cdn.jsdelivr.net, this origin, or one the apps connect to by name (the
+// relays, the block mirror and the explorer, read from reef.js; github.com links; the w3.org namespaces): an import, an unquoted
+// src, el.src =, importScripts(a, b), new Worker(new URL(…)) and a URL with \\ for / or an entity in its scheme included. A page
+// has a policy only if one is in force in its <head> (one in a comment, a <template> or a <noscript> is not). The four apps
 // must also pin the same node (they share its files and its lock); the demo page serves the node's own branch, so it has no
 // node pin to compare. Only literal URLs are seen: a URL built from parts at run time is not.
 //   node tools/pins.mjs               the pages as published (after a Reef deploy, and by pins.yml)
@@ -39,11 +42,38 @@ const CDN_HOSTS =
 const CDN_URL = new RegExp(`(?:https?:)?//([^\\s/'"\`@]+@)?(${CDN_HOSTS})(?![\\w.-])(/[^\\s'"\`;),]*)?`, 'gi');
 const GH = /^\/gh\/([\w.-]+\/[\w.-]+)@([0-9a-f]{40})(?:\/|$)/;
 const NPM = /^\/npm\/((?:@[\w.-]+\/)?[\w.-]+)@(\d+\.\d+\.\d+(?:-[\w.]+)?)(?:\/|$)/;
-// script URLs a page loads, whatever their host: what a page without a policy must keep on the pinned CDN
-const SCRIPT_URL =
-  /(?:\bimport\s*\(\s*|\bfrom\s*|\bimportScripts\s*\(\s*|\bnew\s+(?:Shared)?Worker\s*\(\s*|<script\b[^>]*?\bsrc\s*=\s*)(['"`])((?:https?:)?\/\/[^'"`]+)\1/gi;
-// a page's text as the browser reads its URLs: \/ (JSON, escaped strings) is /
-const unescape = (body) => body.replace(/\\\//g, '/');
+// a page's text as the browser reads its URLs: \/ (JSON, escaped strings) is /, an entity is its character, and a tab or line
+// break inside a scheme is dropped (the browser drops them from a URL)
+const unescape = (body) =>
+  body
+    .replace(/\\\//g, '/')
+    .replace(/&#x([0-9a-f]+);?/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);?/g, (_, d) => String.fromCodePoint(Number(d)))
+    .replace(/&colon;/gi, ':')
+    .replace(/&sol;/gi, '/')
+    .replace(/\b(h[\t\r\n]*t[\t\r\n]*t[\t\r\n]*p[\t\r\n]*s?|w[\t\r\n]*s[\t\r\n]*s?)[\t\r\n]*:/gi, (m) => m.replace(/[\t\r\n]/g, ''));
+// every absolute URL a page writes, wherever it is used (an import, a src with or without quotes, a property, a worker): with a
+// scheme and // or \\ (the browser reads \ as / there), or scheme-relative after a quote, = or ( → its host, lower case
+const ABS_URL =
+  /\b(?:https?|wss?):[\\/]{2}(?:[^\s/\\'"`<>@]+@)?([^\s/\\'"`<>?#:;,)]+)|(?:['"`=(]\s*)[\\/]{2}([a-z0-9-]+(?:\.[a-z0-9-]+)+)/gi;
+// the hosts the apps connect to by name, read from Reef's own constants (so the list is never written twice): the relays, the
+// block mirror, the explorer; then source links and the XML namespaces of an inline SVG
+export function connectHosts(reefSrc) {
+  const hosts = new Set(['cdn.jsdelivr.net', 'bitcoin-blake.github.io', 'github.com', 'www.w3.org']);
+  for (const name of ['DEFAULT_RELAYS', 'TIP_RELAYS', 'DEFAULT_SNAP', 'DEFAULT_BLOCKS', 'EXPLORER']) {
+    const m = reefSrc.match(new RegExp(`\\b${name} = (\\[[^\\]]*\\]|'[^']*')`));
+    for (const u of m?.[1].match(/(?:https?|wss?):\/\/[^/'"\s]+/g) ?? []) hosts.add(new URL(u).host.toLowerCase());
+  }
+  return hosts;
+}
+const REEF_SRC = (() => {
+  try {
+    return readFileSync(new URL('../reef.js', import.meta.url), 'utf8');
+  } catch {
+    return '';
+  }
+})();
+const ALLOWED = connectHosts(REEF_SRC);
 // a URL's verdict: { repo, ref } when it is pinned as the rules above say, else { why }
 export function judge(host, path = '', user = '') {
   host = host.toLowerCase();
@@ -67,11 +97,23 @@ export function judge(host, path = '', user = '') {
 export function cdnRefs(body) {
   return [...unescape(body).matchAll(CDN_URL)].map(([url, user, host, path]) => ({ url, ...judge(host, path ?? '', user ?? '') }));
 }
-// the absolute script URLs off cdn.jsdelivr.net (and off this origin) that a page loads: refused where no policy stops them
-export function offCdn(body) {
-  return [...unescape(body).matchAll(SCRIPT_URL)]
-    .map((m) => m[2])
-    .filter((u) => !/^(?:https?:)?\/\/(?:cdn\.jsdelivr\.net|bitcoin-blake\.github\.io)(?:\/|$)/i.test(u));
+// the absolute URLs of a page whose host is none of the allowed ones: refused where no policy stops them
+export function offCdn(body, allowed = ALLOWED) {
+  return [...unescape(body).matchAll(ABS_URL)]
+    .map((m) => ({ url: m[0].replace(/^['"`=(]\s*/, ''), host: (m[1] ?? m[2]).toLowerCase() }))
+    .filter((r) => !allowed.has(r.host))
+    .map((r) => r.url);
+}
+// does a page have a policy in force: a policy meta in its <head>, comments, templates and noscripts set aside
+export function hasPolicy(body) {
+  const live = body
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<template[\s>][\s\S]*?<\/template>/gi, '')
+    .replace(/<noscript[\s>][\s\S]*?<\/noscript>/gi, '');
+  // the head as the browser builds it: up to </head> or <body (the <head> tag itself may be left out)
+  const end = live.search(/<\/head>|<body[\s>]/i);
+  const head = end < 0 ? live : live.slice(0, end);
+  return /<meta\b[^>]*\bhttp-equiv\s*=\s*(["']?)Content-Security-Policy\1/i.test(head);
 }
 // the first pin of each repository in a file: { 'owner/repo': commit }
 export function pinsOf(src) {
@@ -90,7 +132,8 @@ export function pageVerdict(f, body, policed) {
       if (!(PREFIXES[f] ?? []).includes(r.url)) failures.push(`${f}: ${r.url}: ${r.why}`);
     } else pins.push(r);
   }
-  if (!policed) for (const u of offCdn(body)) failures.push(`${f}: ${u}: a script off cdn.jsdelivr.net, on a page with no security policy`);
+  if (!policed)
+    for (const u of offCdn(body)) failures.push(`${f}: ${u}: a host the apps do not connect to by name, on a page with no security policy`);
   return { failures, pins };
 }
 if (main && process.argv.includes('--of')) {
@@ -124,7 +167,7 @@ if (main && process.argv.includes('--of')) {
   // which pages carry a content security policy (in their index.html)
   const policed = new Set(
     Object.entries(bodies)
-      .filter(([f, b]) => f.endsWith('index.html') && /http-equiv="Content-Security-Policy"/i.test(b))
+      .filter(([f, b]) => f.endsWith('index.html') && hasPolicy(b))
       .map(([f]) => f.split('/')[0]),
   );
   const byApp = {};
