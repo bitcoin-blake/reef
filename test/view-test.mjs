@@ -114,6 +114,24 @@ t(
       V.filterRows(rows, { type: 'mined', sent }).length === 1 &&
       V.filterRows(rows, { type: 'in', sent }).length === 1 &&
       V.filterRows(rows, { query: 'FRIEND', sent }).length === 1,
+  ); // which rows, not only how many: a filter that swapped the received row for the mined one would keep the count
+  const ids = (type) => V.filterRows(rows, { type, sent }).map((r) => r.txid);
+  t(
+    'the filter picks the right rows: Waiting is the live payment (not the forgotten one), Received the receipt (not the mined coins)',
+    ids('pending').join() === tx('1') && ids('in').join() === tx('6') && ids('mined').join() === tx('5'),
+    JSON.stringify({ pending: ids('pending'), in: ids('in'), mined: ids('mined') }),
+  );
+}
+{
+  // "(fee)" goes on a payment to yourself that happened, and on nothing else
+  const self = { label: 'Payment to yourself' },
+    other = { label: 'Sent' };
+  t(
+    'only a payment to yourself that happened is marked "(fee)"',
+    V.feeOnly(self, { struck: false }) === true &&
+      V.feeOnly(self, { struck: true }) === false &&
+      V.feeOnly(other, { struck: false }) === false &&
+      V.feeOnly(other, { struck: true }) === false,
   );
 }
 {
@@ -323,7 +341,7 @@ t(
   const r = { kind: 'in', txid: tx('u'), label: 'Received', addr: 'me', sats: 5, pending: false, height: 152105, conf: 3 };
   t(
     'a receipt in a block above the signed chain tip is not counted as confirmed',
-    /has not reached it yet/.test(V.viewRow(r, { ...ctx([]), vouched: 152104 }).state) &&
+    /in block 152,105, which the signed chain tip has not reached yet/.test(V.viewRow(r, { ...ctx([]), vouched: 152104 }).state) &&
       /confirming/.test(V.viewRow(r, { ...ctx([]), vouched: 152105 }).state),
   );
 }
@@ -350,7 +368,7 @@ t(
     V.viewRow(row(rn), ctx([rn])).short === 'not accepted here' && V.viewRow(row(rf), ctx([rf])).short === 'higher fee not accepted',
   );
   const above = V.viewRow(conf, { ...ctx([]), vouched: 152099 });
-  t('a block above the signed tip reads "in a block, being double-checked" in a list', above.short === 'in a block, being double-checked');
+  t('a block above the signed tip reads "waiting for the signed chain tip" in a list', above.short === 'waiting for the signed chain tip');
   t(
     'above the signed tip: "usually within a block" only while the tip moves',
     /usually within a block/.test(above.state) &&
@@ -396,8 +414,9 @@ t(
   );
   const b = { immature: 0, outgoing: 0, pending: 3000, elsewhere: 0, unvouched: 3000 };
   t(
-    'nothing spendable names money in blocks still being double-checked, and does not blame a waiting payment for it',
-    /double check|second check/.test(V.noCoinsWhy(b, { money })) && !/payment of yours/.test(V.noCoinsWhy(b, { money })),
+    'nothing spendable names money in blocks the signed chain tip has not reached, and does not blame a waiting payment for it',
+    /3000 sat is in blocks the signed chain tip has not reached yet/.test(V.noCoinsWhy(b, { money })) &&
+      !/payment of yours/.test(V.noCoinsWhy(b, { money })),
   );
   t(
     'nothing spendable while change is on its way back blames the waiting payment',
@@ -405,9 +424,9 @@ t(
   );
   t('nothing at all: no coins yet', /No coins yet/.test(V.noCoinsWhy({ immature: 0, outgoing: 0, pending: 0, elsewhere: 0 }, { money })));
   t(
-    'the balance line names what is leaving, double-checked and reserved',
+    'the balance line names what is leaving, above the signed chain tip and reserved',
     V.reservedText({ outgoing: 10, unvouched: 20, elsewhere: 30 }, { hitch: true, quarantine: true, money }) ===
-      '10 sat leaving in payments not yet confirmed · 20 sat in blocks still being double-checked (the signed chain tip has not reached them) · 30 sat reserved elsewhere: a Hitch channel funding (to release it, close Reef, open Hitch and cancel the funding there); a payment record Reef could not verify (see the notice above)',
+      '10 sat leaving in payments not yet confirmed · 20 sat in blocks the signed chain tip has not reached yet · 30 sat reserved elsewhere: a Hitch channel funding (to release it, close Reef, open Hitch and cancel the funding there); a payment record Reef could not verify (see the notice above)',
   );
 }
 {
@@ -425,6 +444,23 @@ t(
   t(
     '...and is, against what they pay, when above it',
     hi.some((l) => /payments waiting now pay \(about 25 sat\/vB\)/.test(l)),
+  );
+}
+{
+  // one phrase for money above the signed chain tip, wherever it is said, and the own-address rows named once
+  const { readFileSync } = await import('node:fs');
+  const src =
+    readFileSync(new URL('../reef.js', import.meta.url), 'utf8') + readFileSync(new URL('../lib/view.mjs', import.meta.url), 'utf8');
+  t('no older wording for money above the signed chain tip is left in the page', !/double-checked|second check/.test(src));
+  t(
+    'own-address rows: money in and payments to oneself, nothing else',
+    V.isOwnAddressRow({ kind: 'in', label: 'Received' }) &&
+      V.isOwnAddressRow({ kind: 'out', label: 'Payment to yourself' }) &&
+      !V.isOwnAddressRow({ kind: 'out', label: 'Sent' }),
+  );
+  t(
+    'a long address is shortened to its start and its end; a short one is kept whole',
+    V.shortAddr('tb1q' + 'a'.repeat(30) + 'xyz1234') === 'tb1qaaaaaa…xyz1234' && V.shortAddr('tb1qshort') === 'tb1qshort',
   );
 }
 console.log(`\n${ok} passed, ${bad} failed`);

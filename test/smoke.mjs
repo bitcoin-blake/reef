@@ -227,6 +227,7 @@ for (const [name, opts] of [
 {
   const p = await profile({ seed: { 'reef:started': '1', 'reef:key': KEY } });
   const a = await p.open();
+  const aOpened = Date.now();
   await a.waitForFunction(() => document.getElementById('recent').textContent.trim().length > 0, null, { timeout: 10000 });
   const recent = await a.textContent('#recent');
   t('before the node answers, the recent list says it is waiting', /waiting for the node/.test(recent), recent);
@@ -239,6 +240,28 @@ for (const [name, opts] of [
       (await b.evaluate(() => !window.__fake.posts.some((p) => p.type === 'coins'))),
   );
   t('the running tab is not marked idle', !(await a.evaluate(() => document.body.classList.contains('idle'))));
+  const twotabs = (pg) => pg.evaluate(() => document.querySelector('#banners [data-b=twotabs] .bt')?.textContent ?? '');
+  t(
+    'the idle tab names what holds the node: Reef, in another tab',
+    /^Reef is already open in another tab/.test(await twotabs(b)),
+    await twotabs(b),
+  );
+  // an older Reef holding the node: named with its version, and told (through storage) to look for its update now
+  await a.waitForTimeout(Math.max(0, 6500 - (Date.now() - aOpened))); // its own first check (5 s after loading) is past
+  let asked = 0;
+  a.on('request', (r) => /version\.json/.test(r.url()) && asked++);
+  await a.evaluate(() => localStorage.setItem('reef:running', JSON.stringify({ app: 'Reef', version: '2026-01-01.1', at: Date.now() })));
+  const c = await p.open();
+  await c.waitForFunction(() => document.body.classList.contains('idle'), null, { timeout: 10000 });
+  // (both tabs here are the same version: a newer one is stood in for by writing a newer version where c writes its own)
+  await c.evaluate(() => localStorage.setItem('reef:newest', '2099-01-01.1'));
+  await a.waitForTimeout(800);
+  t(
+    'an idle tab names an older Reef that holds the node, and that tab looks for its update at once',
+    /An older Reef \(2026-01-01\.1\) runs the node in another tab/.test(await twotabs(c)) && asked > 0,
+    `${await twotabs(c)} | version.json asked ${asked}x`,
+  );
+  await c.close();
   const shown = await a.evaluate(() =>
     [...document.querySelectorAll('[hidden]')].filter((e) => getComputedStyle(e).display !== 'none').map((e) => e.id || e.className),
   );
@@ -480,7 +503,44 @@ for (const withIdle of [false, true]) {
   t('with no signed tip at all, a coin above the snapshot base is not spendable', /0\.00000000/.test(avail), avail);
   await p.ctx.close();
 }
-// 8: money in a block above the signed tip is said as being double-checked; a silent broadcaster is warned about
+// 7c: a node that stops for good (a wipe that did not finish) is a fatal notice, and nothing can be sent
+{
+  const p = await profile({ seed: { 'reef:started': '1', 'reef:key': KEY, 'reef:vouched': VOUCHED } });
+  const a = await p.open();
+  await a.waitForFunction(() => /^tb1p/.test(document.getElementById('rcvaddr').value), null, { timeout: 30000 });
+  await a.evaluate(
+    ({ script }) => {
+      window.__fake.emit('message', { type: 'synced', height: 152100, applied: true });
+      window.__fake.emit('message', {
+        type: 'coins',
+        script,
+        height: 152100,
+        coins: [{ key: 'cd'.repeat(32) + ':0', value: 50000, height: 152000 }],
+      });
+    },
+    { script: SCRIPT },
+  );
+  await a.waitForFunction(() => /0\.00050000/.test(document.getElementById('avail').textContent), null, { timeout: 5000 });
+  await a.evaluate(() => {
+    window.__fake.node.phase = 'error';
+    window.__fake.emit('message', { type: 'error', text: 'the node did not wipe in time and is stopped', fatal: true });
+  });
+  await a.evaluate(() => document.querySelector('[data-p=send]').click());
+  await a.fill('#sendto', 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx');
+  await a.fill('#sendamt', '0.00001');
+  await a.click('#sendgo');
+  await a.waitForFunction(() => document.getElementById('senderr').textContent.length > 0 || document.querySelector('#ask[open]'), null, {
+    timeout: 5000,
+  });
+  t(
+    'a node stopped for good: a fatal notice, and no payment can be made',
+    !!(await a.$('#banners [data-b=fatal]')) && !(await a.$('#ask[open]')) && /stopped/.test(await a.textContent('#senderr')),
+    `${await a.textContent('#senderr')}`,
+  );
+  t('a node stopped for good: the page record of the vouched height is cleared', (await ls(a, 'reef:vouched')) === null);
+  await p.ctx.close();
+}
+// 8: money in a block above the signed tip is said as such, one way everywhere; a silent broadcaster is warned about
 {
   const p = await profile({ seed: { 'reef:started': '1', 'reef:key': KEY } });
   const a = await p.open();
@@ -511,13 +571,15 @@ for (const withIdle of [false, true]) {
     { script: SCRIPT },
   );
   await a
-    .waitForFunction(() => /double-checked/.test(document.getElementById('outgoing').textContent), null, { timeout: 5000 })
+    .waitForFunction(() => /signed chain tip has not reached/.test(document.getElementById('outgoing').textContent), null, {
+      timeout: 5000,
+    })
     .catch(() => {});
   t(
-    'money in a block above the signed tip: not available, said as being double-checked, in the list too',
+    'money in a block above the signed tip: not available, said as above the signed chain tip, in the list too',
     (await a.textContent('#avail')).startsWith('0.00010000') &&
-      /0\.00007000 tBTC in blocks still being double-checked/.test(await a.textContent('#outgoing')) &&
-      /being double-checked/.test(await a.textContent('#recent')),
+      /0\.00007000 tBTC in blocks the signed chain tip has not reached yet/.test(await a.textContent('#outgoing')) &&
+      /waiting for the signed chain tip/.test(await a.textContent('#recent')),
     `${await a.textContent('#avail')} | ${await a.textContent('#outgoing')}`,
   );
   await a.evaluate(() =>

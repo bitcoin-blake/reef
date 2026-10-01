@@ -4,7 +4,7 @@
 // tested against the kernel; this file is the host: storage, the node, the relays, the window. Every string that comes
 // from outside (relays, the mempool, the chain, links, options) reaches the page as text, never as markup.
 const $ = (id) => document.getElementById(id);
-export const VERSION = '2026-10-01.29';
+export const VERSION = '2026-10-01.30';
 const SCHEMA = 2; // the storage layout this version writes
 const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@c3f6a46a5ae29702df60f0bd87a8d15a8993a84f';
 const LIB = 'https://cdn.jsdelivr.net/gh/sidestr/spec@fe689e9c723f9bf43393d2dd5b6f924a701c8a18/siding/lib',
@@ -1829,6 +1829,8 @@ function applyDisplay() {
 // checked by hash before use
 // static and dynamic relative imports: './x.js', "../y.js", import('./z.js')
 const IMPORT_RE = /\b(from\s*|import\s*\(?\s*)(['"`])(\.{1,2}\/[^'"`]+)\2/g;
+// any import at all: one that is not relative would not be rewritten to a checked blob, so a file with one is refused
+const ANY_IMPORT_RE = /\b(?:from\s*|import\s*\(?\s*)(['"`])([^'"`\s]+)\1/g;
 // one module graph under root, every file checked against CODE_SHA256 before it runs; a file once checked is one blob, so a
 // module imported from two places is one instance, as with ordinary imports (the graphs have no cycles)
 function checkedImporter(root, what) {
@@ -1846,6 +1848,8 @@ function checkedImporter(root, what) {
           if (got !== CODE_SHA256[path])
             throw new Error(`${what}'s ${path} from the CDN is not the pinned file (sha256 ${got.slice(0, 12)}…); nothing was loaded`);
           const src = new TextDecoder().decode(bytes);
+          const outside = [...src.matchAll(ANY_IMPORT_RE)].map((m) => m[2]).find((d) => !/^\.{1,2}\//.test(d));
+          if (outside) throw new Error(`${what}'s ${path} imports ${outside}, which would not be checked; nothing was loaded`);
           const deps = [...new Set([...src.matchAll(IMPORT_RE)].map((m) => m[3]))];
           const at = (d) => {
             const u = new URL(d, 'https://x/' + path);
@@ -1882,7 +1886,7 @@ async function loadKernel() {
       throw new Error(`the engine's ${p} from the CDN is not the pinned file (sha256 ${got.slice(0, 12)}…); nothing was loaded`);
     return JSON.parse(new TextDecoder().decode(bytes));
   };
-  // the five files at once (they were fetched one after another)
+  // the five rule files fetched together, each checked by hash before it is parsed
   const [core, proof, script0, chain, validate] = await Promise.all(
     ['core', 'proof', 'script', 'chain', 'validate'].map((f) => j(`schema/${f}.jsonld`)),
   );
@@ -2248,7 +2252,7 @@ function onCoins(m) {
     for (const r of got)
       notify(
         'Payment received',
-        `${amtSay(WL.receiptSats(r))} in block ${n(r.height)}${vouchedAt != null && r.height > vouchedAt ? ': the signed chain tip has not reached that block yet, so it counts as pending until it does' : ''}`,
+        `${amtSay(WL.receiptSats(r))} in block ${n(r.height)}${vouchedAt != null && r.height > vouchedAt ? `: ${V.ABOVE_TIP} that block yet, so it counts as pending until it does` : ''}`,
       );
     if (got.length) offerNotify();
     if (mined.length)
@@ -2463,7 +2467,7 @@ function renderWalletInner() {
             .join('');
           return `<tr><td class="when">${r.at ? txLink(r.txid, when(r.at)) : txLink(r.txid, '—')}</td><td title="${esc(say(v.state))}"><span aria-hidden="true">${v.icon}</span><span class="state" aria-hidden="true">${esc(
             say(v.short),
-          )}</span><span class="sr">${esc(say(v.state))}</span></td><td>${v.block ? esc(n(v.block)) : '—'}</td><td>${esc(r.label)}</td><td class="addr" title="${esc(r.addr)}">${esc(r.kind === 'in' || r.label === 'Payment to yourself' ? 'your address' : V.shortAddr(r.addr))}</td><td class="amt ${r.kind === 'in' ? 'in' : 'out'}${v.struck ? ' struck' : ''}">${moneyHtml(v.sats)}<span class="cardunit"> ${esc(unit().label)}</span>${V.feeOnly(r, v) ? '<span class="mut"> (fee)</span>' : ''}<span class="sr">${v.tag ? esc(` (${v.tag})`) : ''}</span></td><td class="acts">${acts}</td></tr>`;
+          )}</span><span class="sr">${esc(say(v.state))}</span></td><td>${v.block ? esc(n(v.block)) : '—'}</td><td>${esc(r.label)}</td><td class="addr" title="${esc(r.addr)}">${esc(V.isOwnAddressRow(r) ? 'your address' : V.shortAddr(r.addr))}</td><td class="amt ${r.kind === 'in' ? 'in' : 'out'}${v.struck ? ' struck' : ''}">${moneyHtml(v.sats)}<span class="cardunit"> ${esc(unit().label)}</span>${V.feeOnly(r, v) ? '<span class="mut"> (fee)</span>' : ''}<span class="sr">${v.tag ? esc(` (${v.tag})`) : ''}</span></td><td class="acts">${acts}</td></tr>`;
         })
         .join('')
     : `<tr><td colspan="7" class="mut">${IDLE ? 'shown in the tab that runs the node' : known ? (rows.length ? 'nothing matches' : 'no transactions since the snapshot') : 'waiting for the node'}</td></tr>`;
@@ -2582,7 +2586,7 @@ function reuseNote(p) {
   if (!hit) return '';
   const f = sent.find((x) => x.pending && x.abandoned && (x.inputs ?? []).includes(hit.key));
   return f
-    ? `This uses a coin of the forgotten payment of ${exact(f.sats)} to ${String(f.to).slice(0, 14)}…, so only one of the two can happen: if that one is mined first, this one fails and Reef tells you.`
+    ? `This uses a coin of the forgotten payment of ${exact(f.sats)} to ${V.shortAddr(f.to)}, so only one of the two can happen: if that one is mined first, this one fails and Reef tells you.`
     : '';
 }
 // nothing spendable: say what the coins are doing instead
@@ -2827,9 +2831,10 @@ async function feeFlow() {
   updatePreview();
 }
 async function sendFlow() {
+  // a stopped node is said (canAct is false then too, and a click must not be answered by nothing)
+  if (nodeStopped()) throw new Error('the node is stopped: reload the page before sending');
   if (sending || !canAct()) return;
   // a disagreeing chain tip is said first: nothing about this chain's coins can be trusted while it lasts
-  if (nodeStopped()) throw new Error('the node is stopped: reload the page before sending');
   if (trust().level === 'bad') throw new Error('the block source disagrees with the signed chain tip: sending waits until that clears');
   const r = readSend();
   const { p } = r;
@@ -3725,19 +3730,18 @@ cin.onkeydown = (e) => {
     const f = Object.hasOwn(ANS, cmd) ? ANS[cmd] : null;
     // the log itself is quiet for screen readers; each answer is said once, in one line
     const say1 = (t) => sayOnce(`${cmd}: ${String(t).split('\n')[0].slice(0, 140)}`);
-    if (!f) return (cprint('Method not found (code -32601)', 'err'), say1('error: method not found'));
+    if (!f) return cprint('Method not found (code -32601)', 'err'), say1('error: method not found');
     if (IDLE && !['help', 'uptime'].includes(cmd))
       return (
-        cprint('The node runs in another tab of this browser: ask there (code -1)', 'err'),
-        say1('error: the node runs in another tab')
+        cprint('The node runs in another tab of this browser: ask there (code -1)', 'err'), say1('error: the node runs in another tab')
       );
     let a;
     try {
       a = f(args.map((x) => x.replace(/^"|"$/g, '')));
     } catch (x) {
-      return (cprint(x.message, 'err'), say1('error: ' + x.message));
+      return cprint(x.message, 'err'), say1('error: ' + x.message);
     }
-    if (a && a.__err) return (cprint(`${a.__err.message} (code ${a.__err.code})`, 'err'), say1('error: ' + a.__err.message));
+    if (a && a.__err) return cprint(`${a.__err.message} (code ${a.__err.code})`, 'err'), say1('error: ' + a.__err.message);
     const out = typeof a === 'string' ? a : JSON.stringify(a, null, 2);
     cprint(out);
     say1(typeof a === 'object' && a ? `${Object.keys(a).length} fields, shown in the console` : out);

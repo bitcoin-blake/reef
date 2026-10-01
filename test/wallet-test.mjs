@@ -869,5 +869,53 @@ t(
     order,
   );
 }
+// ---- round 13: guards the mutation run found unpinned
+t(
+  'a version-0 address with a 25-byte program is refused (only 20 and 32 bytes are segwit v0)',
+  /not a valid segwit/.test(
+    W.checkDestination({ hrp: 'tb', version: 0, program: 'ab'.repeat(25), script: '0019' + 'ab'.repeat(25) }).error ?? '',
+  ),
+);
+{
+  // a transaction in the tip block has one confirmation, in both ways the history is built (from coins, from the ledger)
+  const tip = 152100;
+  const c = { key: 'a1'.repeat(32) + ':0', value: 5000, height: tip };
+  const fromCoins = W.history({ coins: [c], sent: [], height: tip, address: 'tb1pme' });
+  const ledger = new Map([['a1'.repeat(32), { txid: 'a1'.repeat(32), height: tip, outs: [{ n: 0, value: 5000 }], value: 5000 }]]);
+  const fromLedger = W.history({ coins: [c], sent: [], height: tip, address: 'tb1pme', ledger });
+  t(
+    'a transaction in the tip block has 1 confirmation (not 0), from coins and from the ledger',
+    fromCoins[0]?.conf === 1 && fromLedger[0]?.conf === 1,
+    JSON.stringify([fromCoins[0]?.conf, fromLedger[0]?.conf]),
+  );
+  // a mined coin of the tip block is immature in the ledger rows too, and mature exactly 100 blocks on
+  const mined = new Map([
+    ['a2'.repeat(32), { txid: 'a2'.repeat(32), height: tip, coinbase: true, outs: [{ n: 0, value: 5000 }], value: 5000 }],
+  ]);
+  t(
+    'a mined coin in the ledger is immature until its 100th confirmation, and mature at it',
+    W.history({ coins: [], sent: [], height: tip + 98, address: 'x', ledger: mined })[0].immature === true &&
+      W.history({ coins: [], sent: [], height: tip + 99, address: 'x', ledger: mined })[0].immature === false,
+  );
+}
+t(
+  'maturity is counted at the vouched height when it is lower (a source that inflates its height matures nothing early)',
+  W.maturityHeight(152200, 152100) === 152100 && W.maturityHeight(152100, 152200) === 152100 && W.maturityHeight(152100, null) === 152100,
+);
+t(
+  'a mined coin counts as available only once mature at the vouched height',
+  W.balances({
+    coins: [{ key: 'b1'.repeat(32) + ':0', value: 7000, height: 152000, coinbase: true }],
+    sent: [],
+    height: 152099,
+    vouched: 152098,
+  }).available === 0 &&
+    W.balances({
+      coins: [{ key: 'b1'.repeat(32) + ':0', value: 7000, height: 152000, coinbase: true }],
+      sent: [],
+      height: 152099,
+      vouched: 152099,
+    }).available === 7000,
+);
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

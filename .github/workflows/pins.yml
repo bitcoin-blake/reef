@@ -1,6 +1,8 @@
 # Reef, Bight, Winch and Hitch share one node (the same OPFS files and the lock 'bitcoin-blake:node' on one origin): two
-# node versions on the same files is the failure this guards against. Hourly (and after each Reef deploy, in test.yml) the published pages are
-# fetched and their node pins compared; a difference fails the run (README, Releasing, step 3).
+# node versions on the same files is the failure this guards against. Hourly (and before and after each Reef deploy, in
+# test.yml) the published pages are fetched: their node pins must agree, and every repository pin on the CDN must be a whole
+# commit (tools/pins.mjs, which also lists the library and engine pins). GitHub runs a schedule on a best-effort basis: a run
+# can be late or skipped, so the deploy-time checks are the ones a release relies on.
 name: pins
 on:
   schedule: [{ cron: '17 * * * *' }]
@@ -11,17 +13,8 @@ jobs:
   same-node:
     runs-on: ubuntu-24.04
     steps:
-      - name: compare the node pins of the published apps
-        run: |
-          set -eo pipefail
-          declare -A pin
-          for f in reef/reef.js bight/bight.js winch/winch.js hitch/hitch.js; do
-            body=$(curl -fsSL "https://bitcoin-blake.github.io/$f?nocache=$RANDOM") || { echo "::error::could not fetch $f from Pages (the site, not the pins)"; exit 1; }
-            p=$(printf '%s' "$body" | grep -o 'blaketestnode@[0-9a-f]\{40\}' | sort -u || true)
-            n=$(echo "$p" | grep -c . || true)
-            echo "$f: $p"
-            if [ "$n" != 1 ]; then echo "::error::$f pins $n node versions"; exit 1; fi
-            pin[$f]=$p
-          done
-          if [ "$(printf '%s\n' "${pin[@]}" | sort -u | wc -l)" != 1 ]; then echo "::error::the apps pin different node versions"; exit 1; fi
-          echo "all four pin ${pin[reef/reef.js]}"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: the published apps' pins
+        run: node tools/pins.mjs

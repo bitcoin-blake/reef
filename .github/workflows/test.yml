@@ -73,20 +73,11 @@ jobs:
       - uses: actions/checkout@v4
       # siblings first: Bight, Winch and Hitch share this origin's files and lock with Reef, so a Reef release that would
       # pin another node than the ones they publish now is refused here, before it is served (README, Releasing)
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      # and every repository pin of the four apps is a whole commit (a tag can be moved); tools/pins.mjs lists them all
       - name: the other apps already publish this node pin
-        run: |
-          set -o pipefail
-          want=$(grep -o 'blaketestnode@[0-9a-f]\{40\}' reef.js | sort -u)
-          [ "$(echo "$want" | grep -c .)" = 1 ] || { echo "::error::reef.js pins more or fewer than one node version"; exit 1; }
-          for f in bight/bight.js winch/winch.js hitch/hitch.js; do
-            body=$(curl -fsSL "https://bitcoin-blake.github.io/$f?nocache=$RANDOM") || { echo "::error::could not fetch $f from Pages"; exit 1; }
-            got=$(printf '%s' "$body" | grep -o 'blaketestnode@[0-9a-f]\{40\}' | sort -u || true)
-            echo "$f: $got"
-            if [ "$got" != "$want" ]; then
-              echo "::error::$f publishes ${got:-no pin}, Reef would publish $want: release the other apps on this pin first"
-              exit 1
-            fi
-          done
+        run: node tools/pins.mjs --local
       - uses: actions/download-artifact@v4
         with: { name: site, path: _site }
       - uses: actions/upload-pages-artifact@v3
@@ -98,6 +89,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
       - name: the four published apps pin the same node (after this deploy is served)
         run: |
           set -o pipefail
@@ -107,12 +100,5 @@ jobs:
             [ "$got" = "$want" ] && break; sleep 10
           done
           if [ "$got" != "$want" ]; then echo "::error::the deployed version.json is $got, not $want, after five minutes"; exit 1; fi
-          declare -A pin
-          for f in reef/reef.js bight/bight.js winch/winch.js hitch/hitch.js; do
-            body=$(curl -fsSL "https://bitcoin-blake.github.io/$f?nocache=$RANDOM") || { echo "::error::could not fetch $f from Pages (the site, not the pins)"; exit 1; }
-            p=$(printf '%s' "$body" | grep -o 'blaketestnode@[0-9a-f]\{40\}' | sort -u || true)
-            echo "$f: $p"; pin[$f]=$p
-            if [ "$(echo "$p" | grep -c .)" != 1 ]; then echo "::error::$f pins more or fewer than one node version"; exit 1; fi
-          done
-          if [ "$(printf '%s\n' "${pin[@]}" | sort -u | wc -l)" != 1 ]; then echo "::error::the apps pin different node versions"; exit 1; fi
+          node tools/pins.mjs
 

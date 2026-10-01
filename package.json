@@ -3,5 +3,5 @@
   "private": true,
   "type": "module",
   "license": "AGPL-3.0-or-later",
-  "scripts": { "test": "node --input-type=module --check < reef.js && node test/view-test.mjs && node test/trust-test.mjs && node test/state-test.mjs && node test/wallet-test.mjs" }
+  "scripts": { "test": "node --input-type=module --check < reef.js && node test/view-test.mjs && node test/trust-test.mjs && node test/state-test.mjs && node test/wallet-test.mjs && node test/release-test.mjs" }
 }
