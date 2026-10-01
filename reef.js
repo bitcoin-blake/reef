@@ -4,9 +4,9 @@
 // tested against the kernel; this file is the host: storage, the node, the relays, the window. Every string that comes
 // from outside (relays, the mempool, the chain, links, options) reaches the page as text, never as markup.
 const $ = (id) => document.getElementById(id);
-export const VERSION = '2026-10-01.27';
+export const VERSION = '2026-10-01.28';
 const SCHEMA = 2; // the storage layout this version writes
-const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@c03bf56404e986bf633a44d8a7bbb530ec282cb5';
+const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@c3f6a46a5ae29702df60f0bd87a8d15a8993a84f';
 const LIB = 'https://cdn.jsdelivr.net/gh/sidestr/spec@fe689e9c723f9bf43393d2dd5b6f924a701c8a18/siding/lib',
   CDN = 'https://cdn.jsdelivr.net/gh/bitcoin-desktop/schema@b8cbf6337c7450fe14ddc5bce00c7280059aab5d';
 // the engine's rule files by content as well as by commit: a CDN that served other rules would validate another chain
@@ -291,7 +291,7 @@ addEventListener('unhandledrejection', (e) => caught(e.reason));
 // ---- the libraries; a CDN outage is said in words, not as a dead page
 // the node's loader is the anchor of the node's own hash table, so it is checked here by its sha256 (the release test
 // recomputes it from the pinned commit) and run from that checked text, never fetched again by the import
-const TABNODE_SHA256 = '4027b05fc85f5a5603025f0c2849d4b0e6a4c12785a184209a0692b2c5b76d7b';
+const TABNODE_SHA256 = '5524eb528666693bc91b01b9e6df9b1fc84fffe8313c96f6c3aa36675344986e';
 async function sha256hex(bytes) {
   return [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
@@ -449,6 +449,9 @@ let srcErrSince = null;
 let switchingKey = false;
 let firstBeat = null;
 let clockSkew = null; // this tab's clock minus the server's (ms), once a response has said its time
+// the node reads relays' live events and judges signed tips by time: it is told this tab's clock error (seconds, positive
+// when the tab is fast) whenever it is measured, and again when the node's worker starts (a worker not running drops it)
+const sendSkew = () => clockSkew != null && tn.setSkew?.(clockSkew / 1000);
 // a laptop waking: the clock jumps past the timers; noticed by a tick that comes far later than it was due
 let wokeAt = 0;
 {
@@ -3784,6 +3787,7 @@ async function checkVersion() {
     const served = Date.parse(r.headers.get('date') ?? '');
     if (Number.isFinite(served)) {
       clockSkew = Date.now() - served;
+      sendSkew();
       if (Math.abs(clockSkew) > 120e3)
         banner(
           'clock',
@@ -3982,6 +3986,7 @@ async function startNode(force = false) {
   unbanner('welcome');
   try {
     const started = await tn.start({ force });
+    sendSkew();
     if (started === false) {
       if (node.lockError) return lockFailed(node.lockError);
       goIdle();

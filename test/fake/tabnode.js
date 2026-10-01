@@ -41,6 +41,9 @@ export function createTabNode() {
     followMempool() {},
     setTorrent() {},
     setSeed() {},
+    setSkew(s) {
+      (window.__fake.skews ??= []).push(s);
+    },
     wipe: async () => {},
     startSync() {},
     fileReady() {},
