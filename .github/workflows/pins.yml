@@ -4,7 +4,6 @@
 # best-effort basis: a run can be late or skipped, so the deploy-time checks are the ones a release relies on.
 name: pins
 on:
-  schedule: [{ cron: '17 * * * *' }]
   workflow_dispatch:
 permissions:
   contents: read
