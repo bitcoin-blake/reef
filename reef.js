@@ -4,7 +4,7 @@
 // tested against the kernel; this file is the host: storage, the node, the relays, the window. Every string that comes
 // from outside (relays, the mempool, the chain, links, options) reaches the page as text, never as markup.
 const $ = (id) => document.getElementById(id);
-export const VERSION = '2026-10-01.22';
+export const VERSION = '2026-10-01.23';
 const SCHEMA = 2; // the storage layout this version writes
 const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@c03bf56404e986bf633a44d8a7bbb530ec282cb5';
 const LIB = 'https://cdn.jsdelivr.net/gh/sidestr/spec@fe689e9c723f9bf43393d2dd5b6f924a701c8a18/siding/lib',
@@ -1916,7 +1916,7 @@ function wireWalletPage(address) {
   };
   $('sendgo').onclick = () => {
     if ($('sendgo').getAttribute('aria-disabled') === 'true')
-      return sendError($('sendout').textContent || 'Sending is not possible in this tab.');
+      return sayOnce($('sendout').textContent || 'Sending is not possible in this tab.'); // said, the standing note kept
     sendFlow().catch((e) => sendError(e.message));
   };
   $('sendpaste').onclick = async () => {
@@ -3495,7 +3495,7 @@ async function copyDiagnostics() {
   }
 }
 // ---- a newer Reef: checked every hour, offered, never forced
-// "2026-10-01.22" → comparable: a stale copy at the web host never offers an older version as newer
+// "2026-10-01.23" → comparable: a stale copy at the web host never offers an older version as newer
 const versionKey = (v) => {
   const m = /^(\d{4})-(\d{2})-(\d{2})\.(\d+)$/.exec(String(v ?? ''));
   return m ? [+m[1], +m[2], +m[3], +m[4]] : null;
