@@ -11,6 +11,9 @@ export function createTabNode() {
     return () => h.get(t)?.delete(f);
   };
   const emit = (t, a) => {
+    // what the real loader does with a node message before the page sees it
+    if (t === 'message' && a?.type === 'synced')
+      Object.assign(node, { synced: true, phase: 'synced', height: a.height, lastSync: Date.now(), time: Math.floor(Date.now() / 1000) });
     for (const f of h.get(t) ?? []) f(a);
   };
   const posts = [];

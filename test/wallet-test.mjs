@@ -840,5 +840,34 @@ t(
     throws(() => W.parseAmount('1.000.000'), /one dot/) && W.parseAmount('1.000') === 100000000,
   );
 }
+{
+  // the two halves together: a waiting payment whose change is in a block above the signed tip
+  const S = await import('../lib/state.mjs');
+  const T1 = 'e1'.repeat(32);
+  const p = { txid: T1, pending: true, inputs: ['in:0'], sats: 3000, fee: 155, change: 6845, hex: '00' };
+  const coins = [{ key: T1 + ':1', value: 6845, height: 152102 }];
+  S.onCoins({ sent: [p], coins, height: 152102, vouched: 152101 });
+  const b = W.balances({ coins, sent: [p], height: 152102, vouched: 152101 });
+  t(
+    "a waiting payment's change above the signed tip is counted once (as coming back), not twice",
+    p.pending && b.pending === 6845 && b.total === 6845 && b.unvouched === 0,
+    JSON.stringify(b),
+  );
+}
+{
+  const cs = [
+    { key: 'a:0', value: 900000, height: 1 },
+    { key: 'b:0', value: 300000, height: 1 },
+    { key: 'c:0', value: 50000, height: 1 },
+  ];
+  const order = W.spendable(cs, 200, new Set(), new Set(['a:0', 'b:0']), new Set(['b:0']))
+    .map((c) => c.key)
+    .join();
+  t(
+    "paying a forgotten payment's recipient again spends that payment's own coin before any other forgotten one",
+    order === 'b:0,a:0,c:0',
+    order,
+  );
+}
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

@@ -4,7 +4,7 @@
 // tested against the kernel; this file is the host: storage, the node, the relays, the window. Every string that comes
 // from outside (relays, the mempool, the chain, links, options) reaches the page as text, never as markup.
 const $ = (id) => document.getElementById(id);
-export const VERSION = '2026-10-01.19';
+export const VERSION = '2026-10-01.20';
 const SCHEMA = 2; // the storage layout this version writes
 const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@5550637a7f31866e61ce215e1c2bd7b30a12ab80';
 const LIB = 'https://cdn.jsdelivr.net/gh/sidestr/spec@fe689e9c723f9bf43393d2dd5b6f924a701c8a18/siding/lib',
@@ -150,7 +150,7 @@ function sayOnce(text, urgent = false) {
   setTimeout(() => m.remove(), 15e3);
 }
 function banner(id, cls, text, actions = []) {
-  if (dismissed.has(id)) return;
+  if (dismissed.has(id + '|' + cls + text)) return;
   let el = document.querySelector(`#banners [data-b="${id}"]`);
   if (el && el.dataset.text === cls + text) return;
   if (!el) {
@@ -200,7 +200,7 @@ function banner(id, cls, text, actions = []) {
     if (cls !== 'bad') x.setAttribute('aria-label', 'Hide this notice for now');
     else x.title = id === 'backup' ? 'until Reef is opened again' : 'hide this notice for now';
     x.onclick = () => {
-      dismissed.add(id);
+      dismissed.add(id + '|' + cls + text);
       el.remove();
     };
     el.appendChild(x);
@@ -377,6 +377,10 @@ const trust = () =>
     Date.now(),
   );
 let srcErrSince = null;
+let switchingKey = false;
+let lastVouched = Number(LS.get('reef:vouched')) || null;
+const SNAPSHOT_BASE = 150307;
+const vouched = () => T.vouchedHeight(node.nostr, lastVouched, SNAPSHOT_BASE);
 // after the tab is up to date, only errors of the network pass by themselves (the node retries every 30 s); anything else —
 // a file, a rule, a disagreement with the signed tip — stops and is said as such
 const NETWORK =
@@ -473,8 +477,20 @@ function onMessage(m) {
     if (m.applied || !W?.coinsKnown) askCoins();
     tick();
   } else if (m.type === 'nostr') {
+    const before = vouched();
     node.nostr = m;
+    // remember the highest height a tip vouched for: a later tip that does not cover the blocks cannot lower the bar to nothing
+    const sh = T.signedHeight(m);
+    if (sh != null && !(lastVouched >= sh)) {
+      lastVouched = sh;
+      LS.set('reef:vouched', String(sh));
+    }
     renderInfo();
+    // the tip reached further: what waited for it (a confirmation, money received) is settled now, not a block later
+    const after = vouched();
+    if (W && W.coinsKnown && !IDLE && after != null && (before == null || after > before))
+      onCoins({ script: W.script, coins: W.coins, height: W.height });
+    else renderWallet();
   } else if (m.type === 'mempool') {
     $('i-mp').textContent = `${n(m.count)} (${m.stats.refused} refused, ${m.stats.dropped} dropped since the tab opened)`;
     $('i-mpmem').textContent = `${n(m.bytes)} vB, ${n(m.fees)} sat in fees`;
@@ -485,7 +501,7 @@ function onMessage(m) {
   else if (m.type === 'spend' && typeof m.req === 'string' && m.req.startsWith('sent:')) onSpendAnswer(m);
   else if (m.type === 'spend' && typeof m.req === 'string' && m.req.startsWith('recheck:')) {
     if (W && !IDLE) {
-      carryOut(S.onRecheck(sent, m.req.slice(8), m, W.height));
+      carryOut(S.onRecheck(sent, m.req.slice(8), m, W.height, vouched()));
       saveSent();
       renderWallet();
     }
@@ -1412,6 +1428,7 @@ $('o-ok').onclick = async () => {
       return;
     }
     // a key pasted in came from a backup kept outside this browser: it is not "not backed up"
+    switchingKey = true; // from here the page leaves on purpose with a new key: nothing may write the old one back
     if (restoring) LS.set('reef:backup:' + W.signer.pubkeyOf(key).slice(0, 16), String(Date.now()));
     LS.del('reef:keynew');
     location.search = keepQuery();
@@ -1944,7 +1961,7 @@ const wallBal = () =>
     height: W.height,
     reserved: new Set([...hitchHeld(), ...quarantineHeld()]),
     incoming: incomingTxs().reduce((a, x) => a + x.toUs, 0),
-    vouched: T.signedHeight(node.nostr),
+    vouched: vouched(),
   });
 function carryOut(effects) {
   for (const e of effects) {
@@ -1976,7 +1993,7 @@ function onCoins(m) {
   if (!first) {
     const mined = added.filter((r) => r.coinbase),
       got = added.filter((r) => !r.coinbase);
-    const vouchedAt = T.signedHeight(node.nostr);
+    const vouchedAt = vouched();
     for (const r of got)
       notify(
         'Payment received',
@@ -1989,7 +2006,7 @@ function onCoins(m) {
         `${amtSay(mined.reduce((a, r) => a + WL.receiptSats(r), 0))} in ${mined.length} block${mined.length === 1 ? '' : 's'}; spendable after 100 confirmations`,
       );
   }
-  const fx = S.onCoins({ sent, coins: W.coins, asked, height: W.height, vouched: T.signedHeight(node.nostr) });
+  const fx = S.onCoins({ sent, coins: W.coins, asked, height: W.height, vouched: vouched() });
   if (first) {
     carryOut(fx.filter((e) => !e.notice));
     const news = fx.filter((e) => e.notice && e.bad);
@@ -2029,7 +2046,7 @@ function onSpendAnswer(m) {
   if (!W || IDLE) return;
   const txid = m.req.slice(5);
   asked.delete(txid);
-  carryOut(S.onSpendAnswer(sent, txid, m));
+  carryOut(S.onSpendAnswer(sent, txid, m, vouched()));
   saveSent();
   renderWallet();
 }
@@ -2131,7 +2148,7 @@ function renderWalletInner() {
     sent,
     idle: IDLE,
     canAct: canAct(),
-    signedHeight: T.signedHeight(node.nostr),
+    signedHeight: vouched(),
   };
   const views = new Map(rows.map((r) => [r, V.viewRow(r, vctx)]));
   const recOf = (r) => (r.kind === 'out' ? sent.find((x) => x.txid === r.txid) : null);
@@ -2236,7 +2253,7 @@ $('txexport').onclick = () => {
     address: W.address,
     ledger,
   });
-  const vctx = { inMempool, height: W.height, now: Date.now(), sent, idle: IDLE, signedHeight: T.signedHeight(node.nostr) }; // as the lists
+  const vctx = { inMempool, height: W.height, now: Date.now(), sent, idle: IDLE, signedHeight: vouched() }; // as the lists
   const csv = [V.EXPORT_HEAD, ...rows.map((r) => V.exportRow(r, vctx))].join('\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
@@ -2296,7 +2313,13 @@ function readSend() {
   const all = $('sendall').getAttribute('aria-pressed') === 'true';
   const amount = all ? null : WL.parseAmount($('sendamt').value, $('sendunit').value);
   const rate = Math.max(1, Math.round(Number(OPT.feeRate) || 1));
-  const coins = WL.spendable(W.coins, W.height, wallBal().held, WL.reuseFirst(sent, quarantineStored()));
+  // a forgotten payment to this same address: its own coins go first, so paying again can never pay twice
+  const prefer = new Set(
+    sent
+      .filter((s) => s.pending && s.abandoned && (s.toScript ?? W.addr.decodeAddress(s.to)?.script) === dec.script)
+      .flatMap((s) => s.inputs ?? []),
+  );
+  const coins = WL.spendable(W.coins, W.height, wallBal().held, WL.reuseFirst(sent, quarantineStored()), prefer);
   if (!coins.length) throw new Error(noCoinsWhy());
   const p = WL.plan({ coins, amount, rate, destSpk: dec.script, changeSpk: W.script, all });
   return { to, dec, self: chk.self, all, rate, p };
@@ -2418,6 +2441,8 @@ async function feeFlow() {
 }
 async function sendFlow() {
   if (sending || !canAct()) return;
+  // a disagreeing chain tip is said first: nothing about this chain's coins can be trusted while it lasts
+  if (trust().level === 'bad') throw new Error('the block source disagrees with the signed chain tip: sending waits until that clears');
   const r = readSend();
   const { p } = r;
   if (trust().level === 'bad') throw new Error('the block source disagrees with the signed chain tip: sending waits until that clears');
@@ -2742,7 +2767,9 @@ function openBackup() {
   $('bk-show').textContent = 'Show';
   $('bk-done').checked = backedUp();
   $('bk-done').disabled = !backedUp();
-  $('bk-note').textContent = backedUp() ? '' : 'Show, copy or save the key first; then tick the box.';
+  $('bk-note').textContent = backedUp()
+    ? ''
+    : 'Copy the key or save it as a file, then tick the box. (To write it down by hand, Show it, copy it into your notes, and tick.)';
   $('bk-show').onclick = () => {
     const shown = !$('bk-wif').value.startsWith('•');
     $('bk-wif').value = shown ? '•'.repeat(52) : wif;
@@ -2895,6 +2922,8 @@ function renderOldKeys() {
 // ---- notices: a toast in the page and, if allowed, a browser notification
 function notify(title, body, bad = /not |did not|failed|stopped/i.test(title)) {
   cprint(`· ${title}: ${body}`, 'log');
+  // behind an open dialog the toasts are inert and silent: the words are said from inside the dialog too
+  if (document.querySelector('dialog[open]')) sayOnce(`${title}: ${body}`, bad);
   if (!$('tray').hidden) {
     unseen++;
     $('tray-badge').textContent = unseen;
@@ -3381,7 +3410,7 @@ async function copyDiagnostics() {
   }
 }
 // ---- a newer Reef: checked every hour, offered, never forced
-// "2026-10-01.19" → comparable: a stale copy at the web host never offers an older version as newer
+// "2026-10-01.20" → comparable: a stale copy at the web host never offers an older version as newer
 const versionKey = (v) => {
   const m = /^(\d{4})-(\d{2})-(\d{2})\.(\d+)$/.exec(String(v ?? ''));
   return m ? [+m[1], +m[2], +m[3], +m[4]] : null;
@@ -3537,7 +3566,9 @@ function goIdle() {
 // the key in storage gone (site data cleared, a clear-on-exit in another window) while this tab still holds it: written back,
 // and the person told to back it up now, since the next visit would otherwise make a new, empty key without a word
 function guardKey() {
-  if (!W || LS.get('reef:key') === W.key) return;
+  // only a key that is GONE is written back (storage cleared): a different key there was put there on purpose (a switch,
+  // a restore, another tab), and is never overwritten with the one this tab still holds
+  if (!W || switchingKey || LS.get('reef:key') !== null) return;
   // an idle tab holds the same key: it writes back the key alone (the records are the running tab's to write)
   if (IDLE || !RUNNING) return void LS.set('reef:key', W.key);
   const back = LS.set('reef:key', W.key);
@@ -3561,6 +3592,14 @@ function guardKey() {
 }
 addEventListener('storage', (e) => {
   if (e.key === null || e.key === 'reef:key') guardKey();
+  // the key was changed in another tab: this one still shows the old wallet, and says so
+  if (e.key === 'reef:key' && e.newValue && W && e.newValue !== W.key && !switchingKey)
+    banner(
+      'keychanged',
+      'bad',
+      'The wallet key was changed in another tab of this browser. This tab still shows the earlier key: reload to use the new one.',
+      [['Reload', () => location.reload()]],
+    );
 });
 // clearing site data from the browser's settings fires no event here: check whenever the page may be left or reloaded
 addEventListener('pagehide', () => guardKey());

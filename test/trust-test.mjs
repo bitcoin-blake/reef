@@ -27,7 +27,7 @@ t(
   'the source silent for over three minutes warns',
   L({ lastSync: NOW - 181e3 }).level === 'warn' && L({ lastSync: NOW - 179e3 }).level === 'ok',
 );
-t('...unless the node already reports an error (said elsewhere)', L({ lastSync: NOW - 181e3, error: 'x' }).level !== 'warn' || true);
+t('...unless the node already reports an error (said elsewhere)', L({ lastSync: NOW - 181e3, error: 'x' }).level !== 'warn');
 t(
   'no new block for over 90 minutes warns, unless the signed tip is ahead (the source is behind, said separately)',
   L({ time: NOW / 1000 - 5401 }).level === 'warn' && L({ time: NOW / 1000 - 5399 }).level === 'ok',
@@ -67,5 +67,13 @@ t(
   T.trustOf({ ...base, nostr: null, syncedAt: NOW - 121e3 }, NOW).level === 'warn' &&
     T.trustOf({ ...base, nostr: null, syncedAt: NOW - 60e3 }, NOW).level === 'none',
 );
+t('vouched: an agreeing tip vouches up to its height', T.vouchedHeight(tip(), null, 150307) === 152100);
+t(
+  'vouched: a tip that does not cover these blocks keeps the last vouched height, never "no limit"',
+  T.vouchedHeight(tip({ agree: 0 }), 152090, 150307) === 152090 && T.vouchedHeight(tip({ agree: 0 }), null, 150307) === 150307,
+);
+t('vouched: a disagreeing tip holds to the last vouched height', T.vouchedHeight(tip({ diverged: true }), 152090, 150307) === 152090);
+t('vouched: no tip at all is no limit (said as a warning elsewhere)', T.vouchedHeight(null, 152090, 150307) === null);
+t('vouched: a lower agreeing tip does not lower the bar', T.vouchedHeight(tip({ height: 152080 }), 152090, 150307) === 152090);
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

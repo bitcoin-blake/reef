@@ -1105,5 +1105,20 @@ t(
   const fx2 = S.onCoins({ sent: [s2], coins: [{ key: inA, value: 5000, height: 1 }], asked: new Set() });
   t('a waiting payment with one of its coins gone is asked about (that coin)', fx2.length === 1 && fx2[0].input === inB);
 }
+{
+  const s1 = pay({ inputs: [inA], change: 0, all: true });
+  t(
+    'a spend answer in a block above the signed tip gives no verdict yet',
+    S.onSpendAnswer([s1], s1.txid, { found: true, txid: s1.txid, height: 152105 }, 152103).length === 0 && s1.pending,
+  );
+  t(
+    '...and confirms once at or below it',
+    S.onSpendAnswer([s1], s1.txid, { found: true, txid: s1.txid, height: 152103 }, 152103).length > 0 && !s1.pending,
+  );
+  const r = pay({ pending: false, height: 152100 }),
+    w = pay({ txid: tx('w'), pending: false, height: null, inputs: [inA] });
+  const fx = S.onRecheck([r, w], r.txid, { found: true, txid: tx('w'), height: 152106 }, 152106, 152104);
+  t('a recheck whose winner is above the signed tip changes nothing yet', fx.length === 0 && !r.pending && r.height === 152100);
+}
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

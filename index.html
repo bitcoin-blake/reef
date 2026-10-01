@@ -137,11 +137,13 @@ body.idle #st-conn { opacity:.62 } :root { --off:#6b6b6b } @media (prefers-color
   .struck { text-decoration:line-through }
 }
 @media (max-width: 760px) {
-  .title { display:none }
+  #wtitle { display:none } /* the main window's title only: the node window keeps its own, with Close */
   .status { flex-wrap:nowrap; overflow:hidden } #syncmsg { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0 } .status .tnbadge { display:none }
 }
 
 /* round 9 */
+.row input[type=checkbox] { flex:none }
+@media (prefers-color-scheme: dark) { #ask-ok.danger { background:#b3261e; border-color:#b3261e; color:#fff } }
 #tray .badge { background:#c0392b }
 @media (max-width: 760px) { .testchip { white-space:nowrap; flex:none } .tool button { min-width:62px } }
 body.idle #t-info > *, body.idle #t-peers > *, body.idle #t-mempool > *, body.idle #t-traffic > * { display:none } body.idle #t-info::before, body.idle #t-peers::before, body.idle #t-mempool::before, body.idle #t-traffic::before { content:'Shown in the tab that runs the node.'; color:var(--mut); display:block; padding:12px }
@@ -241,7 +243,7 @@ The node answers from this tab's own validated state; wallet commands answer for
   </div>
 </div>
 <script defer src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js" integrity="sha384-8FWZA6BGMXhsfO+BLtrJK0We6gg5o1JyO8xQm6peWDEUs17ACA5ziE/NIAkl9z2k" crossorigin="anonymous"></script>
-<script type="module" src="reef.js?v=2026-10-01.19"></script>
+<script type="module" src="reef.js?v=2026-10-01.20"></script>
 <dialog id="about" aria-labelledby="about-title"><div class="t" id="about-title">About Reef</div><div class="b"><div><img src="og.png" alt="" style="width:64px;height:64px;object-fit:cover;border-radius:12px;border:1px solid var(--line2)"></div><div>
 <p><b>Reef</b> · a Bitcoin node in a browser tab, for txbt4, the BLAKE2b testnet4.</p>
 <p>It looks like Knots and runs a chain Knots defined, but it is not Knots. The tab fetches the fork-point UTXO snapshot, recomputes its hashes, validates every block since the fork and follows the chain tip. The wallet is one key kept in this tab.</p>

@@ -240,6 +240,42 @@ for (const [name, opts] of [
   );
   await a.waitForFunction(() => /0\.00050000/.test(document.getElementById('avail').textContent), null, { timeout: 5000 });
   await a.evaluate(() => document.querySelector('[data-p=send]').click());
+  // a signed tip that disagrees with the blocks stops sending
+  await a.evaluate(() =>
+    window.__fake.emit('message', {
+      type: 'nostr',
+      height: 152102,
+      hash: 'cd'.repeat(32),
+      agree: 0,
+      diverged: true,
+      live: true,
+      created_at: Math.floor(Date.now() / 1000),
+    }),
+  );
+  await a.fill('#sendto', 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx');
+  await a.fill('#sendamt', '0.00001');
+  await a.click('#sendgo');
+  await a.waitForFunction(() => document.getElementById('senderr').textContent.length > 0 || document.querySelector('#ask[open]'), null, {
+    timeout: 5000,
+  });
+  t(
+    'with the signed tip disagreeing, no payment can be made',
+    !(await a.$('#ask[open]')) && /disagrees/.test(await a.textContent('#senderr')),
+    await a.textContent('#senderr'),
+  );
+  await a.evaluate(() =>
+    window.__fake.emit('message', {
+      type: 'nostr',
+      height: 152100,
+      hash: 'cd'.repeat(32),
+      agree: 3,
+      diverged: false,
+      live: true,
+      created_at: Math.floor(Date.now() / 1000),
+    }),
+  );
+  await a.click('#sendclear');
+  await a.evaluate(() => (document.getElementById('senderr').textContent = ''));
   await a.fill('#sendto', 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx');
   await a.fill('#sendamt', '0.0001');
   await a.click('#sendgo');
@@ -265,6 +301,32 @@ for (const [name, opts] of [
     'it reads as waiting, with a fee raise and a cancel on offer',
     (await a.evaluate(() => [...document.querySelectorAll('#txrows button')].map((b) => b.dataset.act).join())) === 'bump,again,cancel',
   );
+  // its change in a block above the signed chain tip: counted once, as coming back, and the payment still waits
+  const changeSats = rec[0].change;
+  await a.evaluate(
+    ({ script, key, value }) => {
+      window.__fake.emit('message', {
+        type: 'nostr',
+        height: 152101,
+        hash: 'ab'.repeat(32),
+        agree: 2,
+        diverged: false,
+        live: true,
+        created_at: Math.floor(Date.now() / 1000),
+      });
+      window.__fake.emit('message', { type: 'coins', script, height: 152102, coins: [{ key, value, height: 152102 }] });
+    },
+    { script: SCRIPT, key: rec[0].txid + ':1', value: changeSats },
+  );
+  await a.waitForFunction(() => /\d/.test(document.getElementById('pending').textContent), null, { timeout: 5000 });
+  const fmt = (x) => (x / 1e8).toFixed(8);
+  const pend = await a.textContent('#pending'),
+    tot = await a.textContent('#total');
+  t(
+    'change in a block above the signed tip is counted once (pending = total = the change), and the payment still waits',
+    pend.startsWith(fmt(changeSats)) && tot.startsWith(fmt(changeSats)) && JSON.parse(await ls(a, 'reef:sent:' + TAG))[0].pending === true,
+    `${pend} / ${tot}`,
+  );
   // the coin spent by something else, no change back: the page asks the node which transaction spent it
   const txid = rec[0].txid;
   await a.evaluate(({ script }) => window.__fake.emit('message', { type: 'coins', script, height: 152102, coins: [] }), { script: SCRIPT });
@@ -288,6 +350,48 @@ for (const [name, opts] of [
     toast.slice(0, 120),
   );
   t('no page errors in the payment path', !p.errors.length, p.errors.join(' | '));
+  await p.ctx.close();
+}
+// 7: switching keys (a restore) holds after the page reloads, with and without an idle second tab
+const NEWKEY = '22'.repeat(32);
+for (const withIdle of [false, true]) {
+  const p = await profile({
+    seed: { 'reef:started': '1', 'reef:key': KEY, ['reef:backup:' + makeSigner({ hash, secp }).pubkeyOf(KEY).slice(0, 16)]: '1' },
+  });
+  const a = await p.open();
+  await a.waitForFunction(() => /^tb1p/.test(document.getElementById('rcvaddr').value), null, { timeout: 30000 });
+  await a.evaluate(
+    ({ script }) => {
+      window.__fake.emit('message', { type: 'synced', height: 152100, applied: true });
+      window.__fake.emit('message', { type: 'coins', script, height: 152100, coins: [] });
+    },
+    { script: SCRIPT },
+  );
+  let b = null;
+  if (withIdle) {
+    b = await p.open();
+    await b.waitForFunction(() => document.body.classList.contains('idle'), null, { timeout: 10000 });
+  }
+  await a.evaluate(() => {
+    document.getElementById('m-options').click();
+    document.querySelector('[data-o=wallet]').click();
+  });
+  await a.fill('#o-importkey', NEWKEY);
+  await a.click('#o-ok');
+  await a.waitForSelector('#ask[open]', { timeout: 5000 });
+  const nav = a.waitForNavigation({ timeout: 10000 }).catch(() => null);
+  await a.click('#ask-ok');
+  await nav;
+  await a.waitForFunction(() => /^tb1p/.test(document.getElementById('rcvaddr').value), null, { timeout: 30000 });
+  const now = await ls(a, 'reef:key');
+  const old = JSON.parse((await ls(a, 'reef:oldkeys')) ?? '[]');
+  t(
+    `a key switch ${withIdle ? 'with an idle second tab ' : ''}holds after the reload; the earlier key is kept under earlier keys`,
+    now === NEWKEY && old.some((x) => x.key === KEY),
+    JSON.stringify({ now: now?.slice(0, 6), old: old.length }),
+  );
+  if (b) t('the idle tab says the key was changed elsewhere', !!(await b.$('#banners [data-b=keychanged]')));
+  t(`no page errors in the key switch${withIdle ? ' with an idle tab' : ''}`, !p.errors.length, p.errors.join(' | '));
   await p.ctx.close();
 }
 await browser.close();
