@@ -4,7 +4,7 @@
 // tested against the kernel; this file is the host: storage, the node, the relays, the window. Every string that comes
 // from outside (relays, the mempool, the chain, links, options) reaches the page as text, never as markup.
 const $ = (id) => document.getElementById(id);
-export const VERSION = '2026-10-01.41';
+export const VERSION = '2026-10-02.1';
 const SCHEMA = 2; // the storage layout this version writes
 const NODE = 'https://cdn.jsdelivr.net/gh/bitcoin-blake/blaketestnode@f1da4a6b64a6a9a6f791d2e5dea8a1c1be81ea09';
 const LIB = 'https://cdn.jsdelivr.net/gh/sidestr/spec@fe689e9c723f9bf43393d2dd5b6f924a701c8a18/siding/lib',
@@ -2417,7 +2417,7 @@ function onCoins(m) {
     if (mined.length)
       notify(
         'Mined coins',
-        `${amtSay(mined.reduce((a, r) => a + WL.receiptSats(r), 0))} in ${mined.length} block${mined.length === 1 ? '' : 's'}; spendable after 100 confirmations`,
+        `${amtSay(mined.reduce((a, r) => a + WL.receiptSats(r), 0))} in ${mined.length} block${mined.length === 1 ? '' : 's'}; spendable after ${n(WL.COINBASE_MATURITY)} confirmations`,
       );
   }
   const fx = S.onCoins({ sent, coins: W.coins, asked, height: W.height, vouched: vouched() });

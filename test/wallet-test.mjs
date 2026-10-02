@@ -170,16 +170,18 @@ const coin = (i, value, extra = {}) => ({
 });
 const coins = [coin(1, 50000), coin(2, 20000), coin(3, 7000), coin(4, 300000, { coinbase: true, height: 152080 })];
 const height = 152100;
+const MATURE = 152080 + W.COINBASE_MATURITY - 1; // the tip at which the mined coin (block 152,080) is spendable
 t(
   'immature coinbase coins and held coins are not spendable',
   W.spendable(coins, height).length === 3 &&
     W.spendable(coins, height, new Set([coins[0].key])).length === 2 &&
-    W.spendable(coins, 152180).length === 4,
+    W.spendable(coins, MATURE).length === 4 &&
+    W.spendable(coins, MATURE - 1).length === 3,
 );
 {
   // sendCoins: the one choice behind every payment
   const keys = (cs) => cs.map((c) => c.key).join(',');
-  const all = W.sendCoins({ coins, height: 152180 });
+  const all = W.sendCoins({ coins, height: MATURE });
   t('sendCoins: every mature coin, largest first', keys(all) === keys([coins[3], coins[0], coins[1], coins[2]]), keys(all));
   t(
     'sendCoins: a coin held by a waiting payment is never offered',
@@ -187,9 +189,9 @@ t(
   );
   t(
     'sendCoins: a mined coin counts its maturity at the vouched height, not the source height',
-    W.sendCoins({ coins, height: 152180 }).some((c) => c.coinbase) &&
-      !W.sendCoins({ coins, height: 152180, vouched: 152100 }).some((c) => c.coinbase) &&
-      W.sendCoins({ coins, height: 152180, vouched: 152200 }).some((c) => c.coinbase),
+    W.sendCoins({ coins, height: MATURE }).some((c) => c.coinbase) &&
+      !W.sendCoins({ coins, height: MATURE, vouched: MATURE - 1 }).some((c) => c.coinbase) &&
+      W.sendCoins({ coins, height: MATURE + 20, vouched: MATURE }).some((c) => c.coinbase),
   );
   const fp = W.sendCoins({ coins, height, first: new Set([coins[2].key]), prefer: new Set([coins[1].key]) });
   t(
@@ -647,8 +649,12 @@ t(
   })(),
 );
 t(
-  'a coinbase is mature at exactly 100 confirmations, not 99',
-  W.isMature({ coinbase: true, height: 100 }, 199) && !W.isMature({ coinbase: true, height: 100 }, 198),
+  'a coinbase is mature at exactly 6,705 confirmations, not 6,704 (testnet4 long maturity, the mempool rule of every upgraded node)',
+  W.COINBASE_MATURITY === 6705 && W.isMature({ coinbase: true, height: 100 }, 6804) && !W.isMature({ coinbase: true, height: 100 }, 6803),
+);
+t(
+  'the reward of block 152,079 is not spendable at 152,201 (the payment Knots refused on 2 Oct 2026) and is at 158,783',
+  !W.isMature({ coinbase: true, height: 152079 }, 152201) && W.isMature({ coinbase: true, height: 152079 }, 158783),
 );
 {
   const L = new Map([
@@ -665,7 +671,7 @@ t(
   );
   t(
     'a mature coinbase that is gone was spent, not undone',
-    W.undoneReceipts(L, left, 152190 + 100).every((r) => r.txid !== 'm1'),
+    W.undoneReceipts(L, left, 152090 + W.COINBASE_MATURITY).every((r) => r.txid !== 'm1'),
   );
   const hist = W.history({
     coins: left,
@@ -851,8 +857,8 @@ t(
   const T = 'ef'.repeat(32);
   const L = new Map([[T, { txid: T, outs: { 0: 5 }, height: 100, coinbase: true }]]);
   t(
-    'an undone mined block is judged only while its coin is immature (at 99, not 100, confirmations)',
-    W.undoneReceipts(L, [], 198).length === 1 && W.undoneReceipts(L, [], 199).length === 0,
+    'an undone mined block is judged only while its coin is immature (at 6,704, not 6,705, confirmations)',
+    W.undoneReceipts(L, [], 98 + W.COINBASE_MATURITY).length === 1 && W.undoneReceipts(L, [], 99 + W.COINBASE_MATURITY).length === 0,
   );
   t('with no height known, nothing is judged undone', W.undoneReceipts(L, [], null).length === 0);
   const L2 = new Map();
@@ -862,17 +868,17 @@ t(
   const H = W.history({
     coins: [],
     sent: [],
-    height: 198,
+    height: 98 + W.COINBASE_MATURITY,
     address: 'me',
     ledger: new Map([[T, { txid: T, outs: { 0: 5 }, height: 100, coinbase: true }]]),
   });
   t(
-    'a mined coin is immature at 99 confirmations and mature at 100',
+    'a mined coin is immature at 6,704 confirmations and mature at 6,705',
     H[0].immature === true &&
       W.history({
         coins: [],
         sent: [],
-        height: 199,
+        height: 99 + W.COINBASE_MATURITY,
         address: 'me',
         ledger: new Map([[T, { txid: T, outs: { 0: 5 }, height: 100, coinbase: true }]]),
       })[0].immature === false,
@@ -1070,14 +1076,14 @@ t(
     fromCoins[0]?.conf === 1 && fromLedger[0]?.conf === 1,
     JSON.stringify([fromCoins[0]?.conf, fromLedger[0]?.conf]),
   );
-  // a mined coin of the tip block is immature in the ledger rows too, and mature exactly 100 blocks on
+  // a mined coin of the tip block is immature in the ledger rows too, and mature exactly 6,705 blocks on
   const mined = new Map([
     ['a2'.repeat(32), { txid: 'a2'.repeat(32), height: tip, coinbase: true, outs: [{ n: 0, value: 5000 }], value: 5000 }],
   ]);
   t(
-    'a mined coin in the ledger is immature until its 100th confirmation, and mature at it',
-    W.history({ coins: [], sent: [], height: tip + 98, address: 'x', ledger: mined })[0].immature === true &&
-      W.history({ coins: [], sent: [], height: tip + 99, address: 'x', ledger: mined })[0].immature === false,
+    'a mined coin in the ledger is immature until its 6,705th confirmation, and mature at it',
+    W.history({ coins: [], sent: [], height: tip + W.COINBASE_MATURITY - 2, address: 'x', ledger: mined })[0].immature === true &&
+      W.history({ coins: [], sent: [], height: tip + W.COINBASE_MATURITY - 1, address: 'x', ledger: mined })[0].immature === false,
   );
 }
 t(
@@ -1089,14 +1095,14 @@ t(
   W.balances({
     coins: [{ key: 'b1'.repeat(32) + ':0', value: 7000, height: 152000, coinbase: true }],
     sent: [],
-    height: 152099,
-    vouched: 152098,
+    height: 151999 + W.COINBASE_MATURITY,
+    vouched: 151998 + W.COINBASE_MATURITY,
   }).available === 0 &&
     W.balances({
       coins: [{ key: 'b1'.repeat(32) + ':0', value: 7000, height: 152000, coinbase: true }],
       sent: [],
-      height: 152099,
-      vouched: 152099,
+      height: 151999 + W.COINBASE_MATURITY,
+      vouched: 151999 + W.COINBASE_MATURITY,
     }).available === 7000,
 );
 // ---- round 14: the exact limits of a replacement, and the transaction's version and lock time

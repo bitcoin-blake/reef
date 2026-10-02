@@ -197,7 +197,7 @@ t(
   const k = new Set([c.key]);
   t(
     'an immature mined coin says when it can be spent',
-    /spendable after 100/.test(V.coinNote(c, { height: 152100, sent: [], mature: () => false })) &&
+    /spendable after 6,705/.test(V.coinNote(c, { height: 152100, sent: [], mature: () => false })) &&
       !/spendable/.test(V.coinNote(c, { height: 152200, sent: [], mature: () => true })),
   );
   t(
